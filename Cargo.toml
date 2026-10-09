@@ -1,0 +1,22 @@
+[package]
+name = "webterminal"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A local browser terminal for Windows"
+license = "MIT"
+authors = ["Giovanni Jecha"]
+publish = false
+default-run = "webterminal"
+
+[dependencies]
+
+[dev-dependencies]
+
+[build-dependencies]
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
