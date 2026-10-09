@@ -231,6 +231,7 @@ function scheduleResize() {
   if (state.resizeFrame) cancelAnimationFrame(state.resizeFrame);
   state.resizeFrame = requestAnimationFrame(() => {
     state.resizeFrame = 0;
+    for (const tab of document.querySelectorAll('.tabs .tab.active')) tab.scrollIntoView({block:'nearest', inline:'nearest'});
     for (const pane of panes) {
       if (!canInput(pane)) continue;
       const shot = state.snapshots.get(pane.id), size = pane.renderer.dimensions();

@@ -13,6 +13,11 @@ export function sessionName(session) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || 'Terminal';
 }
 
+export function stateClass(session) {
+  if (session.alive) return ' live';
+  return Number.isInteger(session.exitCode) && session.exitCode !== 0 ? ' failed' : '';
+}
+
 export function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.classList.add('icon');
@@ -71,6 +76,7 @@ export class Workbench {
   sidebarState() {
     const classes = document.documentElement.classList;
     const visible = this.mobile.matches ? classes.contains('sidebar-open') : !classes.contains('sidebar-collapsed');
+    classes.toggle('rail', this.mobile.matches || !visible);
     for (const id of ['toggle-sidebar', 'activity-sessions']) $(id).setAttribute('aria-expanded', String(visible));
     $('activity-sessions').classList.toggle('active', visible);
   }
@@ -161,7 +167,7 @@ export class Workbench {
   sessionRow(session) {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = `session-entry${session.id === this.active ? ' active' : ''}${session.alive ? ' running' : ''}`;
+    row.className = `session-entry${session.id === this.active ? ' active' : ''}${session.alive ? ' running' : ' exited'}`;
     row.dataset.session = session.id;
     row.setAttribute('aria-current', String(session.id === this.active));
     const statusText = session.alive
@@ -176,15 +182,13 @@ export class Workbench {
     name.textContent = sessionName(session);
     const path = document.createElement('span');
     path.className = 'session-directory';
-    path.textContent = `${session.id} · ${displayPath(session.cwd)}`;
+    const folder = displayPath(session.cwd).split(/[\\/]/).filter(Boolean).at(-1) || displayPath(session.cwd);
+    path.textContent = session.alive ? folder : `${folder} · ${statusText}`;
     const status = document.createElement('span');
-    status.className = `session-state${session.alive ? ' live' : ''}`;
+    status.className = `session-state${stateClass(session)}`;
     status.setAttribute('aria-label', statusText);
     details.append(name, path);
-    const number = document.createElement('span');
-    number.className = 'session-number';
-    number.textContent = session.id;
-    row.append(icon('terminal'), details, number, status);
+    row.append(status, details);
     row.addEventListener('click', () => {
       if (this.mobile.matches) {
         document.documentElement.classList.remove('sidebar-open');

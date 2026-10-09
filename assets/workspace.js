@@ -1,4 +1,4 @@
-import {icon, sessionName, displayPath} from './workbench.js';
+import {icon, sessionName, displayPath, stateClass} from './workbench.js';
 
 const STORAGE = 'webterminal.layout';
 const DRAG_TYPE = 'text/x-webterminal-session';
@@ -138,7 +138,7 @@ export class WorkspaceLayout {
     document.getElementById('editor-secondary').hidden = !this.split;
     document.getElementById('editor-groups').classList.toggle('split', this.split);
     for (let index = 0; index < 2; index++) document.getElementById(index ? 'editor-secondary' : 'editor-primary').classList.toggle('focused-group', index === this.focused);
-    const signature = JSON.stringify([this.groups, this.split, [...this.sessions.values()].map(s => [s.id,s.name,s.title,s.cwd,s.alive])]);
+    const signature = JSON.stringify([this.groups, this.split, [...this.sessions.values()].map(s => [s.id,s.name,s.title,s.cwd,s.alive,s.exitCode])]);
     if (signature === this.signature) return;
     this.signature = signature;
     for (const [index, group] of this.groups.entries()) {
@@ -156,10 +156,10 @@ export class WorkspaceLayout {
         tab.setAttribute('aria-label', `Open ${sessionName(session)}`);
         tab.title = `${sessionName(session)}\n${displayPath(session.cwd)} · ${id}\nDouble-click or F2 to rename`;
         const label = document.createElement('span'); label.className = 'tab-label'; label.textContent = sessionName(session);
-        const dot = document.createElement('span'); dot.className = `tab-dot${session.alive ? ' live' : ''}`;
+        const dot = document.createElement('span'); dot.className = `tab-dot${stateClass(session)}`;
         const close = document.createElement('button'); close.className = 'tab-close'; close.type = 'button'; close.title = 'Close session'; close.setAttribute('aria-label', `Close ${sessionName(session)}`); close.append(icon('close'));
         close.addEventListener('click', event => { event.stopPropagation(); this.close(id); });
-        tab.append(icon('terminal'),label,dot,close);
+        tab.append(dot,label,close);
         tab.addEventListener('click', () => this.select(id));
         tab.addEventListener('dblclick', () => this.rename(id));
         tab.addEventListener('keydown', event => { if (event.target === tab && ['Enter',' '].includes(event.key)) { event.preventDefault(); this.select(id); } });
