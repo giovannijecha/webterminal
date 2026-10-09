@@ -31,8 +31,8 @@ export class TerminalRenderer {
 
   measure() {
     const style = getComputedStyle(this.lines);
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
+    // Resize checks measure often; one canvas context serves every call.
+    const context = this.context ??= document.createElement('canvas').getContext('2d');
     context.font = `${style.fontSize} ${style.fontFamily}`;
     this.cellWidth = context.measureText('M').width || 8;
     this.lineHeight = parseFloat(style.lineHeight) || 19;
@@ -178,10 +178,12 @@ export class TerminalRenderer {
         span.style.width = `calc(${columns} * var(--cell-width))`;
         if (width === 2) span.classList.add('wide');
         const inverse = Boolean(attr & 32);
-        span.style.color = inverse ? (cell[3] || DEFAULT_BG) : (cell[2] || DEFAULT_FG);
-        span.style.backgroundColor = inverse ? (cell[2] || DEFAULT_FG) : (cell[3] || DEFAULT_BG);
+        const foreground = inverse ? (cell[3] || DEFAULT_BG) : (cell[2] || DEFAULT_FG);
+        const background = inverse ? (cell[2] || DEFAULT_FG) : (cell[3] || DEFAULT_BG);
+        // Faint text dims its glyphs toward the background, never the cell itself.
+        span.style.color = attr & 2 ? `color-mix(in srgb, ${foreground} 58%, ${background})` : foreground;
+        span.style.backgroundColor = background;
         if (attr & 1) span.classList.add('bold');
-        if (attr & 2) span.classList.add('dim');
         if (attr & 4) span.classList.add('italic');
         if (attr & 8) span.classList.add('underline');
         if (attr & 16) span.classList.add('blink');

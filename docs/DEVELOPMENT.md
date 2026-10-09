@@ -30,7 +30,7 @@ browser and module suites can be run from the repository root:
 
 ```powershell
 $env:WEBTERMINAL_TEST_BIN_DIR = "$PWD\target\debug"
-node --test tests/browser.mjs
+node --test tests/browser.mjs tests/reader.mjs
 node tests/browser-runtime.mjs
 node tests/browser-e2e.mjs
 node tests/workbench-browser.mjs
@@ -40,7 +40,7 @@ node tests/workspace-browser.mjs
 ```
 
 The browser probes create disposable profiles and fixtures under ignored
-`target/`; they use local processes and do not contact model providers.
+`target/` or `.tmp/`; they use local processes and do not contact model providers.
 `WEBTERMINAL_TEST_BIN_DIR` points at a directory containing matching Webterminal and
 fixture executables, which also permits testing an alternate build without
 replacing a running server. The optional performance harness is
@@ -59,6 +59,14 @@ shortcut.
 
 ## What has been exercised
 
+The 2026-10-09 publication checks passed the Cargo gates and JavaScript module
+tests, including regressions for Reader reads canceled by a Follow change or
+focus loss, and workspace close confirmations invalidated by another view.
+Chrome checks cover shared workspaces with up to four simultaneous panes,
+independent input, pane limits, rename/reorder/move, reconnection, the folder
+picker, Reader Markdown rendering and mobile layouts. These use owned fixtures;
+they do not establish authenticated CLI compatibility.
+
 Earlier Windows checks recorded in the project exercised the Cargo gates,
 Rust parser and transport fixtures, native ConPTY lifecycle, PowerShell and
 `cmd.exe` sessions, browser rendering and input, and isolated Jecode, Codex,
@@ -72,11 +80,11 @@ equivalence, WebSocket framing, session ownership, reconnect and control
 transfer, port collisions, and Host/Origin rejection. Native checks cover
 ConPTY output, input, resize, modified keys, a large output flood, process
 exit, owned descendant cleanup, and an unrelated process left alive.
-Chrome probes exercised the embedded UI with real ConPTY sessions, the folder
-picker, two groups, selection and copy, search, clipboard dialogs, menus,
-reconnect, and mobile-width layouts. Clipboard permission outcomes in those
-UI checks were stubbed; synthetic composition events do not prove hardware IME
-behavior.
+Earlier Chrome probes exercised the embedded UI with real ConPTY sessions, the
+folder picker, the previous two-group layout, selection and copy, search,
+clipboard dialogs, menus, reconnect, and mobile-width layouts. Clipboard
+permission outcomes in those UI checks were stubbed; synthetic composition
+events do not prove hardware IME behavior.
 
 Isolated Jecode, Codex, and Claude checks opened their main text interfaces
 and exercised editing, modified keys, multiline drafts, resize, reload, and
@@ -91,10 +99,10 @@ been manually validated.
 ## Performance evidence
 
 One isolated debug-build Chrome/ConPTY probe measured 100 acknowledged inputs
-while an owned child redrew 24 TUI rows every 16 ms. After the PowerShell-only
-workspace update, median/p95 end-to-end latency was 54.4/73.3 ms, with 2.7 ms
-median render work. This is a single-machine fixture measurement, not a
-guarantee for two live groups or authenticated CLIs. The harness and generated
+while an owned child redrew 24 TUI rows every 16 ms. After the earlier
+PowerShell-only workspace update, median/p95 end-to-end latency was 54.4/73.3 ms,
+with 2.7 ms median render work. This is a single-machine fixture measurement, not a
+guarantee for multiple live panes or authenticated CLIs. The harness and generated
 raw reports live under ignored `target/` when run locally.
 
 ## Local boundary

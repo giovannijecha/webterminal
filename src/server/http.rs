@@ -111,63 +111,65 @@ pub(super) fn response(
         body.len()
     )
 }
+const SCRIPT: &str = "text/javascript; charset=utf-8";
+const ASSETS: &[(&str, &str, &str)] = &[
+    (
+        "/index.html",
+        "text/html; charset=utf-8",
+        include_str!("../../assets/index.html"),
+    ),
+    (
+        "/style.css",
+        "text/css; charset=utf-8",
+        include_str!("../../assets/style.css"),
+    ),
+    (
+        "/favicon.svg",
+        "image/svg+xml",
+        include_str!("../../assets/favicon.svg"),
+    ),
+    ("/app.js", SCRIPT, include_str!("../../assets/app.js")),
+    ("/input.js", SCRIPT, include_str!("../../assets/input.js")),
+    ("/render.js", SCRIPT, include_str!("../../assets/render.js")),
+    (
+        "/updates.js",
+        SCRIPT,
+        include_str!("../../assets/updates.js"),
+    ),
+    ("/common.js", SCRIPT, include_str!("../../assets/common.js")),
+    ("/pane.js", SCRIPT, include_str!("../../assets/pane.js")),
+    ("/reader.js", SCRIPT, include_str!("../../assets/reader.js")),
+    (
+        "/markdown.js",
+        SCRIPT,
+        include_str!("../../assets/markdown.js"),
+    ),
+    (
+        "/workspaces.js",
+        SCRIPT,
+        include_str!("../../assets/workspaces.js"),
+    ),
+    (
+        "/notices.js",
+        SCRIPT,
+        include_str!("../../assets/notices.js"),
+    ),
+    (
+        "/directory.js",
+        SCRIPT,
+        include_str!("../../assets/directory.js"),
+    ),
+];
 pub(super) fn serve(stream: &mut TcpStream, path: &str, registry: &Registry) -> io::Result<()> {
-    let asset = match path {
-        "/" | "/index.html" => Some((
-            "text/html; charset=utf-8",
-            include_str!("../../assets/index.html"),
-        )),
-        "/style.css" => Some((
-            "text/css; charset=utf-8",
-            include_str!("../../assets/style.css"),
-        )),
-        "/app.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/app.js"),
-        )),
-        "/input.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/input.js"),
-        )),
-        "/render.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/render.js"),
-        )),
-        "/updates.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/updates.js"),
-        )),
-        "/workbench.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/workbench.js"),
-        )),
-        "/pane.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/pane.js"),
-        )),
-        "/workspace.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/workspace.js"),
-        )),
-        "/menus.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/menus.js"),
-        )),
-        "/notices.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/notices.js"),
-        )),
-        "/directory.js" => Some((
-            "text/javascript; charset=utf-8",
-            include_str!("../../assets/directory.js"),
-        )),
-        _ => None,
-    };
-    if let Some((mime, body)) = asset {
+    let route = if path == "/" { "/index.html" } else { path };
+    if let Some((_, mime, body)) = ASSETS.iter().find(|(name, ..)| *name == route) {
         return response(stream, "200 OK", mime, body);
     }
     if path == "/api/sessions" {
         return response(stream, "200 OK", "application/json", &registry.list_json());
+    }
+    if path == "/api/places" {
+        return response(stream, "200 OK", "application/json", &places(registry));
     }
     if path == "/api/info" {
         return response(
@@ -198,6 +200,35 @@ pub(super) fn serve(stream: &mut TcpStream, path: &str, registry: &Registry) -> 
         "text/plain; charset=utf-8",
         "Webterminal asset not found",
     )
+}
+/// Quick-access folders and drive roots for the folder picker. Only existing
+/// folders are listed; drives come from the native boundary without probing.
+fn places(registry: &Registry) -> String {
+    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let mut folders = vec![("Start folder", Some(registry.cwd.clone()))];
+    folders.push(("Home", home.clone()));
+    for name in ["Desktop", "Documents", "Downloads"] {
+        folders.push((name, home.as_ref().map(|home| home.join(name))));
+    }
+    let entry = |name: &str, path: &str| {
+        format!(
+            "{{\"name\":{},\"path\":{}}}",
+            json::quote(name),
+            json::quote(path)
+        )
+    };
+    let folders = folders
+        .into_iter()
+        .filter_map(|(name, path)| path.filter(|path| path.is_dir()).map(|path| (name, path)))
+        .map(|(name, path)| entry(name, &path.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let drives = crate::native::logical_drives()
+        .iter()
+        .map(|root| entry(root.trim_end_matches('\\'), root))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"folders\":[{folders}],\"drives\":[{drives}]}}")
 }
 fn directories(encoded: &str) -> Result<String, String> {
     let path = PathBuf::from(decode_path(encoded)?)

@@ -2,7 +2,7 @@
 
 Webterminal is a local Windows terminal in your browser. A Rust server starts real
 PowerShell sessions through ConPTY and keeps the terminal screen and scrollback
-in memory. Open several terminals, place them in two groups, and return to a
+in memory. Open several terminals, organize them in workspaces, and return to a
 running session after refreshing or closing the browser tab.
 
 It runs independently of coding agents. If a CLI is installed, launch it from
@@ -28,7 +28,7 @@ cargo run --locked --offline
 ```
 
 The server prints `Webterminal listening at http://127.0.0.1:4183/` when ready.
-Open that address, choose **New terminal** or **+**, select a directory, and
+Open that address, choose **Terminal** or **Open terminal**, select a directory, and
 choose **Open terminal**. New terminals run `powershell.exe -NoLogo -NoProfile`;
 PowerShell profiles are skipped. For example, type `pwd` to see the selected
 directory. Press Ctrl+C in the server console to stop the server and its
@@ -44,34 +44,52 @@ cargo run --locked --offline -- --port 4185 --cwd .
 ports 4173 and 4174 are reserved by this build. An occupied port
 produces an error without stopping its owner. `--help` lists all options.
 
-## Using the workbench
+## Using workspaces
 
-- Each terminal has its own process, directory, screen, and scrollback. Multiple
-  terminals can use the same directory. Closing a browser tab leaves sessions
-  running while the server remains open; **Close terminal** ends the selected
-  session and its child processes.
-- Split the workbench into two groups, then move or reorder terminal tabs with
-  the tab menu, drag and drop, or keyboard commands. Rename a terminal with F2
-  or a double-click. Names and order are shared across browser views while the
-  server runs; the group layout belongs to each browser tab.
+- Workspaces appear as tabs above the terminals. **Workspace** in the left
+  rail adds an empty one, named `Workspace N` until you rename it with a
+  double-click or F2. A workspace takes its first terminal's folder name when
+  it has no custom name.
+- **Terminal** opens a terminal in the selected workspace after you pick a
+  folder; once a terminal is open it becomes **Split**, and its icon previews
+  the next layout: one pane, two side by side, one large plus two stacked, or a
+  grid of four. Drag a pane header to reorder panes, or onto another tab to
+  move the terminal. Narrow screens show one pane with a switcher.
+- Each terminal has its own process, directory, screen, and scrollback.
+  Closing a browser tab leaves sessions running while the server remains
+  open; closing a terminal ends it and its child processes, and closing a
+  workspace closes all of its terminals. Terminals idle at their shell close
+  at once; Webterminal asks first only while a program still runs in one. The
+  pane dot pulses while an agent reports activity in its title. Names and
+  order are shared across browser views while the server runs.
 - A second browser view can observe a session. **Take control** transfers its
   keyboard input and terminal size from the current controller. Reconnecting
   restores a screen and history snapshot before input is enabled.
 - Drag to select text. Use **Find** or Ctrl+Shift+F to search retained history,
   and Ctrl+Shift+C to copy. Paste uses the browser clipboard; supported
   terminal clipboard writes ask for confirmation.
+- **Reader** opens a side panel that renders Markdown, for example an agent
+  reply copied with `/copy`. Paste with the panel button or Ctrl+V; terminal
+  clipboard writes that look like prose are added automatically. With
+  **Follow clipboard** on, the Reader checks the system clipboard about once
+  a second while the window has focus and opens beside the terminal, without
+  taking keyboard focus, when a reply arrives; it skips short single-line
+  copies and text Webterminal copied itself. Each document has an
+  outline, search and per-block copy. Documents stay in the browser tab's
+  memory, at most 20, until reload.
 
 The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
-they disappear when the server stops. Browser storage holds font size and
-per-tab layout preferences.
+they disappear when the server stops. Browser storage holds font size, the
+selected workspace and the Follow clipboard choice.
 
 ## Compatibility and limits
 
 Webterminal supports common VT text-terminal behavior, including alternate screens,
 256/RGB colors, Unicode graphemes, bracketed paste, mouse reporting, and
 modified Windows keys. It retains at most 1,000 history rows and allows up to
-32 sessions and two visible groups. See [terminal behavior](docs/TERMINAL.md)
+32 sessions across at most 16 workspaces, with up to four panes per workspace.
+See [terminal behavior](docs/TERMINAL.md)
 for precise limits and unsupported sequences.
 
 Native and browser fixtures exercise the terminal, and isolated checks have

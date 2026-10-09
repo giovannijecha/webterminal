@@ -4,11 +4,14 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use webterminal::server::{Config, Server};
+
+// Parallel tests can read the same clock tick; the counter keeps folders unique.
+static NEXT_HARNESS: AtomicUsize = AtomicUsize::new(0);
 
 const TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -34,8 +37,9 @@ impl Harness {
             .unwrap()
             .as_nanos();
         let cwd = std::env::temp_dir().join(format!(
-            "webterminal-transport-{}-{stamp}",
-            std::process::id()
+            "webterminal-transport-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT_HARNESS.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&cwd).unwrap();
         let server = Server::bind(Config {

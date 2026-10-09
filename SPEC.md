@@ -22,10 +22,11 @@ Keep one Cargo package with cohesive responsibilities:
 - **Terminal core:** Rust owns incremental decoding, terminal modes, screen
   buffers, cursor, styles, Unicode cell layout and bounded shell scrollback.
 - **Session registry:** Rust owns independent session IDs, working directories,
-  native resources, lifecycle, viewers and exclusive input/geometry control.
+  native resources, lifecycle, viewers, exclusive input/geometry control and
+  workspace organization.
 - **Transport:** a small local HTTP/WebSocket server serves only owned browser
   assets and exchanges bounded, ordered session updates and input events.
-- **Browser:** original HTML/CSS/JavaScript handles tabs, rendering, selection,
+- **Browser:** original HTML/CSS/JavaScript handles layout, rendering, selection,
   search, clipboard interaction and keyboard/composition events.
 
 Keep terminal core independent of native APIs and rendering so protocol
@@ -40,22 +41,37 @@ rendering details from measured behavior; do not add a framework or bundler.
 - New terminals start Windows PowerShell with `-NoLogo -NoProfile` directly.
   Do not present per-terminal shell choices. A trusted server-wide program
   override can support owned development fixtures.
-- Rust owns optional user-assigned names and global session order. Renaming and
-  reordering retain session identity and processes; an empty custom name restores
-  the program's dynamic title. Metadata changes survive view reconnection.
+- Sessions are organized in workspaces. A workspace has an ID, an optional
+  user-assigned name and an ordered list of at most four sessions; every
+  session belongs to exactly one workspace. Rust owns workspaces, their order,
+  membership and pane order, and optional session names. These survive view
+  reconnection and are shared by all views while the server runs. At least one
+  workspace always exists; a new workspace starts empty.
+- Renaming, reordering and moving retain session identity and processes. An
+  empty custom name restores the program's dynamic title (sessions) or the
+  default label (workspaces).
 - A view is a browser attachment to one session. Browser tab closure,
   connection loss or refresh detaches the view without terminating the session.
-- The UI provides internal terminal tabs, a new-terminal action, a working
-  directory selector and an explicit session-close action from the first
-  usable version. Switching tabs preserves running terminals.
-- Provide two editor groups with independent selected tabs, output and input,
-  arranged side by side on desktop and stacked at narrow widths. Support tab
-  rename, reorder and movement between groups using native browser interaction
-  and keyboard/menu actions. Group membership, focused group and selected tabs
-  are view-local presentation preferences. Consolidating groups keeps sessions
-  alive; each visible attachment retains its own control and geometry fencing.
-- Closing an internal terminal tab ends its session and owned process tree.
+- The UI shows workspaces as tabs and every session of the selected workspace
+  at once, in a layout derived from its count: one full pane, two side by
+  side, three as one large and two stacked, four as a grid. Narrow screens show
+  one pane at a time with a pane switcher. The selected workspace and focused
+  pane are view-local; each visible attachment keeps its own control and
+  geometry fencing.
+- The UI provides a new-workspace action, a new-terminal action for the
+  selected workspace, a working-directory selector and explicit close actions
+  for sessions and workspaces. Closing a session ends it and its owned process
+  tree; closing a workspace closes all of its sessions. Confirmation is
+  required only while a session runs a program beyond its shell. A workspace
+  confirmation applies to the sessions present when it was requested; changes
+  from another view must be checked before closing any session.
   Closing the browser leaves sessions available while the server remains alive.
+- A workspace name is optional; new workspaces open with their default label.
+- The Reader is a view-local side panel that renders Markdown copied from
+  terminals: pasted text, terminal clipboard writes that look like prose, and,
+  when the user enables it, the browser clipboard polled while the view has
+  focus. It keeps a bounded set of documents in browser memory only, never on the
+  server, and renders text through DOM nodes rather than HTML parsing.
 - At most one view controls input and geometry for a session. Other attached
   views observe; control transfer must not allow competing input or resize.
 - On attachment or reconnection, deliver a consistent screen, mode and

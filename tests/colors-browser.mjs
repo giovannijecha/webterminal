@@ -9,11 +9,12 @@ import {chromeProbe,findChrome,freePort,proxyFor,ready,stopChild,stopProxy,quote
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const target=resolve(root,'target');
+const scratch=resolve(root,'.tmp');
 const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(target,'debug'));
-const runRoot=resolve(target,`colors-${process.pid}-${Date.now()}`);
+const runRoot=resolve(scratch,`colors-${process.pid}-${Date.now()}`);
 const label=process.argv[2] || 'current';
-assert.match(label,/^[a-z0-9-]+$/);assert.ok(runRoot.startsWith(target+sep));
-const reports=resolve(target,'colors');await mkdir(reports,{recursive:true});await mkdir(runRoot,{recursive:true});
+assert.match(label,/^[a-z0-9-]+$/);assert.ok(runRoot.startsWith(scratch+sep));
+const reports=resolve(scratch,'browser-reports','colors');await mkdir(reports,{recursive:true});await mkdir(runRoot,{recursive:true});
 await copyFile(resolve(binaries,'webterminal.exe'),resolve(runRoot,'webterminal.exe'));
 await copyFile(resolve(binaries,'color_fixture.exe'),resolve(runRoot,'color_fixture.exe'));
 
@@ -24,7 +25,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,label){for(let i=0;i<500;i++){if(test())return;await pause(20);}throw new Error('Timed out: '+label);}
 function check(value,label){if(!value)throw new Error(label);checks.push(label);}
 function send(text){const data=new DataTransfer();data.setData('text/plain',text);$('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));}
-function current(){return window.__snapshotBodies[document.querySelector('.session-entry.active')?.dataset.session];}
+function current(){return window.__snapshotBodies[Object.keys(window.__snapshotBodies)[0]];}
 function rows(){const term=current().terminal;return term.alternate?term.screen:[...term.history,...term.screen];}
 function cell(marker){
   for(const row of rows()){
@@ -61,9 +62,9 @@ async function paintAndWait(command){
 async function main(){
   await until(()=>$('connection-status').textContent==='Connected','connection');
   if(sessionStorage.getItem('colorStage')==='reconnect'){
-    await until(()=>$('view-status').textContent==='Controlling'&&$('terminal-lines').textContent.includes('RGB_TEXT'),'reconnect');
+    await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('RGB_TEXT'),'reconnect');
     verifyColors('reconnect');check(Object.keys(window.__snapshotBodies).length===1,'reconnect retains the same session');
-    check(document.querySelector('.session-entry.active').dataset.session===sessionStorage.getItem('colorSession'),'session identity survives reconnect');
+    check(current().id===sessionStorage.getItem('colorSession'),'session identity survives reconnect');
     const before=current().seq;await paintAndWait('paint');check(current().seq>before,'fresh ordered colors after reconnect');
     verifyColors('after reconnect update');
     check(window.__probeErrors.length===0,'no browser exceptions or invalid deltas');
@@ -71,11 +72,11 @@ async function main(){
     document.body.dataset.probeResult=btoa(JSON.stringify(report));return;
   }
   $('new').click();await until(()=>!$('directory-create').disabled,'directory');$('directory-create').click();
-  await until(()=>$('view-status').textContent==='Controlling'&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
+  await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
   check($('terminal-lines').textContent.includes('COLOR_ENABLED=true'),'CLI-style color detection ignores the redirected host');
   verifyColors('initial');await paintAndWait('scroll');verifyColors('scrollback update');
   check(current().terminal.history.length>0,'colored output remains in bounded history');
-  const cols=current().terminal.cols;$('toggle-sidebar').click();
+  const cols=current().terminal.cols;$('settings').click();$('larger').click();$('preferences-close').click();
   await until(()=>current().terminal.cols!==cols,'native resize');await paintAndWait('paint');verifyColors('resized');
   await paintAndWait('alternate');check(current().terminal.alternate,'alternate buffer entered');verifyColors('alternate');
   send('primary\r');await until(()=>!current().terminal.alternate,'primary restored');verifyColors('primary restored');

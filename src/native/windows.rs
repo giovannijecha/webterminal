@@ -151,6 +151,13 @@ unsafe extern "system" {
         length: u32,
     ) -> i32;
     fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+    fn QueryInformationJobObject(
+        job: Handle,
+        class: i32,
+        information: *mut c_void,
+        length: u32,
+        returned: *mut u32,
+    ) -> i32;
     fn TerminateJobObject(job: Handle, exit_code: u32) -> i32;
     fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
     fn ResumeThread(thread: Handle) -> u32;
@@ -161,6 +168,18 @@ unsafe extern "system" {
         add: i32,
     ) -> i32;
     fn GetLastError() -> u32;
+    fn GetLogicalDrives() -> u32;
+}
+
+/// Root paths of the drive letters currently defined, such as `C:\`.
+/// Drives are listed without probing, so a disconnected share cannot block.
+pub fn logical_drives() -> Vec<String> {
+    // SAFETY: GetLogicalDrives takes no arguments and returns a bitmask.
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|bit| mask & (1 << bit) != 0)
+        .map(|bit| format!("{}:\\", char::from(b'A' + bit)))
+        .collect()
 }
 
 struct OwnedHandle(Handle);
@@ -282,6 +301,16 @@ impl Pty {
                 "unexpected process wait result: {other}"
             ))),
         }
+    }
+
+    /// Processes alive in the job; the shell alone means the terminal is idle.
+    pub fn active_processes(&self) -> io::Result<u32> {
+        // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION: four times, then four counters.
+        let mut info = [0u64; 6];
+        check_bool(unsafe {
+            QueryInformationJobObject(self.job.0, 1, info.as_mut_ptr().cast(), 48, null_mut())
+        })?;
+        Ok(info[5] as u32)
     }
 
     pub fn terminate(&self) -> io::Result<()> {

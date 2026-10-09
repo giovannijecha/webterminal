@@ -3,107 +3,148 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark">
   <title>Webterminal</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
-      <symbol id="icon-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="m7 8 4 4-4 4m7 0h4"/></symbol>
-      <symbol id="icon-sessions" viewBox="0 0 24 24"><path d="M7 3h9l4 4v14H7zM16 3v5h4M4 6H2v13h2"/></symbol>
-      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 7 7"/></symbol>
-      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+      <symbol id="icon-workspace" viewBox="0 0 24 24"><path d="M3 18v-7.5a2 2 0 0 1 2-2h.7l1.2-3.1a1.5 1.5 0 0 1 1.4-1h3.4a1.5 1.5 0 0 1 1.4 1l1.2 3.1H19a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm9-5.5v4.5m-2.25-2.25h4.5"/></symbol>
+      <symbol id="icon-layout-1" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="m7.5 9.75 2.5 2.25-2.5 2.25m5 0h4"/></symbol>
+      <symbol id="icon-layout-2" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15m4.5-9.5v4M14.5 12h4"/></symbol>
+      <symbol id="icon-layout-3" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15m0-7.5h9m-4.5 2.25v3M15 15.75h3"/></symbol>
+      <symbol id="icon-layout-4" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15M3 12h18m-4.5 2.25v3M15 15.75h3"/></symbol>
+      <symbol id="icon-layout-full" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15M3 12h18"/></symbol>
+      <symbol id="icon-reader" viewBox="0 0 24 24"><path d="M12 7c-1.9-1.6-4.7-2.3-8.5-2v13.5c3.8-.3 6.6.4 8.5 2 1.9-1.6 4.7-2.3 8.5-2V5c-3.8-.3-6.6.4-8.5 2zm0 0v13.5"/></symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></symbol>
+      <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M9 5H7.5A2 2 0 0 0 5.5 7v12a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H15"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6m-6 4h4"/></symbol>
+      <symbol id="icon-outline" viewBox="0 0 24 24"><path d="M4 6h16M9 12h11m-11 6h11M4.5 12h.01M4.5 18h.01"/></symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></symbol>
       <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-      <symbol id="icon-sidebar" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="1.5"/><path d="M9 3v18"/></symbol>
-      <symbol id="icon-expand" viewBox="0 0 24 24"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m6 0h6v-6"/></symbol>
-      <symbol id="icon-copy" viewBox="0 0 24 24"><path d="M8 8h13v13H8zM16 8V3H3v13h5"/></symbol>
-      <symbol id="icon-paste" viewBox="0 0 24 24"><path d="M8 5H4v16h16V5h-4M8 3h8v5H8z"/></symbol>
-      <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
-      <symbol id="icon-command" viewBox="0 0 24 24"><path d="m4 5 6 7-6 7m9 0h8"/></symbol>
       <symbol id="icon-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 5v15"/></symbol>
       <symbol id="icon-down" viewBox="0 0 24 24"><path d="m5 12 7 7 7-7M12 4v15"/></symbol>
-      <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
       <symbol id="icon-back" viewBox="0 0 24 24"><path d="m11 5-7 7 7 7M4 12h16"/></symbol>
       <symbol id="icon-forward" viewBox="0 0 24 24"><path d="m13 5 7 7-7 7M4 12h16"/></symbol>
-      <symbol id="icon-local" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6m8-12 6 6-6 6"/></symbol>
-      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="19" cy="12" r=".8"/></symbol>
+      <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
       <symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 10v7m0-11v1"/></symbol>
       <symbol id="icon-warning" viewBox="0 0 24 24"><path d="m12 3 10 18H2zM12 9v5m0 3v1"/></symbol>
       <symbol id="icon-error" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 8 8 8m0-8-8 8"/></symbol>
-      <symbol id="icon-settings" viewBox="0 0 24 24"><path d="m10 2-.7 3-2 .9-2.6-1.5L2 9l2.2 1.7v2.6L2 15l2.7 4.6L7.3 18l2 .9.7 3h4l.7-3 2-.9 2.6 1.6L22 15l-2.2-1.7v-2.6L22 9l-2.7-4.6L16.7 6l-2-.9L14 2z"/><circle cx="12" cy="12" r="3.5"/></symbol>
-      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 3h9v11H3zM3 6V4h7l2 2h9v3"/></symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24"><path d="M8 8h13v13H8zM16 8V3H3v13h5"/></symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 7h8.5m4 0H20M4 12h2.5m4 0H20M4 17h10.5m4 0H20"/><circle cx="14.5" cy="7" r="2"/><circle cx="8.5" cy="12" r="2"/><circle cx="16.5" cy="17" r="2"/></symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></symbol>
       <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M10 21v-7h4v7"/></symbol>
-      <symbol id="icon-split" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M12 4v16"/></symbol>
+      <symbol id="icon-pin" viewBox="0 0 24 24"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/></symbol>
+      <symbol id="icon-desktop" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M3 13.5h18M9 21h6m-3-4v4"/></symbol>
+      <symbol id="icon-document" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6m-6 4h6"/></symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></symbol>
+      <symbol id="icon-drive" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M5 13 7.5 5h9l2.5 8m-3 3.5h.01"/></symbol>
+      <symbol id="icon-pc" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="1.5"/><path d="M8 21h8m-4-4v4"/></symbol>
     </defs>
   </svg>
   <div id="app">
-    <div class="primary-panel">
-      <div class="brand" title="Webterminal"><span class="brand-badge"><svg class="icon brand-mark" aria-hidden="true"><use href="#icon-terminal"/></svg></span><span class="brand-name">Webterminal</span></div>
-      <nav class="activitybar" aria-label="Workspace views">
-        <button id="activity-sessions" class="activity-button active" title="Terminal sessions" aria-label="Terminal sessions" aria-controls="sidebar" aria-expanded="true"><svg class="icon" aria-hidden="true"><use href="#icon-sessions"/></svg></button>
-        <button id="activity-find" class="activity-button" title="Find in terminal (Ctrl+Shift+F)" aria-label="Find in terminal"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><span class="activity-label">Find in terminal</span></button>
-        <button id="activity-commands" class="activity-button" title="Session and terminal commands" aria-label="Session and terminal commands" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg><span class="activity-label">Commands</span></button>
-        <div class="activity-spacer"></div>
-        <button id="activity-info" class="activity-button" title="Session details" aria-label="Session details"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg></button>
-        <button id="activity-settings" class="activity-button" title="Terminal settings" aria-label="Terminal settings" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg><span class="activity-label">Terminal settings</span></button>
-      </nav>
-      <aside id="sidebar" class="sidebar" aria-label="Terminal sessions">
-        <div class="sidebar-heading"><h2>Terminals</h2><span id="session-count" class="count-badge" aria-label="Terminal count">0</span><button id="sidebar-new" class="icon-button" title="New terminal" aria-label="New terminal"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></button></div>
-        <div class="workspace-summary"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span id="workspace-name">Webterminal</span><span id="workspace-path" class="sr-only"></span></div>
-        <div id="session-list" class="session-list"></div>
-        <div id="sidebar-empty" class="sidebar-empty"><p>No terminals yet.</p></div>
-        <div class="sidebar-footer">
-          <details id="session-details"><summary><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg>Session details</summary><dl class="session-facts"><dt>Session</dt><dd id="detail-session">No terminal selected</dd><dt>Directory</dt><dd id="detail-directory"></dd><dt>Shell</dt><dd id="detail-shell"></dd><dt>Connection</dt><dd id="detail-connection"></dd></dl></details>
-          <details><summary><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg>Keyboard shortcuts</summary><div class="sidebar-shortcuts"><span>Find</span><kbd>Ctrl+Shift+F</kbd><span>Copy selection</span><kbd>Ctrl+Shift+C</kbd><span>Paste</span><kbd>Ctrl+V</kbd><span>Local selection</span><kbd>Shift+drag</kbd></div></details>
+    <nav class="rail" aria-label="Webterminal">
+      <button id="new-workspace" class="rail-button" type="button" title="New workspace — an empty tab for up to four terminals"><span class="rail-tile"><svg class="icon" aria-hidden="true"><use href="#icon-workspace"/></svg></span><span class="rail-label">Workspace</span></button>
+      <button id="new" class="rail-button" type="button" title="Open a terminal in this workspace"><span class="rail-tile"><svg class="icon" aria-hidden="true"><use id="new-icon" href="#icon-layout-1"/></svg></span><span id="new-label" class="rail-label">Terminal</span></button>
+      <span class="rail-divider" aria-hidden="true"></span>
+      <button id="reader-toggle" class="rail-button" type="button" aria-pressed="false" aria-controls="reader" title="Reader — Markdown copied from your terminals"><span class="rail-tile"><svg class="icon" aria-hidden="true"><use href="#icon-reader"/></svg><span id="reader-badge" class="rail-badge" hidden></span></span><span class="rail-label">Reader</span></button>
+      <span class="rail-spacer"></span>
+      <button id="settings" class="rail-button" type="button" title="Settings — font size and fullscreen" aria-haspopup="dialog"><span class="rail-tile"><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg></span><span class="rail-label">Settings</span></button>
+    </nav>
+    <div class="main">
+      <header class="workspace-bar">
+        <div id="workspace-tabs" class="workspace-tabs" role="tablist" aria-label="Workspaces"></div>
+        <span id="connection" class="connection" role="status"><span class="connection-dot"></span><span id="connection-status">Connecting…</span></span>
+      </header>
+      <main id="workspace" class="workspace" role="tabpanel" aria-label="Workspace">
+        <div id="pane-switcher" class="pane-switcher" aria-label="Terminals in this workspace" hidden></div>
+        <div id="panes" class="panes" data-count="0">
+          <section id="pane" class="pane" hidden>
+            <div id="pane-header" class="pane-header" draggable="true">
+              <span id="live-dot" class="pane-dot"></span>
+              <button id="terminal-title" class="pane-title" type="button">Terminal</button>
+              <span id="terminal-path" class="pane-path"></span>
+              <span id="pane-status" class="pane-status"></span>
+              <span class="pane-actions">
+                <button id="take-control" class="control-button" type="button" hidden>Take control</button>
+                <button id="find" class="icon-button" type="button" title="Find (Ctrl+Shift+F)" aria-label="Find in terminal"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg></button>
+                <button id="close-session" class="icon-button danger" type="button" title="Close terminal" aria-label="Close terminal"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button>
+              </span>
+            </div>
+            <div id="findbar" class="findbar" hidden><label class="sr-only" for="find-input">Find in terminal</label><input id="find-input" type="search" autocomplete="off" spellcheck="false" placeholder="Find"><span id="find-count" class="find-count"></span><button id="find-prev" class="icon-button" type="button" aria-label="Previous match"><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button><button id="find-next" class="icon-button" type="button" aria-label="Next match"><svg class="icon" aria-hidden="true"><use href="#icon-down"/></svg></button><button id="find-close" class="icon-button" type="button" aria-label="Close find"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
+            <div class="terminal-frame"><div id="terminal-scroll" class="terminal-scroll" role="log" aria-label="Terminal output" tabindex="0"><div id="terminal-lines" class="terminal-lines"></div></div><textarea id="keyboard" aria-label="Terminal keyboard input" aria-describedby="terminal-hint" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea></div><span id="terminal-hint" class="sr-only"></span>
+          </section>
         </div>
-      </aside>
-    </div>
-    <div class="main-column">
-    <header class="titlebar">
-      <nav id="menubar" class="menubar" aria-label="Application menus">
-        <button data-menu="File" aria-haspopup="menu" aria-expanded="false">File</button><button data-menu="Edit" aria-haspopup="menu" aria-expanded="false">Edit</button><button data-menu="Selection" aria-haspopup="menu" aria-expanded="false">Selection</button><button data-menu="View" aria-haspopup="menu" aria-expanded="false">View</button><button data-menu="Go" aria-haspopup="menu" aria-expanded="false">Go</button><button data-menu="Terminal" aria-haspopup="menu" aria-expanded="false">Terminal</button>
-      </nav>
-      <div class="title-center"><button id="previous-session" class="icon-button history-button" aria-label="Previous terminal" title="Previous terminal"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg></button><button id="next-session" class="icon-button history-button" aria-label="Next terminal" title="Next terminal"><svg class="icon" aria-hidden="true"><use href="#icon-forward"/></svg></button><button id="command-center" class="command-center" aria-label="Search sessions and commands" aria-haspopup="dialog"><span id="command-workspace">Webterminal</span><svg class="icon command-symbol" aria-hidden="true"><use href="#icon-terminal"/></svg><svg class="icon command-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></button></div>
-      <div class="title-actions"><button id="title-new" class="new-title-button" title="New terminal"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg><span>New</span></button><button id="toggle-sidebar" class="icon-button" title="Toggle session sidebar" aria-label="Toggle session sidebar" aria-controls="sidebar" aria-expanded="true"><svg class="icon" aria-hidden="true"><use href="#icon-sidebar"/></svg></button></div>
-    </header>
-    <div class="workbench">
-      <div id="editor-groups" class="editor-groups">
-      <main id="editor-primary" class="workspace editor-group focused-group" data-group="1" aria-label="Terminal group 1">
-        <div class="editor-bar"><span id="tabs-empty" class="tabs-empty"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg>Welcome</span><nav id="tabs" class="tabs" role="tablist" aria-label="Terminal sessions"></nav><div class="top-actions"><button id="new" class="icon-button" title="New terminal" aria-label="New terminal"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></button><button id="split-terminal" class="icon-button" title="Split terminal layout" aria-label="Split terminal layout"><svg class="icon" aria-hidden="true"><use href="#icon-split"/></svg></button><button id="find" class="icon-button" title="Find in terminal (Ctrl+Shift+F)" aria-label="Find in terminal"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg></button><button id="editor-more" class="icon-button" title="Terminal actions" aria-label="Terminal actions" aria-haspopup="menu" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-more"/></svg></button></div></div>
-        <div id="welcome" class="welcome">
-          <svg class="welcome-symbol icon" aria-hidden="true"><use href="#icon-terminal"/></svg><div class="welcome-heading"><h1>Webterminal</h1><p>Your local terminal workspace.</p></div>
-          <div class="welcome-columns"><section class="welcome-start"><h2>Start</h2><button id="welcome-new" class="start-button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg><span>New terminal<span class="start-description">Choose a working directory</span></span></button><p>Run your installed tools, including <code>jecode</code>, <code>codex</code> and <code>claude</code>.</p></section><section class="welcome-shortcuts"><h2>Terminal essentials</h2><div><span>Find in terminal</span><kbd>Ctrl+Shift+F</kbd></div><div><span>Copy selection</span><kbd>Ctrl+Shift+C</kbd></div><div><span>Paste</span><kbd>Ctrl+V</kbd></div><div><span>Local mouse selection</span><kbd>Shift+drag</kbd></div></section></div>
-        </div>
-        <div id="terminal-area" class="terminal-area" hidden>
-          <div class="terminal-toolbar"><div class="terminal-identity"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg><strong id="terminal-title">Terminal</strong><svg class="icon breadcrumb-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg><span id="terminal-path" class="terminal-path"></span><span id="live-dot" class="sr-only"></span></div><div class="terminal-actions"><button id="take-control" class="subtle-button" hidden>Take control</button><button id="copy" class="icon-button" title="Copy selection (Ctrl+Shift+C)" aria-label="Copy selection"><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg></button><button id="paste" class="icon-button" title="Paste" aria-label="Paste"><svg class="icon" aria-hidden="true"><use href="#icon-paste"/></svg></button><button id="close-session" class="icon-button danger" title="Close terminal" aria-label="Close terminal"><svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg></button></div></div>
-          <div id="findbar" class="findbar" hidden><label class="sr-only" for="find-input">Find in terminal</label><input id="find-input" type="search" autocomplete="off" spellcheck="false" placeholder="Find"><span id="find-count"></span><button id="find-prev" class="icon-button" aria-label="Previous match"><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button><button id="find-next" class="icon-button" aria-label="Next match"><svg class="icon" aria-hidden="true"><use href="#icon-down"/></svg></button><button id="find-close" class="icon-button" aria-label="Close find"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
-          <div id="terminal-frame" class="terminal-frame"><div id="terminal-scroll" class="terminal-scroll" role="log" aria-label="Terminal output" tabindex="0"><div id="terminal-lines" class="terminal-lines"></div></div><textarea id="keyboard" aria-label="Terminal keyboard input" aria-describedby="terminal-hint" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea></div><span id="terminal-hint" class="sr-only">Click to type. Hold Shift to select text when an application captures the mouse.</span>
+        <div id="empty-state" class="empty-state" hidden>
+          <span class="empty-mark"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg></span>
+          <h1 id="empty-heading">Empty workspace</h1>
+          <p>Open up to four terminals here, side by side.</p>
+          <button id="empty-new" class="primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>Open terminal</button>
         </div>
       </main>
+    </div>
+    <aside id="reader" class="reader" aria-label="Reader" hidden>
+      <header class="reader-header">
+        <button id="reader-back" class="icon-button" type="button" title="All documents" aria-label="All documents" hidden><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg></button>
+        <div class="reader-heading"><h2 id="reader-title">Reader</h2><span id="reader-meta" class="reader-meta"></span></div>
+        <button id="reader-paste" class="icon-button" type="button" title="Paste Markdown (Ctrl+V)" aria-label="Paste Markdown"><svg class="icon" aria-hidden="true"><use href="#icon-paste"/></svg></button>
+        <button id="reader-close" class="icon-button" type="button" title="Close Reader" aria-label="Close Reader"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button>
+      </header>
+      <div id="reader-tools" class="reader-tools" hidden>
+        <div class="reader-search"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><label class="sr-only" for="reader-search">Search this document</label><input id="reader-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"><output id="reader-count" class="reader-count" aria-live="polite"></output><button id="reader-prev" class="icon-button" type="button" aria-label="Previous match"><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button><button id="reader-next" class="icon-button" type="button" aria-label="Next match"><svg class="icon" aria-hidden="true"><use href="#icon-down"/></svg></button></div>
+        <button id="reader-outline-toggle" class="icon-button" type="button" title="Outline" aria-label="Outline" aria-expanded="false" aria-controls="reader-outline"><svg class="icon" aria-hidden="true"><use href="#icon-outline"/></svg></button>
+        <button id="reader-copy" class="icon-button" type="button" title="Copy Markdown" aria-label="Copy Markdown"><svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg></button>
       </div>
-    </div>
-    <footer id="statusbar" class="statusbar"><div class="status-left"><span class="connection-indicator"><svg class="icon" aria-hidden="true"><use href="#icon-local"/></svg><span id="connection-dot" class="connection-dot"></span></span><span id="connection-status">Connecting…</span><span id="status-session-count">0 terminals</span></div><div class="status-right"><span id="view-status"></span><span id="terminal-size"></span><span id="status-shell"></span><span id="status-font">14 px</span></div></footer>
-    </div>
+      <nav id="reader-outline" class="reader-outline" aria-label="Outline" hidden></nav>
+      <div id="reader-body" class="reader-body" tabindex="0" aria-label="Reader content">
+        <article id="reader-article" class="md" hidden></article>
+        <ul id="reader-list" class="reader-list" aria-label="Documents" hidden></ul>
+        <div id="reader-empty" class="reader-empty">
+          <svg class="icon reader-empty-icon" aria-hidden="true"><use href="#icon-reader"/></svg>
+          <h3>Read agent replies in comfort</h3>
+          <p>Run <kbd>/copy</kbd> in your agent, then paste here. With Follow clipboard on, new copies appear by themselves.</p>
+          <button id="reader-empty-paste" class="primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-paste"/></svg>Paste Markdown</button>
+        </div>
+      </div>
+      <footer class="reader-footer">
+        <button id="reader-follow" class="switch" type="button" role="switch" aria-checked="false" title="Pick up Markdown that agents copy to the clipboard"><span class="switch-track"><span class="switch-thumb"></span></span><span>Follow clipboard</span></button>
+        <span id="reader-status" class="reader-status"></span>
+      </footer>
+    </aside>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden><svg id="toast-icon" class="icon" aria-hidden="true"><use href="#icon-info"/></svg><span id="toast-message"></span><button id="toast-close" class="icon-button" aria-label="Dismiss notification"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
   </div>
-  <div id="application-menu" class="application-menu" role="menu" hidden></div>
-  <dialog id="preferences-dialog" class="preferences-dialog" aria-labelledby="preferences-heading"><div class="dialog-heading"><h2 id="preferences-heading">Terminal settings</h2><button id="preferences-close" class="icon-button" aria-label="Close settings"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div><div class="preference-row"><div><label>Font size</label><p>Applies to the terminal text.</p></div><div class="font-controls"><button id="smaller" class="icon-button" title="Decrease font size" aria-label="Decrease font size">−</button><output id="preferences-font">14 px</output><button id="larger" class="icon-button" title="Increase font size" aria-label="Increase font size">+</button></div></div><div class="preference-row"><div><label>Fullscreen</label><p>Capture more keyboard shortcuts where supported.</p></div><button id="fullscreen" class="subtle-button">Toggle fullscreen</button></div></dialog>
+  <dialog id="preferences-dialog" class="preferences-dialog" aria-labelledby="preferences-heading"><div class="dialog-heading"><h2 id="preferences-heading">Settings</h2><button id="preferences-close" class="icon-button" aria-label="Close settings"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div><div class="preference-row"><div><span class="preference-label">Font size</span><p>Applies to all terminals.</p></div><div class="font-controls"><button id="smaller" class="icon-button" title="Decrease font size" aria-label="Decrease font size">−</button><output id="preferences-font">14 px</output><button id="larger" class="icon-button" title="Increase font size" aria-label="Increase font size">+</button></div></div><div class="preference-row"><div><span class="preference-label">Fullscreen</span><p>Lets terminals receive more keyboard shortcuts where supported.</p></div><button id="fullscreen" class="subtle-button">Toggle fullscreen</button></div><div class="preference-row shortcuts"><span class="preference-label">Shortcuts</span><dl><dt>Find</dt><dd><kbd>Ctrl+Shift+F</kbd></dd><dt>Copy selection</dt><dd><kbd>Ctrl+Shift+C</kbd></dd><dt>Paste</dt><dd><kbd>Ctrl+V</kbd></dd><dt>Select while an app uses the mouse</dt><dd><kbd>Shift+drag</kbd></dd></dl></div></dialog>
   <dialog id="notice-dialog" class="notice-dialog" aria-labelledby="notice-heading" aria-describedby="notice-description"><div class="notice-content"><svg id="notice-icon" class="icon notice-icon" aria-hidden="true"><use href="#icon-warning"/></svg><div class="notice-copy"><h2 id="notice-heading"></h2><p id="notice-description"></p><dl id="notice-details"></dl></div><button id="notice-dismiss" class="icon-button" aria-label="Cancel"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div><div class="notice-actions"><button id="notice-cancel" class="subtle-button">Cancel</button><button id="notice-confirm" class="primary-button"></button></div></dialog>
-  <dialog id="command-dialog" class="command-dialog" aria-labelledby="command-heading"><h2 id="command-heading" class="sr-only">Sessions and terminal commands</h2><div class="command-input-row"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><input id="command-input" type="text" role="combobox" aria-label="Search sessions and commands" aria-controls="command-list" aria-expanded="true" aria-autocomplete="list" placeholder="Search sessions and commands" autocomplete="off" spellcheck="false"><button id="command-close" class="icon-button" aria-label="Close commands"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div><div id="command-list" class="command-list" role="listbox" aria-label="Matching sessions and commands"></div><div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>Enter</kbd> run</span><span><kbd>Esc</kbd> close</span></div></dialog>
   <dialog id="directory-dialog" class="directory-dialog" aria-labelledby="directory-heading">
     <form method="dialog" id="directory-form">
-      <div class="directory-heading"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg><h2 id="directory-heading">New terminal</h2><button class="icon-button" value="cancel" aria-label="Cancel"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
-      <div class="directory-navigation"><button id="directory-up" type="button" class="icon-button" title="Parent folder (Alt+Up)" aria-label="Parent folder" disabled><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button><button id="directory-home" type="button" class="icon-button" title="Return to starting folder" aria-label="Return to starting folder"><svg class="icon" aria-hidden="true"><use href="#icon-home"/></svg></button><div class="path-entry text-field"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><label for="directory-path" class="sr-only">Folder location</label><input id="directory-path" type="text" spellcheck="false" autocomplete="off"><button id="directory-go" type="button" class="icon-button" title="Open location (Enter)" aria-label="Open location"><svg class="icon" aria-hidden="true"><use href="#icon-forward"/></svg></button></div></div>
-      <nav id="directory-breadcrumbs" class="directory-breadcrumbs" aria-label="Folder path"></nav>
-      <div class="directory-tools"><div class="directory-filter text-field"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><label for="directory-filter" class="sr-only">Filter folders</label><input id="directory-filter" type="search" placeholder="Filter folders" spellcheck="false" autocomplete="off"></div><span id="directory-message" class="directory-message" role="status"></span></div>
-      <div id="directory-error" class="directory-error" role="alert" hidden><svg class="icon" aria-hidden="true"><use href="#icon-error"/></svg><span id="directory-error-text"></span></div>
-      <div id="directory-list" class="directory-list" role="listbox" aria-label="Folders" aria-describedby="directory-help" tabindex="-1"></div>
-      <p id="directory-help" class="directory-help">Click to select · Double-click or Enter to open a folder</p>
-      <div class="directory-footer"><span class="directory-selection"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span id="directory-selected"></span></span><button class="subtle-button" value="cancel">Cancel</button><button id="directory-create" class="primary-button" type="button" disabled>Open terminal</button></div>
+      <div class="directory-heading"><h2 id="directory-heading">Open terminal</h2><button class="icon-button" value="cancel" aria-label="Cancel"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
+      <div class="directory-toolbar">
+        <button id="directory-back" type="button" class="icon-button" title="Back (Alt+Left)" aria-label="Back" disabled><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg></button>
+        <button id="directory-forward" type="button" class="icon-button" title="Forward (Alt+Right)" aria-label="Forward" disabled><svg class="icon" aria-hidden="true"><use href="#icon-forward"/></svg></button>
+        <button id="directory-up" type="button" class="icon-button" title="Up (Alt+Up)" aria-label="Up one level" disabled><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+        <div id="directory-address" class="directory-address" title="Click to type a location (Ctrl+L)">
+          <nav id="directory-breadcrumbs" class="directory-breadcrumbs" aria-label="Folder path"></nav>
+          <label for="directory-path" class="sr-only">Folder location</label><input id="directory-path" type="text" spellcheck="false" autocomplete="off" hidden>
+        </div>
+        <div class="directory-search"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><label for="directory-filter" class="sr-only">Search this folder</label><input id="directory-filter" type="search" placeholder="Search" spellcheck="false" autocomplete="off"></div>
+      </div>
+      <div class="directory-body">
+        <nav id="directory-places" class="directory-places" aria-label="Places"></nav>
+        <div class="directory-content">
+          <div id="directory-error" class="directory-error" role="alert" hidden><svg class="icon" aria-hidden="true"><use href="#icon-error"/></svg><span id="directory-error-text"></span></div>
+          <div class="directory-columns" aria-hidden="true"><span>Name</span></div>
+          <div id="directory-list" class="directory-list" role="listbox" aria-label="Folders" tabindex="-1"></div>
+        </div>
+      </div>
+      <div class="directory-footer">
+        <span id="directory-message" class="directory-message" role="status"></span>
+        <span class="directory-selection"><span>Folder:</span><output id="directory-selected"></output></span>
+        <button class="subtle-button" value="cancel">Cancel</button><button id="directory-create" class="primary-button" type="button" disabled>Open terminal</button>
+      </div>
     </form>
   </dialog>
-  <dialog id="rename-dialog" class="rename-dialog" aria-labelledby="rename-heading"><form method="dialog" id="rename-form"><div class="dialog-heading"><h2 id="rename-heading">Rename terminal</h2><button class="icon-button" value="cancel" aria-label="Cancel"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div><label for="rename-input">Name</label><input id="rename-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="rename-help"><p id="rename-help">Leave empty to use the program's title.</p><p id="rename-error" role="alert" hidden></p><div class="dialog-actions"><button class="subtle-button" value="cancel">Cancel</button><button id="rename-save" class="primary-button" type="button">Save name</button></div></form></dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

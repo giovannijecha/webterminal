@@ -303,94 +303,24 @@ impl Screen {
         self.bottom = rows - 1;
         self.wrap_pending = false;
     }
+    /// Resizes like the console host behind ConPTY, which repaints its
+    /// viewport at absolute positions right after: the top row stays
+    /// anchored, the view scrolls only to keep the cursor visible, and growing
+    /// never pulls history back. Any other policy duplicates or loses rows
+    /// between history and the repainted screen.
     pub fn resize_primary(&mut self, cols: usize, rows: usize) {
-        let old_cols = self.lines[0].cells.len();
-        if cols == old_cols {
-            while self.lines.len() > rows {
-                let old = self.lines.remove(0);
-                self.history.push_back(old);
-                self.y = self.y.saturating_sub(1);
-            }
-            while self.lines.len() < rows {
-                if let Some(line) = self.history.pop_back() {
-                    self.lines.insert(0, line);
-                    self.y += 1;
-                } else {
-                    self.lines.push(Line::new(cols));
-                }
-            }
+        if cols == self.lines[0].cells.len() {
+            let shift = (self.y + 1).saturating_sub(rows);
+            self.history.extend(self.lines.drain(..shift));
+            self.y -= shift;
+            self.lines.resize_with(rows, || Line::new(cols));
         } else {
-            let cursor_line = self.history.len() + self.y;
-            let cursor_x = self.x;
-            let mut mapped_cursor = None;
-            let all: Vec<Line> = self.history.drain(..).chain(self.lines.drain(..)).collect();
-            let mut rebuilt = Vec::<Line>::new();
-            let mut current = Line::new(cols);
-            let mut x = 0;
-            for (line_index, line) in all.into_iter().enumerate() {
-                let used = line
-                    .cells
-                    .iter()
-                    .rposition(|c| c.text != " " && c.width != 0)
-                    .map_or(0, |i| i + 1);
-                let used = if line.wrapped { old_cols } else { used };
-                let mut i = 0;
-                while i < used {
-                    if line_index == cursor_line && i >= cursor_x && mapped_cursor.is_none() {
-                        mapped_cursor = Some((rebuilt.len(), x.min(cols - 1)));
-                    }
-                    let cell = &line.cells[i];
-                    let w = cell.width as usize;
-                    if w > 0 {
-                        let placed_width = w.min(cols);
-                        if x + placed_width > cols {
-                            current.wrapped = true;
-                            rebuilt.push(current);
-                            current = Line::new(cols);
-                            x = 0;
-                        }
-                        if w <= cols {
-                            current.cells[x] = cell.clone();
-                            if w == 2 {
-                                current.cells[x + 1] = line.cells[i + 1].clone();
-                            }
-                            x += w;
-                        } else {
-                            current.cells[x] = Cell {
-                                text: "\u{fffd}".into(),
-                                width: 1,
-                                style: cell.style.clone(),
-                            };
-                            x += 1;
-                        }
-                    }
-                    i += w.max(1);
-                }
-                if line_index == cursor_line && mapped_cursor.is_none() {
-                    mapped_cursor = Some((
-                        rebuilt.len(),
-                        (x + cursor_x.saturating_sub(used)).min(cols - 1),
-                    ));
-                }
-                if !line.wrapped {
-                    rebuilt.push(current);
-                    current = Line::new(cols);
-                    x = 0;
-                }
-            }
-            if x > 0 {
-                rebuilt.push(current);
-            }
-            while rebuilt.len() < rows {
-                rebuilt.push(Line::new(cols));
-            }
-            let split = rebuilt.len().saturating_sub(rows);
-            self.history = rebuilt.drain(..split).collect();
-            self.lines = rebuilt;
-            if let Some((row, col)) = mapped_cursor {
-                self.y = row.saturating_sub(split).min(rows - 1);
-                self.x = col;
-            }
+            let (mut all, top, (y, x)) = self.reflow(cols);
+            let top = top.max((y + 1).saturating_sub(rows));
+            all.resize_with(top + rows, || Line::new(cols));
+            self.lines = all.split_off(top);
+            self.history = all.into();
+            (self.y, self.x) = (y - top, x);
         }
         self.recount_history(cols);
         self.x = self.x.min(cols - 1);
@@ -398,5 +328,77 @@ impl Screen {
         self.top = 0;
         self.bottom = rows - 1;
         self.wrap_pending = false;
+    }
+    /// Rewraps history and screen to `cols`, returning the rows, the new index
+    /// of the old top screen row and the cursor position.
+    fn reflow(&mut self, cols: usize) -> (Vec<Line>, usize, (usize, usize)) {
+        let old_cols = self.lines[0].cells.len();
+        let top_line = self.history.len();
+        let cursor_line = top_line + self.y;
+        let cursor_x = self.x;
+        let mut top = 0;
+        let mut mapped_cursor = None;
+        let all: Vec<Line> = self.history.drain(..).chain(self.lines.drain(..)).collect();
+        let mut rebuilt = Vec::<Line>::new();
+        let mut current = Line::new(cols);
+        let mut x = 0;
+        for (line_index, line) in all.into_iter().enumerate() {
+            if line_index == top_line {
+                top = rebuilt.len();
+            }
+            let used = line
+                .cells
+                .iter()
+                .rposition(|c| c.text != " " && c.width != 0)
+                .map_or(0, |i| i + 1);
+            let used = if line.wrapped { old_cols } else { used };
+            let mut i = 0;
+            while i < used {
+                if line_index == cursor_line && i >= cursor_x && mapped_cursor.is_none() {
+                    mapped_cursor = Some((rebuilt.len(), x.min(cols - 1)));
+                }
+                let cell = &line.cells[i];
+                let w = cell.width as usize;
+                if w > 0 {
+                    let placed_width = w.min(cols);
+                    if x + placed_width > cols {
+                        current.wrapped = true;
+                        rebuilt.push(current);
+                        current = Line::new(cols);
+                        x = 0;
+                    }
+                    if w <= cols {
+                        current.cells[x] = cell.clone();
+                        if w == 2 {
+                            current.cells[x + 1] = line.cells[i + 1].clone();
+                        }
+                        x += w;
+                    } else {
+                        current.cells[x] = Cell {
+                            text: "\u{fffd}".into(),
+                            width: 1,
+                            style: cell.style.clone(),
+                        };
+                        x += 1;
+                    }
+                }
+                i += w.max(1);
+            }
+            if line_index == cursor_line && mapped_cursor.is_none() {
+                mapped_cursor = Some((
+                    rebuilt.len(),
+                    (x + cursor_x.saturating_sub(used)).min(cols - 1),
+                ));
+            }
+            if !line.wrapped {
+                rebuilt.push(current);
+                current = Line::new(cols);
+                x = 0;
+            }
+        }
+        if x > 0 {
+            rebuilt.push(current);
+        }
+        (rebuilt, top, mapped_cursor.unwrap_or((top, 0)))
     }
 }

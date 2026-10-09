@@ -2,7 +2,7 @@
 mod http;
 use crate::{
     json, native,
-    session::{self, Registry},
+    session::{self, Registry, WorkspaceClose},
     terminal::SnapshotBaseline,
     websocket::{self, Decoder, Message},
 };
@@ -328,18 +328,58 @@ fn command_action(
             if command.get("profile").is_some() {
                 return Err("Per-terminal shell selection is not supported".into());
             }
-            let session =
-                registry.create(&PathBuf::from(command.field("cwd")?), size.0, size.1, view)?;
+            let workspace = match command.get("workspace") {
+                None => None,
+                Some(value) => Some(value.string().ok_or("Workspace must be a workspace ID")?),
+            };
+            let (session, workspace) = registry.create(
+                &PathBuf::from(command.field("cwd")?),
+                size.0,
+                size.1,
+                view,
+                workspace,
+            )?;
             attached.insert(session.id.clone(), Attachment::new(updates, 0));
-            let request = request.map_or_else(String::new, |value| format!(",\"request\":{value}"));
             return Ok(Some(format!(
-                "{{\"type\":\"created\",\"id\":{}{request}}}",
+                "{{\"type\":\"created\",\"id\":{},\"workspace\":{}{}}}",
                 json::quote(&session.id),
+                json::quote(&workspace),
+                request_field(request),
             )));
         }
-        "reorder" => {
+        "create-workspace" => {
+            let request = create_request(command)?;
+            let id = registry.create_workspace()?;
+            return Ok(Some(format!(
+                "{{\"type\":\"workspace-created\",\"id\":{}{}}}",
+                json::quote(&id),
+                request_field(request),
+            )));
+        }
+        "rename-workspace" => {
+            registry.rename_workspace(command.field("id")?, command.field("name")?)?;
+            return Ok(None);
+        }
+        "close-workspace" => {
+            let id = command.field("id")?;
+            let confirmed = confirmed_targets(command)?;
+            match registry.close_workspace(id, confirmed.as_deref())? {
+                WorkspaceClose::Busy { sessions, targets } => {
+                    return Ok(Some(format!(
+                        "{{\"type\":\"busy\",\"op\":\"close-workspace\",\"id\":{},\"sessions\":{},\"targets\":{}}}",
+                        json::quote(id),
+                        json_ids(&sessions),
+                        json_ids(&targets)
+                    )));
+                }
+                WorkspaceClose::Closed => {}
+            }
+            attached.retain(|id, _| registry.get(id).is_ok());
+            return Ok(None);
+        }
+        "order-workspaces" => {
             let Some(json::Value::Array(values)) = command.get("ids") else {
-                return Err("Order must be an array of session IDs".into());
+                return Err("Order must be an array of workspace IDs".into());
             };
             let ids = values
                 .iter()
@@ -347,10 +387,22 @@ fn command_action(
                     value
                         .string()
                         .map(str::to_owned)
-                        .ok_or("Order must be an array of session IDs".into())
+                        .ok_or("Order must be an array of workspace IDs".into())
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            registry.reorder(&ids)?;
+            registry.order_workspaces(&ids)?;
+            return Ok(None);
+        }
+        "move" => {
+            let position = command.integer("position")?;
+            if position < 0 {
+                return Err("Position must not be negative".into());
+            }
+            registry.move_session(
+                command.field("id")?,
+                command.field("workspace")?,
+                position as usize,
+            )?;
             return Ok(None);
         }
         _ => {}
@@ -389,6 +441,10 @@ fn command_action(
         "claim" => session.claim(view, session::geometry(command)?)?,
         "release" => session.release(view)?,
         "close" => {
+            let busy = session.busy().then(|| id.to_owned()).into_iter().collect();
+            if let Some(reply) = busy_reply(command, op, id, busy) {
+                return Ok(Some(reply));
+            }
             registry.close(id)?;
             attached.remove(id);
         }
@@ -402,6 +458,61 @@ fn command_action(
         _ => return Err("Unknown terminal operation".into()),
     }
     Ok(None)
+}
+
+/// Closing a running program needs the client to confirm and resend with
+/// `force`; terminals idle at their shell close at once.
+fn busy_reply(command: &json::Value, op: &str, id: &str, busy: Vec<String>) -> Option<String> {
+    if busy.is_empty() || matches!(command.get("force"), Some(json::Value::Bool(true))) {
+        return None;
+    }
+    Some(format!(
+        "{{\"type\":\"busy\",\"op\":{},\"id\":{},\"sessions\":{}}}",
+        json::quote(op),
+        json::quote(id),
+        json_ids(&busy)
+    ))
+}
+
+fn json_ids(ids: &[String]) -> String {
+    format!(
+        "[{}]",
+        ids.iter()
+            .map(|id| json::quote(id))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn confirmed_targets(command: &json::Value) -> Result<Option<Vec<String>>, String> {
+    let forced = match command.get("force") {
+        None | Some(json::Value::Bool(false)) => false,
+        Some(json::Value::Bool(true)) => true,
+        _ => return Err("Workspace force must be a boolean".into()),
+    };
+    if !forced {
+        if command.get("confirmed").is_some() {
+            return Err("Workspace confirmation requires force".into());
+        }
+        return Ok(None);
+    }
+    let Some(json::Value::Array(values)) = command.get("confirmed") else {
+        return Err("Workspace force requires confirmed session IDs".into());
+    };
+    if values.len() > 4 {
+        return Err("Workspace confirmation has too many session IDs".into());
+    }
+    let mut confirmed = Vec::with_capacity(values.len());
+    for value in values {
+        let id = value
+            .string()
+            .ok_or("Workspace confirmation must contain session IDs")?;
+        if confirmed.iter().any(|existing| existing == id) {
+            return Err("Workspace confirmation contains duplicate session IDs".into());
+        }
+        confirmed.push(id.to_owned());
+    }
+    Ok(Some(confirmed))
 }
 
 const MAX_SAFE_REQUEST: i64 = 9_007_199_254_740_991;
@@ -420,6 +531,10 @@ fn create_request(command: &json::Value) -> Result<Option<i64>, String> {
     valid_request(command)
         .map(Some)
         .ok_or_else(|| "Create request must be a positive safe integer".into())
+}
+
+fn request_field(request: Option<i64>) -> String {
+    request.map_or_else(String::new, |value| format!(",\"request\":{value}"))
 }
 
 fn command_error(error: &str, command: Option<&json::Value>) -> String {

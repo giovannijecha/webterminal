@@ -9,35 +9,43 @@ import {chromeProbe,findChrome,freePort,proxyFor,ready,stopChild,stopProxy} from
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const target=resolve(root,'target');
+const scratch=resolve(root,'.tmp');
 const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(target,'debug'));
-const runRoot=resolve(target,`shells-${process.pid}-${Date.now()}`);
-assert.ok(runRoot.startsWith(target+sep));
-const cwd=resolve(runRoot,'workspace'),profile=resolve(runRoot,'shell-profile'),reports=resolve(target,'shells');
+const runRoot=resolve(scratch,`shells-${process.pid}-${Date.now()}`);
+assert.ok(runRoot.startsWith(scratch+sep));
+const cwd=resolve(runRoot,'workspace'),profile=resolve(runRoot,'shell-profile'),reports=resolve(scratch,'browser-reports','shells');
 for(const path of [cwd,reports,profile,resolve(profile,'AppData/Roaming'),resolve(profile,'AppData/Local'),resolve(profile,'Temp')])await mkdir(path,{recursive:true});
 await writeFile(resolve(cwd,'webterminal-listing-marker.txt'),'Owned shell fixture.\n');
+await writeFile(resolve(cwd,'wt.txt'),'Short filename for split-pane PowerShell table.\n');
 await copyFile(resolve(binaries,'webterminal.exe'),resolve(runRoot,'webterminal.exe'));
 
 const harness=String.raw`
 const CWD=__CWD__;
 const $=id=>document.getElementById(id);
 const checks=JSON.parse(sessionStorage.getItem('shellChecks')||'[]');
+let lastMatch='';
+let listingLines=[];
+let activeId=sessionStorage.getItem('shellActive'),activeIndex=Number(sessionStorage.getItem('shellIndex')||1);
+function pane(){return $(activeIndex===1?'pane':'pane'+activeIndex+'-pane');}
+function keyboard(){return $(activeIndex===1?'keyboard':'pane'+activeIndex+'-keyboard');}
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,label){for(let i=0;i<500;i++){if(await test())return;await pause(20);}throw new Error('Timed out: '+label);}
 function check(value,label){if(!value)throw new Error(label);checks.push(label);}
-function current(){return window.__snapshotBodies[sessionStorage.getItem('webterminal.active')];}
+function current(){return window.__snapshotBodies[activeId];}
 function screen(){return current()?.terminal.screen.map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n')||'';}
+function transcript(){const terminal=current()?.terminal;return terminal?[...terminal.history,...terminal.screen].map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n'):'';}
 async function sessions(){return(await(await fetch('/api/sessions',{cache:'no-store'})).json()).sessions;}
-function key(name,code,keyCode){for(const type of ['keydown','keyup']){const event=new KeyboardEvent(type,{key:name,code,bubbles:true,cancelable:true});Object.defineProperty(event,'keyCode',{value:keyCode});$('keyboard').dispatchEvent(event);}}
-function send(command){const transfer=new DataTransfer();transfer.setData('text/plain',command);$('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));key('Enter','Enter',13);}
-async function run(command,marker,exact=false){const seq=current().seq;send(command);await until(()=>current().seq>seq&&(exact?screen().split('\n').some(line=>line.trim()===marker):screen().includes(marker)),'command '+command);}
+function key(name,code,keyCode){for(const type of ['keydown','keyup']){const event=new KeyboardEvent(type,{key:name,code,bubbles:true,cancelable:true});Object.defineProperty(event,'keyCode',{value:keyCode});keyboard().dispatchEvent(event);}}
+function send(command){const transfer=new DataTransfer();transfer.setData('text/plain',command);keyboard().focus();keyboard().dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));key('Enter','Enter',13);}
+async function run(command,marker,exact=false){const seq=current().seq;send(command);await until(()=>{const next=transcript();if(current().seq>seq&&(exact?next.split('\n').some(line=>line.trim()===marker):next.includes(marker))){lastMatch=next;return true;}return false;},'command '+command);}
 async function openPicker(){
   $('new').click();await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'picker');
   check(!$('directory-shell')&&!document.querySelector('.directory-profile'),'folder picker has no shell selection');
 }
 async function nativeKey(name){document.body.dataset.shellKey=name;await until(()=>document.body.dataset.shellKeyDone===name,'native key '+name);document.body.dataset.shellKey='';document.body.dataset.shellKeyDone='';}
 async function capture(name,width){document.body.dataset.shellCapture=JSON.stringify({name,width});await until(()=>document.body.dataset.shellCaptured===name,'capture '+name);}
-async function create(count){$('directory-create').focus();await nativeKey('Enter');await until(async()=>(await sessions()).length===count&&$('view-status').textContent==='Controlling','session '+count);return sessionStorage.getItem('webterminal.active');}
-async function switchTo(id){document.querySelector('.session-entry[data-session="'+id+'"]').click();await until(()=>sessionStorage.getItem('webterminal.active')===id&&$('view-status').textContent==='Controlling','switch '+id);}
+async function create(count){$('directory-create').focus();await nativeKey('Enter');await until(async()=>(await sessions()).length===count&&$(count===1?'pane':'pane'+count+'-pane').dataset.status==='Controlling','session '+count);activeIndex=count;activeId=(await sessions())[count-1].id;sessionStorage.setItem('shellActive',activeId);sessionStorage.setItem('shellIndex',String(count));return activeId;}
+async function switchTo(id){const all=await sessions();activeIndex=all.findIndex(session=>session.id===id)+1;activeId=id;sessionStorage.setItem('shellActive',id);sessionStorage.setItem('shellIndex',String(activeIndex));keyboard().focus();await until(()=>pane().classList.contains('focused')&&pane().dataset.status==='Controlling','focus '+id);}
 async function rejectedProfile(profile){
   const ws=new WebSocket('ws://'+location.host+'/ws');await new Promise(resolve=>ws.addEventListener('open',resolve,{once:true}));
   const result=new Promise(resolve=>ws.addEventListener('message',event=>{const message=JSON.parse(event.data);if(message.type==='error')resolve(message);}));
@@ -49,15 +57,15 @@ async function main(){
   await until(()=>$('connection-status').textContent==='Connected','connection');
   if(sessionStorage.getItem('shellStage')==='reloaded'){
     const first=sessionStorage.getItem('shellFirst'),second=sessionStorage.getItem('shellSecond');
-    await until(()=>$('view-status').textContent==='Controlling'&&current(),'restored control');
+    await until(()=>pane().dataset.status==='Controlling'&&current(),'restored control');
     check((await sessions()).length===2,'browser reload retains both PowerShell sessions');
     await run("Write-Output ('RELOADED_' + $webterminalProbeValue)",'RELOADED_41');
-    check($('status-shell').textContent.includes('powershell.exe'),'reloaded PowerShell keeps its shell metadata');
-    await switchTo(second);check($('status-shell').textContent.includes('powershell.exe'),'second reloaded terminal remains PowerShell');
+    check((await sessions()).find(item=>item.id===first).shell.includes('powershell.exe'),'reloaded PowerShell keeps its shell metadata');
+    await switchTo(second);check((await sessions()).find(item=>item.id===second).shell.includes('powershell.exe'),'second reloaded terminal remains PowerShell');
     await run("Write-Output ('SECOND_RELOADED_' + $webterminalProbeValue)",'SECOND_RELOADED_99');
     check(true,'reload restores independent PowerShell variables');
     await switchTo(first);check(window.__probeErrors.length===0,'no browser exceptions or invalid deltas');
-    const bytes=new TextEncoder().encode(JSON.stringify({pass:true,checks,userAgent:navigator.userAgent,errors:window.__probeErrors}));
+    const bytes=new TextEncoder().encode(JSON.stringify({pass:true,checks,userAgent:navigator.userAgent,errors:window.__probeErrors,listingLines:JSON.parse(sessionStorage.getItem('shellListingLines')||'[]')}));
     document.body.dataset.probeResult=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));return;
   }
   check((await sessions()).length===0,'fresh isolated server has no terminals');
@@ -82,18 +90,21 @@ async function main(){
   await capture('powershell-terminal',1280);
   await openPicker();
   const second=await create(2);await until(()=>screen().includes('PS ')&&screen().includes('>'),'second PowerShell prompt');
-  check($('status-shell').textContent.includes('powershell.exe')&&$('detail-shell').textContent.includes('powershell.exe'),'new terminals consistently show PowerShell metadata');
-  await run('ls','webterminal-listing-marker.txt');check(true,'second PowerShell lists the same working directory');
+  check((await sessions()).every(item=>item.shell.includes('powershell.exe')),'new terminals consistently retain PowerShell metadata');
+  await run("Write-Output 'SECOND_READY'",'SECOND_READY');
+  await run("ls; Write-Output ('AFTER_' + 'LS')",'AFTER_LS');
+  listingLines=lastMatch.split('\n').map(line=>line.trim()).filter(Boolean).slice(-25);
+  check(listingLines.some(line=>line.includes('wt.txt')),'second PowerShell lists the same working directory');
   await run("$webterminalProbeValue = 99; Write-Output ('SECOND_' + $webterminalProbeValue)",'SECOND_99');
   const metadata=await sessions();check(first!==second&&metadata.every(session=>session.alive&&session.shell==='powershell.exe -NoLogo -NoProfile')&&metadata[0].cwd===metadata[1].cwd,'independent PowerShell sessions can share the same directory');
   await rejectedProfile('cmd');await rejectedProfile('cmd.exe /c unwanted-fixture');await rejectedProfile(42);
   await openPicker();
   document.querySelector('#directory-form button[value="cancel"]').click();
-  await switchTo(first);check($('status-shell').textContent.includes('powershell.exe'),'switching tabs retains PowerShell metadata');
+  await switchTo(first);check((await sessions()).find(item=>item.id===first).shell.includes('powershell.exe'),'switching panes retains PowerShell metadata');
   await run("Write-Output ('SWITCHED_' + $webterminalProbeValue)",'SWITCHED_41');check(true,'switching tabs retains independent PowerShell variables');
-  sessionStorage.setItem('shellFirst',first);sessionStorage.setItem('shellSecond',second);sessionStorage.setItem('shellChecks',JSON.stringify(checks));sessionStorage.setItem('shellStage','reloaded');location.reload();
+  sessionStorage.setItem('shellFirst',first);sessionStorage.setItem('shellSecond',second);sessionStorage.setItem('shellChecks',JSON.stringify(checks));sessionStorage.setItem('shellListingLines',JSON.stringify(listingLines));sessionStorage.setItem('shellStage','reloaded');location.reload();
 }
-main().catch(error=>{const bytes=new TextEncoder().encode(JSON.stringify({pass:false,error:String(error),checks,errors:window.__probeErrors,text:screen().slice(-700)}));document.body.dataset.probeResult=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));});
+main().catch(error=>{const bytes=new TextEncoder().encode(JSON.stringify({pass:false,error:String(error),checks,errors:window.__probeErrors,text:screen().slice(-700),lastLines:lastMatch.split('\n').filter(line=>line.trim()).slice(0,24),transcript:transcript().split('\n').filter(line=>line.trim()).slice(0,24),geometry:[current()?.terminal.cols,current()?.terminal.rows,current()?.terminal.history.length,current()?.terminal.alternate],activeId,activeIndex,paneText:pane()?.querySelector('.terminal-lines')?.textContent.slice(-700),snapshots:Object.keys(window.__snapshotBodies),wire:window.__wire.slice(-5)}));document.body.dataset.probeResult=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join(''));});
 `;
 
 const environment={};

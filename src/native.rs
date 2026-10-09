@@ -20,7 +20,7 @@ mod windows;
 
 #[cfg(windows)]
 #[allow(unused_imports)] // Included as a private module by native fixture tests.
-pub use windows::{Pty, install_shutdown_handler, shutdown_requested, spawn};
+pub use windows::{Pty, install_shutdown_handler, logical_drives, shutdown_requested, spawn};
 
 pub struct Spawned {
     pub pty: Arc<Pty>,
@@ -42,6 +42,9 @@ impl Pty {
     pub fn exit_code(&self) -> io::Result<Option<u32>> {
         unsupported()
     }
+    pub fn active_processes(&self) -> io::Result<u32> {
+        unsupported()
+    }
     pub fn process_id(&self) -> u32 {
         0
     }
@@ -58,6 +61,10 @@ pub fn install_shutdown_handler() -> io::Result<()> {
 #[cfg(not(windows))]
 pub fn shutdown_requested() -> bool {
     false
+}
+#[cfg(not(windows))]
+pub fn logical_drives() -> Vec<String> {
+    Vec::new()
 }
 #[cfg(not(windows))]
 fn unsupported<T>() -> io::Result<T> {

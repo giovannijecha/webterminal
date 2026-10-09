@@ -28,7 +28,7 @@ const results=JSON.parse(sessionStorage.getItem('apiBrowserResults')||'[]');
 const $=id=>document.getElementById(id);
 const text=()=>$('terminal-lines').textContent||'';
 function liveText(){
-  const shot=window.__snapshotBodies[sessionStorage.getItem('webterminal.active')];
+  const shot=window.__snapshotBodies[window.__snapshots.at(-1)?.id];
   return (shot?.terminal?.screen||[]).map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n');
 }
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -57,11 +57,12 @@ async function counts(){return (await (await fetch('/probe-counts',{cache:'no-st
 async function create(){
   $('new').click();
   await until(()=>$('directory-dialog').open,'directory dialog');
-  $('directory-path').value=CWD;$('directory-go').click();
+  $('directory-address').click();$('directory-path').value=CWD;
+  $('directory-path').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
   await until(()=>!$('directory-create').disabled,'owned working directory');
   $('directory-create').click();
   await until(async()=>(await sessions()).length===1,'CLI session creation');
-  await until(()=>$('view-status').textContent==='Controlling','CLI control');
+  await until(()=>$('pane').dataset.status==='Controlling','CLI control');
 }
 function forbidden(){
   const visible=liveText().toLowerCase();
@@ -150,9 +151,9 @@ async function main(){
       paste('X');
       await until(()=>text().includes('draft caf\u00e9 X'),'Unicode replacement');
       check(true,'Unicode editing survives idle Backspace');
-      const size=$('terminal-size').textContent;
-      $('larger').click();
-      await until(()=>$('terminal-size').textContent!==size,'browser resize');
+      const size=$('pane-status').title;
+      $('settings').click();$('larger').click();$('preferences-close').click();
+      await until(()=>$('pane-status').title!==size,'browser resize');
       await until(()=>text().includes('draft caf\u00e9 X'),'draft redraw after resize');
       check(true,'draft survives native resize');
       paste('\nsecond line');
@@ -175,7 +176,7 @@ async function main(){
       location.reload();return;
     }
     const id=sessionStorage.getItem('apiBrowserId');
-    await until(()=>text().includes('Webterminal local fixture response.')&&$('view-status').textContent==='Controlling','restored response snapshot',500);
+    await until(()=>text().includes('Webterminal local fixture response.')&&$('pane').dataset.status==='Controlling','restored response snapshot',500);
     check((await sessions()).find(item=>item.id===id)?.alive,'browser reload kept CLI session');
     check(text().includes('Webterminal local fixture response.'),'response survived browser reload');
     const peer=await observer(id);
@@ -188,11 +189,11 @@ async function main(){
       for(let i=0;i<3;i++){key('c','KeyC',{ctrlKey:true},67);await pause(500)}
     }
     await until(async()=>!(await sessions()).find(item=>item.id===id)?.alive,'normal '+KIND+' exit',300);
-    await until(()=>$('view-status').textContent.startsWith('Exited'),'exit snapshot');
+    await until(()=>$('pane').dataset.status.startsWith('Exited'),'exit snapshot');
     check((await sessions()).find(item=>item.id===id)?.exitCode===0,'CLI exited with code 0');
     check((await counts()).prompts===Number(sessionStorage.getItem('apiBrowserPostCount')),'reload and quit made no API requests');
   }catch(error){
-    results.push({fail:String(error?.stack||error),status:$('view-status').textContent,screen:liveText().slice(-1500),text:text().slice(-1000),errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-4),wire:window.__wire?.slice(-8)});
+    results.push({fail:String(error?.stack||error),status:$('pane').dataset.status,screen:liveText().slice(-1500),text:text().slice(-1000),errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-4),wire:window.__wire?.slice(-8)});
   }
   const report={kind:KIND,pass:results.every(item=>typeof item==='string'),results,userAgent:navigator.userAgent};
   document.body.dataset.probeResult=btoa(Array.from(new TextEncoder().encode(JSON.stringify(report)),byte=>String.fromCharCode(byte)).join(''));

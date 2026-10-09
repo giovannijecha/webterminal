@@ -55,15 +55,21 @@ async function sessions() {
   return (await response.json()).sessions;
 }
 async function create(count) {
+  if(count>1) {
+    const selected=document.querySelector('.workspace-tab.active')?.dataset.workspace;
+    $('new-workspace').click();
+    await until(()=>document.querySelector('.workspace-tab.active')?.dataset.workspace!==selected,'new CLI workspace');
+  }
   $('new').click();
   await until(()=>$('directory-dialog').open,'directory dialog');
+  $('directory-address').click();
   $('directory-path').value=CWD;
-  $('directory-go').click();
+  $('directory-path').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
   await until(()=>!$('directory-create').disabled,'selected directory');
   $('directory-create').click();
   await until(async()=>(await sessions()).length===count,'session '+count);
   await until(()=>text().includes('Ask anything'),'Jecode composer '+count);
-  await until(()=>$('view-status').textContent==='Controlling','controller '+count);
+  await until(()=>$('pane').dataset.status==='Controlling','controller '+count);
 }
 function observed(id) {
   return new Promise((resolve,reject)=>{
@@ -108,12 +114,12 @@ async function main() {
       paste('X');
       await until(()=>text().includes('draft caf\u00e9 X'),'Unicode replacement');
       check(true,'Unicode edit survived 250ms idle before Backspace');
-      const beforeSize=$('terminal-size').textContent;
-      $('larger').click();
-      await until(()=>$('terminal-size').textContent!==beforeSize,'terminal resize');
+      const beforeSize=$('pane-status').title;
+      $('settings').click();$('larger').click();$('preferences-close').click();
+      await until(()=>$('pane-status').title!==beforeSize,'terminal resize');
       await until(()=>text().includes('draft caf\u00e9 X'),'draft redraw after browser resize');
       check(text().includes('draft caf\u00e9 X'),'draft survived browser resize');
-      $('smaller').click();
+      $('settings').click();$('smaller').click();$('preferences-close').click();
       key('c','KeyC',{ctrlKey:true},67);
       await until(()=>!text().includes('draft caf\u00e9 X'),'clear draft');
 
@@ -122,8 +128,8 @@ async function main() {
       check(text().includes('second'),'multiline paste stayed local and visible');
       key('c','KeyC',{ctrlKey:true},67);
       await until(()=>!text().includes('first caf\u00e9'),'clear pasted draft');
-      $('terminal-area').style.maxHeight='440px';
-      await until(()=>Number($('terminal-size').textContent.split('×')[1])<=24,'compact help viewport');
+      $('pane').style.maxHeight='440px';
+      await until(()=>Number($('pane-status').title.split('×')[1])<=24,'compact help viewport');
       key('F1','F1',{},112);
       await until(()=>text().includes('Commands and controls')&&text().includes('/new'),'F1 local help');
       check(true,'F1 opened local help');
@@ -142,7 +148,7 @@ async function main() {
       await until(()=>text().includes('/new'),'F1 wheel up');
       check(true,'SGR wheel scrolls local Jecode help down and up');
       key('Escape','Escape',{},27);
-      $('terminal-area').style.maxHeight='';
+      $('pane').style.maxHeight='';
       paste('/resume');
       key('Enter','Enter',{},13);
       await until(()=>text().includes('Resume'),'local resume menu');
@@ -161,31 +167,31 @@ async function main() {
     }
     const first=sessionStorage.getItem('jecodeBrowserFirst');
     const second=sessionStorage.getItem('jecodeBrowserSecond');
-    await until(()=>text().includes('Ask anything')&&$('tabs').querySelectorAll('.tab').length===2,'reload snapshot');
+    await until(()=>text().includes('Ask anything')&&$('workspace-tabs').querySelectorAll('.workspace-tab').length===2,'reload snapshot');
     check((await sessions()).length===2,'browser reload kept both CLI sessions');
-    await until(()=>$('view-status').textContent==='Controlling','control after reload');
+    await until(()=>$('pane').dataset.status==='Controlling','control after reload');
     let frameCount=window.__snapshots.filter(item=>item.id===first).length;
-    [...$('tabs').querySelectorAll('.tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
-    await until(()=>window.__snapshots.filter(item=>item.id===first).length>frameCount&&text().includes('Ask anything')&&$('view-status').textContent==='Controlling','fresh first tab control');
+    [...$('workspace-tabs').querySelectorAll('.workspace-tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
+    await until(()=>window.__snapshots.filter(item=>item.id===first).length>frameCount&&text().includes('Ask anything')&&$('pane').dataset.status==='Controlling','fresh first tab control');
     check((await sessions()).find(item=>item.id===first)?.alive,'first CLI remained alive');
     $('keyboard').focus();
     key('q','KeyQ',{ctrlKey:true},81);
     await until(async()=>!(await sessions()).find(item=>item.id===first)?.alive,'first Ctrl+Q exit');
-    check($('view-status').textContent.startsWith('Exited'),'first Ctrl+Q was a normal CLI exit');
+    check($('pane').dataset.status.startsWith('Exited'),'first Ctrl+Q was a normal CLI exit');
     frameCount=window.__snapshots.filter(item=>item.id===second).length;
     const wireStart=window.__wire.length;
-    [...$('tabs').querySelectorAll('.tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
-    check($('view-status').textContent==='Connecting…'&&$('take-control').hidden,'cached controller is gated during attach');
+    [...$('workspace-tabs').querySelectorAll('.workspace-tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
+    check($('pane').dataset.status==='Connecting…'&&$('take-control').hidden,'cached controller is gated during attach');
     const pendingRequest=window.__wire.slice(wireStart).find(item=>item.op==='attach'&&item.id===second)?.request;
     const simulate=message=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}));
     simulate(window.__snapshotBodies[second]);
     simulate({type:'attached',id:second,request:pendingRequest+1});
-    check($('view-status').textContent==='Connecting…','pre-ack snapshot and wrong-token ack cannot restore control');
+    check($('pane').dataset.status==='Connecting…','pre-ack snapshot and wrong-token ack cannot restore control');
     $('keyboard').focus();
     key('x','KeyX',{},88);
-    $('larger').click();
+    $('settings').click();$('larger').click();$('preferences-close').click();
     check(!window.__wire.slice(wireStart).some(item=>item.op==='input'||item.op==='resize'),'immediate key and geometry do not use stale epoch');
-    await until(()=>window.__snapshots.filter(item=>item.id===second).length>frameCount&&text().includes('Ask anything')&&$('view-status').textContent==='Controlling','fresh second tab control');
+    await until(()=>window.__snapshots.filter(item=>item.id===second).length>frameCount&&text().includes('Ask anything')&&$('pane').dataset.status==='Controlling','fresh second tab control');
     const switched=window.__wire.slice(wireStart);
     const attachIndex=switched.findIndex(item=>item.op==='attach'&&item.id===second);
     const ackIndex=switched.findIndex(item=>item.type==='attached'&&item.id===second&&item.request===pendingRequest);
@@ -199,11 +205,11 @@ async function main() {
     await until(()=>!text().includes('post-attach'),'clear post-attach draft');
     key('q','KeyQ',{ctrlKey:true},81);
     await until(async()=>!(await sessions()).find(item=>item.id===second)?.alive,'second Ctrl+Q exit');
-    await until(()=>$('view-status').textContent.startsWith('Exited'),'second exit snapshot');
-    check($('view-status').textContent.startsWith('Exited'),'second Ctrl+Q was a normal CLI exit');
+    await until(()=>$('pane').dataset.status.startsWith('Exited'),'second exit snapshot');
+    check($('pane').dataset.status.startsWith('Exited'),'second Ctrl+Q was a normal CLI exit');
     check((await sessions()).every(item=>item.exitCode===0),'both Jecode processes exited with code 0');
   } catch(error) {
-    checks.push({fail:String(error?.stack||error),status:$('view-status').textContent,size:$('terminal-size').textContent,active:sessionStorage.getItem('webterminal.active'),first:sessionStorage.getItem('jecodeBrowserFirst'),second:sessionStorage.getItem('jecodeBrowserSecond'),tabs:[...$('tabs').querySelectorAll('.tab')].map(tab=>tab.getAttribute('aria-selected')),text:text().slice(-1200),toast:$('toast').textContent,errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-5),wire:window.__wire?.slice(-10)});
+    checks.push({fail:String(error?.stack||error),status:$('pane').dataset.status,size:$('pane-status').title,active:sessionStorage.getItem('webterminal.workspace'),first:sessionStorage.getItem('jecodeBrowserFirst'),second:sessionStorage.getItem('jecodeBrowserSecond'),tabs:[...$('workspace-tabs').querySelectorAll('.workspace-tab')].map(tab=>tab.getAttribute('aria-selected')),text:text().slice(-1200),toast:$('toast').textContent,errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-5),wire:window.__wire?.slice(-10)});
   }
   const report={pass:checks.every(item=>typeof item==='string'),checks,userAgent:navigator.userAgent};
   document.body.dataset.probeResult=btoa(Array.from(new TextEncoder().encode(JSON.stringify(report)),byte=>String.fromCharCode(byte)).join(''));

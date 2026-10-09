@@ -11,8 +11,9 @@ import {fileURLToPath} from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const target = resolve(root, 'target');
-const runRoot = resolve(target, 'browser-e2e-' + process.pid + '-' + Date.now());
-if (!runRoot.startsWith(target + sep)) throw new Error('Test directory escaped target');
+const scratch = resolve(root, '.tmp');
+const runRoot = resolve(scratch, 'browser-e2e-' + process.pid + '-' + Date.now());
+if (!runRoot.startsWith(scratch + sep)) throw new Error('Test directory escaped scratchpad');
 const chromePaths = [
   join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
   join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -53,12 +54,15 @@ async function newTerminal(expectedCount) {
   await pause(300);
   $('new').click();
   await until(() => $('directory-dialog').open, 'directory dialog; new='+$('new').outerHTML+' toast='+$('toast').textContent);
-  $('directory-path').value=CWD;
-  $('directory-go').click();
   await until(() => !$('directory-create').disabled, 'directory browser');
   $('directory-create').click();
   await until(async () => (await sessions()).length === expectedCount, 'session creation');
-  await until(() => $('tabs').querySelectorAll('.tab').length === expectedCount, 'terminal tabs');
+  await until(() => $('pane').dataset.status === 'Controlling', 'terminal control');
+}
+function navigate(path) {
+  $('directory-address').click();
+  $('directory-path').value=path;
+  $('directory-path').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
 }
 function socket() {
   return new Promise((resolve,reject) => {
@@ -83,6 +87,8 @@ async function echo() {
     await until(() => terminalText().includes('READY'), 'first READY');
     const first = (await sessions())[0];
     verify(sameCwd(first.cwd), 'first cwd is selected directory');
+    $('new-workspace').click();
+    await until(() => $('workspace-tabs').querySelectorAll('.workspace-tab').length===2, 'second workspace');
     await newTerminal(2);
     await until(() => terminalText().includes('READY'), 'second READY');
     const all = await sessions();
@@ -101,17 +107,33 @@ async function echo() {
   const first=sessionStorage.getItem('browserE2eFirst');
   const second=sessionStorage.getItem('browserE2eSecond');
   await pause(1000);
-  await until(() => $('tabs').querySelectorAll('.tab').length===2 && terminalText().includes('READY'), 'restored snapshot after reload');
+  await until(() => $('workspace-tabs').querySelectorAll('.workspace-tab').length===2 && terminalText().includes('READY'), 'restored snapshot after reload');
   verify((await sessions()).length===2, 'browser reload kept both sessions');
-  await until(() => $('view-status').textContent==='Controlling', 'control after reload');
-  verify($('terminal-area').hidden===false, 'restored active terminal is visible');
+  await until(() => $('pane').dataset.status==='Controlling', 'control after reload');
+  verify($('pane').hidden===false, 'restored active terminal is visible');
 
   $('new').click();
-  $('directory-path').value=CWD+'\\missing-e2e';
-  $('directory-go').click();
-  await until(() => $('directory-message').classList.contains('error'), 'invalid directory error');
+  await until(() => $('directory-dialog').open, 'directory dialog');
+  navigate(CWD+'\\missing-e2e');
+  await until(() => !$('directory-error').hidden, 'invalid directory error');
   verify((await sessions()).length===2, 'invalid directory did not create a session');
   $('directory-dialog').close();
+
+  const copied=[];
+  const clipboard=navigator.clipboard;
+  const originalWrite=clipboard.writeText;
+  clipboard.writeText=async value=>{copied.push(value);};
+  const markdown='# Fixture clipboard\n\nA complete owned document copied by the terminal.';
+  const bytes=new TextEncoder().encode(markdown);
+  const data=btoa(Array.from(bytes,byte=>String.fromCharCode(byte)).join(''));
+  const frameClipboard=()=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'clipboard',id:second,data})}));
+  frameClipboard();await until(()=>$('notice-dialog').open,'clipboard consent notice');
+  $('notice-cancel').click();
+  verify(copied.length===0,'declined OSC 52 copy leaves clipboard alone');
+  frameClipboard();await until(()=>$('notice-dialog').open,'second clipboard consent notice');
+  $('notice-confirm').click();await until(()=>copied.length===1,'approved clipboard write');
+  verify(copied[0]===markdown,'approved OSC 52 copy preserves UTF-8 text');
+  clipboard.writeText=originalWrite;
 
   const peer=await observer(second);
   verify(peer.snapshot.controller !== peer.messages.find(message=>message.type==='hello').view, 'second browser view observes');
@@ -119,9 +141,9 @@ async function echo() {
   await until(() => peer.messages.some(message=>message.type==='error'), 'observer input rejection');
   verify(!terminalText().includes('BAD'), 'observer input did not reach terminal');
   peer.ws.send(JSON.stringify({op:'claim',id:second,cols:80,rows:24}));
-  await until(() => $('view-status').textContent==='Observing', 'control transfer to observer');
+  await until(() => $('pane').dataset.status==='Observing', 'control transfer to observer');
   $('take-control').click();
-  await until(() => $('view-status').textContent==='Controlling', 'UI takes control back');
+  await until(() => $('pane').dataset.status==='Controlling', 'UI takes control back');
   peer.ws.close();
 
   $('keyboard').focus();
@@ -130,45 +152,48 @@ async function echo() {
   $('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
   key('Enter','Enter',{},13);
   await until(() => terminalText().includes('ECHO:hello café🙂'), 'Unicode echo through ConPTY');
-  await until(() => $('view-status').textContent.startsWith('Exited'), 'normal echo exit');
+  await until(() => $('pane').dataset.status.startsWith('Exited'), 'normal echo exit');
   verify(terminalText().includes('ECHO:hello café🙂'), 'browser keyboard and paste reached fixture');
   $('close-session').click();
-  await until(() => $('notice-dialog').open, 'remove exited terminal notice');
-  $('notice-confirm').click();
   await until(async () => (await sessions()).length===1, 'close second session');
   verify((await sessions())[0].id===first && (await sessions())[0].alive, 'closing second left first running');
-  await until(() => terminalText().includes('READY') && $('view-status').textContent==='Controlling', 'first tab resumes');
+  $('workspace-tabs').querySelector('.workspace-tab:not(.active)').click();
+  await until(() => terminalText().includes('READY') && $('pane').dataset.status==='Controlling', 'first workspace resumes');
   $('keyboard').focus();
   for (const character of 'other') key(character,'Key'+character.toUpperCase());
   key('Enter','Enter',{},13);
   await until(() => terminalText().includes('ECHO:other'), 'first independent echo');
-  await until(() => $('view-status').textContent.startsWith('Exited'), 'first normal exit');
+  await until(() => $('pane').dataset.status.startsWith('Exited'), 'first normal exit');
   $('close-session').click();
-  await until(() => $('notice-dialog').open, 'remove first terminal notice');
-  $('notice-confirm').click();
   await until(async () => (await sessions()).length===0, 'close first session');
-  verify($('welcome').hidden===false, 'empty state returns');
+  await until(() => !$('empty-state').hidden, 'empty state');
+  verify($('empty-state').hidden===false, 'empty state returns');
 
   // Feed a restarted server's frames through the actual app WebSocket handler.
   // Reused IDs and lower sequence numbers must never retain prior screen DOM.
   const fake={id:'s1',cwd:CWD,title:'Old session',alive:true,controller:'synthetic',exitCode:null};
   const frame=message=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}));
   const snapshot=(seq,text)=>({type:'snapshot',id:'s1',seq,epoch:1,controller:'synthetic',alive:true,exitCode:null,terminal:{cols:80,rows:1,cursor:[0,0,false,'block'],title:text,alternate:false,modes:{},history:[],screen:[{wrapped:false,cells:[...text].map(character=>[character,1,'#dce4ed','#10151c',0,''])}]}});
-  frame({type:'sessions',sessions:[fake]});
+  const workspace=$('workspace-tabs').querySelector('.workspace-tab.active').dataset.workspace;
+  frame({type:'sessions',sessions:[fake],workspaces:[{id:workspace,name:null,sessions:['s1']}]});
   frame(snapshot(9000,'OLD SCREEN'));
-  verify(terminalText().includes('OLD SCREEN'), 'old server screen was rendered');
+  await until(() => terminalText().includes('OLD SCREEN'), 'old server screen');
+  verify(true, 'old server screen was rendered');
   frame({type:'hello',view:'synthetic',cwd:CWD,shell:'fixture'});
   verify(!terminalText().includes('OLD SCREEN'), 'new hello clears stale screen');
   frame(snapshot(1,'NEW SCREEN'));
-  verify(terminalText().includes('NEW SCREEN'), 'reused session accepts lower sequence after hello');
+  await until(() => terminalText().includes('NEW SCREEN'), 'new server screen');
+  verify(true, 'reused session accepts lower sequence after hello');
   const changed=snapshot(2,'UPDATED SCREEN');
   frame({...changed,type:'update',base:1,terminal:{...changed.terminal,history:undefined,screen:undefined,screenChanges:[[0,changed.terminal.screen[0]]]}});
-  verify(terminalText().includes('UPDATED SCREEN'), 'ordered row update reaches actual app renderer');
+  await until(() => terminalText().includes('UPDATED SCREEN'), 'ordered update screen');
+  verify(true, 'ordered row update reaches actual app renderer');
   const stale=snapshot(3,'STALE PATCH');
   frame({...stale,type:'update',base:1,terminal:{...stale.terminal,history:undefined,screen:undefined,screenChanges:[[0,stale.terminal.screen[0]]]}});
-  verify(!terminalText().includes('STALE PATCH')&&$('view-status').textContent==='Connecting\u2026', 'wrong update base gates input and requests a fresh attachment');
+  verify(!terminalText().includes('STALE PATCH')&&$('pane').dataset.status==='Connecting\u2026', 'wrong update base gates input and requests a fresh attachment');
   frame(snapshot(4,'RESTORED SCREEN'));
-  verify(terminalText().includes('RESTORED SCREEN'), 'full snapshot repairs an interrupted update stream');
+  await until(() => terminalText().includes('RESTORED SCREEN'), 'restored screen');
+  verify(true, 'full snapshot repairs an interrupted update stream');
 }
 async function records() {
   await newTerminal(1);
@@ -184,12 +209,12 @@ async function records() {
   key(' ','Space',{ctrlKey:true},32);
   key(' ','Space',{ctrlKey:true},32,'keyup');
   await until(() => terminalText().includes('KEY 13 13 16') && terminalText().includes('KEY 32 0 8'), 'native modified key records');
-  await until(() => $('view-status').textContent.startsWith('Exited'), 'records normal exit');
+  await until(() => $('pane').dataset.status.startsWith('Exited'), 'records normal exit');
   verify(terminalText().includes('KEY 13 13 16') && terminalText().includes('KEY 32 0 8'), 'native console received Shift+Enter and Ctrl+Space');
 }
 async function main() {
   try { const outcome=PHASE==='echo' ? await echo() : await records(); if (outcome==='reloading') return; }
-  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({tabs:$('tabs').querySelectorAll('.tab').length,text:terminalText().slice(0,120),status:$('view-status').textContent,active:sessionStorage.getItem('webterminal.active'),toast:$('toast').textContent,errors:window.__e2eErrors})}); }
+  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({tabs:$('workspace-tabs').querySelectorAll('.workspace-tab').length,text:terminalText().slice(0,120),status:$('pane').dataset.status,active:$('workspace-tabs').querySelector('.workspace-tab.active')?.dataset.workspace,toast:$('toast').textContent,errors:window.__e2eErrors})}); }
   const report={phase:PHASE,pass:results.every(result=>result.pass),results,userAgent:navigator.userAgent};
   sessionStorage.removeItem('browserE2eResults');
   const bytes=new TextEncoder().encode(JSON.stringify(report));
@@ -363,7 +388,7 @@ async function chromeProbe(url,profile,screenshotPath) {
       await new Promise(resolvePause=>setTimeout(resolvePause,200));
     }
     if (!encoded) {
-      const state=await evaluate('JSON.stringify({stage:sessionStorage.getItem("browserE2eStep"),status:document.getElementById("view-status")?.textContent,text:document.getElementById("terminal-lines")?.textContent?.slice(0,120),errors:window.__e2eErrors})').catch(()=>null);
+      const state=await evaluate('JSON.stringify({stage:sessionStorage.getItem("browserE2eStep"),status:document.getElementById("pane")?.dataset.status,text:document.getElementById("terminal-lines")?.textContent?.slice(0,120),errors:window.__e2eErrors})').catch(()=>null);
       throw new Error('Chrome fixture did not finish: '+state+' '+errors.slice(-1000));
     }
     return JSON.parse(Buffer.from(encoded,'base64').toString('utf8'));
@@ -389,7 +414,7 @@ async function phase(name,copied) {
     await serverReady(backendPort,child);
     const generated=harness.replace('const PHASE = __PHASE__;','const PHASE = '+JSON.stringify(name)+';').replace('const CWD = __CWD__;','const CWD = '+JSON.stringify(cwd)+';').replace('const SCREENSHOT = __SCREENSHOT__;','const SCREENSHOT = '+String(Boolean(process.env.WEBTERMINAL_E2E_SCREENSHOT && name==='echo'))+';');
     proxy=await proxyFor(backendPort,generated);
-    const report=await chromeProbe('http://127.0.0.1:'+proxy.port+'/',profile,process.env.WEBTERMINAL_E2E_SCREENSHOT && name==='echo' ? resolve(target,'webterminal-ui.png') : null);
+    const report=await chromeProbe('http://127.0.0.1:'+proxy.port+'/',profile,process.env.WEBTERMINAL_E2E_SCREENSHOT && name==='echo' ? resolve(scratch,'webterminal-ui.png') : null);
     for (const result of report.results) console.log((result.pass?'PASS ':'FAIL ')+name+': '+result.label);
     console.log(name+' Chrome '+report.userAgent);
     console.log(name+' proxy GET failures '+JSON.stringify({upstream:proxy.stats.upstreamErrors,browserAborts:proxy.stats.browserAborts,details:proxy.stats.failures}));

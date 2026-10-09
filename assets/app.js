@@ -1,56 +1,32 @@
-import {TerminalPane, createSecondGroup} from './pane.js';
-import {WorkspaceLayout} from './workspace.js';
-import {Workbench, displayPath, sessionName} from './workbench.js';
+import {createPanes} from './pane.js';
+import {PANE_LIMIT, WORKSPACE_LIMIT, WorkspaceTabs, renderSwitcher, workspaceLabel} from './workspaces.js';
+import {displayPath, nameError, sessionName} from './common.js';
 import {NoticeCenter} from './notices.js';
-import {ApplicationMenus} from './menus.js';
 import {DirectoryPicker} from './directory.js';
 import {mergeUpdate} from './updates.js';
+import {Reader} from './reader.js';
 
 const $ = id => document.getElementById(id);
 const MAX_QUEUED_INPUT = 1024 * 1024, MAX_SOCKET_BUFFER = 128 * 1024;
 const encoder = new TextEncoder();
-const state = {socket:null, view:null, cwd:'', shell:'', sessions:new Map(), snapshots:new Map(), views:new Map(), attachments:new Map(), active:null, attachRequest:0, inputSeq:new Map(), inputQueue:[], inputQueuedBytes:0, inputTimer:0, reconnect:0, connectionReady:false, fontSize:14, resizeFrame:0};
-const notices = new NoticeCenter(), pendingCloses = new Set(), pendingCreates = new Map();
-const secondaryRoot = createSecondGroup();
-const callbacks = {snapshot:id => state.snapshots.get(id), connection:() => state.socket, canInput, input:sendInput, notify:toast, focus:pane => layout.focus(panes.indexOf(pane)), resize:scheduleResize, claim:pane => send({op:'claim', id:pane.id, ...pane.renderer.dimensions()}), close:closeSession, create:pane => openDirectoryDialog(panes.indexOf(pane))};
-const panes = [new TerminalPane($('editor-primary'), '', callbacks), new TerminalPane(secondaryRoot, 'secondary-', callbacks)];
-let creationGroup = 0, renameId = null, renameConnection = null;
-const directoryPicker = new DirectoryPicker({startDirectory:() => currentSession()?.cwd || state.cwd, create:path => {
-  const request = nextRequest();
-  pendingCreates.set(request, {group:creationGroup, cwd:path});
-  if (send({op:'create', request, cwd:path, updates:true, ...panes[creationGroup].renderer.dimensions()})) return true;
-  pendingCreates.delete(request); return false;
-}});
-const layout = new WorkspaceLayout({change:synchronize, create:openDirectoryDialog, close:closeSession, rename:renameSession, reorder:ids => send({op:'reorder', ids}), context:index => { menus.show($(index ? 'secondary-editor-more' : 'editor-more')); menus.buttons()[0]?.focus(); }});
-const workbench = new Workbench({select:selectSession, create:() => openDirectoryDialog(), find:() => focusedPane().showFind(true), layout:scheduleResize, actions:() => [
-  {label:'Terminal: New terminal', menus:['File','Terminal'], icon:'plus', run:() => openDirectoryDialog()},
-  {label:'Terminal: Rename terminal', menus:['Terminal'], disabled:!state.active, run:() => renameSession()},
-  {label:'View: Split terminal layout', menus:['View','Terminal'], icon:'split', disabled:!state.active, run:() => layout.splitLayout()},
-  {label:'View: Single group layout', menus:['View','Terminal'], disabled:!layout.split, run:() => layout.single()},
-  {label:'Terminal: Move terminal to other group', menus:['Terminal'], disabled:state.sessions.size < 2 || !state.active, run:() => layout.move()},
-  {label:'Terminal: Move tab left', menus:['Terminal'], disabled:layout.groups[layout.focused].sessions.indexOf(state.active) <= 0, run:() => layout.moveTab(-1)},
-  {label:'Terminal: Move tab right', menus:['Terminal'], disabled:layout.groups[layout.focused].sessions.indexOf(state.active) >= layout.groups[layout.focused].sessions.length - 1, run:() => layout.moveTab(1)},
-  {label:'Go: Focus other group', menus:['Go','Terminal'], disabled:!layout.split, run:() => { layout.focus(1 - layout.focused); focusedPane().focus(); }},
-  {label:'Terminal: Find in terminal', menus:['Edit'], shortcut:'Ctrl+Shift+F', icon:'search', disabled:!state.active, run:() => focusedPane().showFind(true)},
-  {label:'View: Toggle session sidebar', menus:['View'], icon:'sidebar', run:() => workbench.toggleSidebar()},
-  {label:'Terminal: Increase font size', menus:['View'], run:() => $('larger').click()},
-  {label:'Terminal: Decrease font size', menus:['View'], run:() => $('smaller').click()},
-  {label:'Terminal: Copy selection', menus:['Edit'], shortcut:'Ctrl+Shift+C', icon:'copy', disabled:!state.active, run:() => focusedPane().copy()},
-  {label:'Terminal: Paste', menus:['Edit'], shortcut:'Ctrl+V', icon:'paste', disabled:!canInput(focusedPane()), run:() => focusedPane().paste()},
-  {label:'Selection: Select all terminal text', menus:['Selection'], disabled:!state.active, run:() => focusedPane().selectAll()},
-  {label:'Go: Previous terminal', menus:['Go'], disabled:state.sessions.size < 2, run:() => workbench.neighbor(-1)},
-  {label:'Go: Next terminal', menus:['Go'], disabled:state.sessions.size < 2, run:() => workbench.neighbor(1)},
-  {label:'Terminal: Take control', menus:['Terminal'], disabled:focusedPane().ui['take-control'].hidden, run:() => focusedPane().ui['take-control'].click()},
-  {label:'Terminal: Close terminal', menus:['File','Terminal'], icon:'trash', disabled:!state.active, run:() => closeSession()},
-  {label:'View: Terminal settings', menus:['View'], icon:'settings', run:() => menus.settings()},
-  {label:'View: Toggle fullscreen', menus:['View'], icon:'expand', run:() => $('fullscreen').click()},
-]});
-const menus = new ApplicationMenus(() => workbench.actions());
+const narrow = matchMedia('(max-width:760px)');
+const state = {socket:null, view:null, cwd:'', shell:'', listed:false, sessions:new Map(), workspaces:[], selected:read('webterminal.workspace'), selectedIndex:0, focus:new Map(), snapshots:new Map(), views:new Map(), attachments:new Map(), request:0, inputSeq:new Map(), inputQueue:[], inputQueuedBytes:0, inputTimer:0, reconnect:0, connectionReady:false, fontSize:14, resizeTimer:0, frame:0};
+const notices = new NoticeCenter(), pendingCloses = new Set(), pendingCreates = new Map(), pendingWorkspaces = new Set();
+const panes = createPanes(PANE_LIMIT, {snapshot:id => state.snapshots.get(id), connection:() => state.socket, canInput, input:sendInput, notify:toast, focus:focusPane, resize:scheduleResize, claim:pane => send({op:'claim', id:pane.id, ...pane.renderer.dimensions()}), close:closeSession, rename:renameSession, renamed:updateChrome, copied:text => reader.ignore(text), drop:(pane, id) => moveSession(id, state.selected, currentWorkspace().sessions.indexOf(pane.id))});
+const tabs = new WorkspaceTabs($('workspace-tabs'), {select:selectWorkspace, rename:renameWorkspace, close:closeWorkspace, reorder:orderWorkspaces, move:(id, workspace) => moveSession(id, workspace)});
+const reader = new Reader({notify:toast});
+const picker = new DirectoryPicker({startDirectory:() => state.sessions.get(focusedId())?.cwd || state.cwd, create:createSession});
 
+function read(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
+function write(key, value) { try { sessionStorage.setItem(key, value); } catch { /* View-local convenience only. */ } }
 function toast(message, kind = 'info') { notices.notify(message, kind); }
-function focusedPane() { return panes[layout.focused]; }
-function currentSnapshot() { return state.snapshots.get(state.active); }
-function currentSession() { return state.sessions.get(state.active); }
+function currentWorkspace() { return state.workspaces.find(workspace => workspace.id === state.selected) || null; }
+function workspaceOf(id) { return state.workspaces.find(workspace => workspace.sessions.includes(id)) || null; }
+function focusedId(workspace = currentWorkspace()) {
+  const ids = workspace?.sessions || [], wanted = state.focus.get(workspace?.id);
+  return ids.includes(wanted) ? wanted : ids[0] || null;
+}
+function focusedPane() { const id = focusedId(); return panes.find(pane => pane.id && pane.id === id) || null; }
 function ready(pane) { return Boolean(pane.id && state.attachments.get(pane.id)?.ready); }
 function canInput(pane) { const shot = state.snapshots.get(pane.id); return Boolean(state.connectionReady && ready(pane) && shot?.alive && shot.controller === state.view); }
 function send(command) {
@@ -60,8 +36,8 @@ function send(command) {
   state.socket.send(payload); return true;
 }
 function nextRequest() {
-  if (state.attachRequest === Number.MAX_SAFE_INTEGER) state.attachRequest = 0;
-  return ++state.attachRequest;
+  if (state.request === Number.MAX_SAFE_INTEGER) state.request = 0;
+  return ++state.request;
 }
 function attach(pane) {
   if (!pane.id || !state.connectionReady) return;
@@ -69,17 +45,38 @@ function attach(pane) {
   state.attachments.set(pane.id, {request, acked:false, ready:false});
   send({op:'attach', id:pane.id, request, updates:true, ...pane.renderer.dimensions()});
 }
+
+// Binds the selected workspace's sessions to panes and attaches exactly those.
+// Narrow screens show and attach only the focused terminal.
 function synchronize(focus = false) {
-  const before = state.active, former = panes.map(pane => pane.id);
-  layout.sync(state.sessions); layout.render();
-  for (let i = 0; i < panes.length; i++) panes[i].bind(i === 1 && !layout.split ? null : layout.groups[i].active, state.views);
-  state.active = layout.active;
-  if (before !== state.active || former.some((id, index) => id !== panes[index].id)) for (const pane of panes) pane.input.reset();
+  const index = state.workspaces.findIndex(workspace => workspace.id === state.selected);
+  if (index >= 0) state.selectedIndex = index;
+  else state.selected = state.workspaces[Math.min(state.selectedIndex, state.workspaces.length - 1)]?.id ?? null;
+  if (state.selected) write('webterminal.workspace', state.selected);
+  const workspace = currentWorkspace(), ids = (workspace?.sessions || []).filter(id => state.sessions.has(id)).slice(0, PANE_LIMIT);
+  const focused = focusedId(workspace);
+  panes.forEach((pane, i) => pane.bind(ids[i] && (!narrow.matches || ids[i] === focused) ? ids[i] : null, state.views));
+  $('panes').dataset.count = String(narrow.matches ? Math.min(ids.length, 1) : ids.length);
   const visible = new Set(panes.map(pane => pane.id).filter(Boolean));
-  for (const id of state.attachments.keys()) if (!visible.has(id)) { discardInput(id); state.attachments.delete(id); if (state.connectionReady) send({op:'detach', id}); }
+  for (const id of state.attachments.keys()) if (!visible.has(id)) { discardInput(id); state.attachments.delete(id); if (state.connectionReady && state.sessions.has(id)) send({op:'detach', id}); }
   for (const pane of panes) if (pane.id && !state.attachments.has(pane.id)) attach(pane);
   updateChrome(); scheduleResize();
-  if (focus) requestAnimationFrame(() => focusedPane().focus());
+  if (focus) requestAnimationFrame(() => focusedPane()?.focus());
+}
+function focusPane(pane) {
+  const workspace = currentWorkspace();
+  if (!pane.id || !workspace || state.focus.get(workspace.id) === pane.id) return;
+  state.focus.set(workspace.id, pane.id);
+  updateChrome();
+}
+function selectWorkspace(id) {
+  if (id === state.selected || !state.workspaces.some(workspace => workspace.id === id)) return;
+  state.selected = id;
+  synchronize(true);
+}
+function selectPane(id) {
+  state.focus.set(state.selected, id);
+  synchronize(true);
 }
 function clearInputQueue() {
   state.inputQueue.length = 0; state.inputQueuedBytes = 0;
@@ -128,7 +125,7 @@ function connect() {
   });
   socket.addEventListener('close', () => {
     if (state.socket !== socket) return;
-    state.connectionReady = false; state.view = null; state.attachments.clear(); pendingCreates.clear(); clearInputQueue();
+    state.connectionReady = false; state.view = null; state.attachments.clear(); pendingCreates.clear(); pendingWorkspaces.clear(); clearInputQueue();
     for (const pane of panes) pane.input.reset();
     updateChrome(); setTimeout(connect, Math.min(8000, 350 * 2 ** state.reconnect++));
   });
@@ -149,15 +146,26 @@ function handle(message) {
     updateChrome();
   } else if (message.type === 'sessions') {
     state.sessions = new Map((message.sessions || []).map(session => [session.id, session]));
+    state.workspaces = (message.workspaces || []).map(workspace => ({id:workspace.id, name:workspace.name || null, sessions:workspace.sessions || []}));
+    state.listed = true;
+    forget([...state.snapshots.keys()].filter(id => !state.sessions.has(id)));
     synchronize();
   } else if (message.type === 'created') {
     const creation = pendingCreates.get(message.request);
     if (!creation) return;
     pendingCreates.delete(message.request);
     state.sessions.set(message.id, {id:message.id, cwd:creation.cwd, shell:state.shell, title:'', name:null, alive:true, controller:state.view, exitCode:null});
-    layout.place(message.id, creation.group);
+    const workspace = state.workspaces.find(item => item.id === message.workspace);
+    if (workspace && !workspace.sessions.includes(message.id)) workspace.sessions.push(message.id);
+    state.selected = message.workspace;
+    state.focus.set(message.workspace, message.id);
     state.attachments.set(message.id, {request:null, acked:true, ready:false});
     synchronize(true);
+  } else if (message.type === 'workspace-created') {
+    if (!pendingWorkspaces.delete(message.request)) return;
+    if (!state.workspaces.some(workspace => workspace.id === message.id)) state.workspaces.push({id:message.id, name:null, sessions:[]});
+    state.selected = message.id;
+    synchronize();
   } else if (message.type === 'snapshot') {
     const previous = state.snapshots.get(message.id);
     if (previous && message.seq < previous.seq && message.epoch <= previous.epoch) return;
@@ -167,103 +175,207 @@ function handle(message) {
     const session = state.sessions.get(message.id);
     if (session) state.sessions.set(message.id, {...session, title:message.terminal?.title || session.title, alive:message.alive, controller:message.controller, exitCode:message.exitCode});
     const pane = panes.find(pane => pane.id === message.id);
-    if (pane) { pane.render(message); scheduleResize(); }
-    updateChrome();
+    if (pane) pane.dirty = true;
+    scheduleFrame();
   } else if (message.type === 'attached') {
     const attachment = state.attachments.get(message.id);
     if (attachment && message.request === attachment.request) { attachment.acked = true; updateChrome(); }
-  } else if (message.type === 'error') { if (message.op === 'create') pendingCreates.delete(message.request); toast(message.message || 'Terminal request failed.', 'error'); }
+  } else if (message.type === 'error') {
+    if (message.op === 'create') pendingCreates.delete(message.request);
+    if (message.op === 'create-workspace') pendingWorkspaces.delete(message.request);
+    toast(message.message || 'Terminal request failed.', 'error');
+  } else if (message.type === 'busy') confirmClose(message);
   else if (message.type === 'clipboard') writeTerminalClipboard(message);
 }
 async function writeTerminalClipboard(message) {
-  if (message.id !== state.active) return;
+  if (!panes.some(pane => pane.id === message.id)) return;
   let content;
   try { content = new TextDecoder().decode(Uint8Array.from(atob(message.data), char => char.charCodeAt(0))); }
   catch { toast('The terminal sent invalid clipboard text.', 'error'); return; }
+  reader.capture(content, sessionName(state.sessions.get(message.id)));
+  reader.ignore(content);
   const connection = state.socket;
-  const accepted = await notices.ask({kind:'clipboard', heading:'Copy terminal text to the clipboard?', description:`This terminal requested permission to replace your clipboard with ${content.length} characters.`, details:[['Terminal', sessionName(currentSession())]], confirm:'Allow copy'});
-  if (!accepted || state.active !== message.id || state.socket !== connection) return;
+  const accepted = await notices.ask({kind:'clipboard', heading:'Copy terminal text to the clipboard?', description:`This terminal requested permission to replace your clipboard with ${content.length} characters.`, details:[['Terminal', sessionName(state.sessions.get(message.id))]], confirm:'Allow copy'});
+  if (!accepted || !panes.some(pane => pane.id === message.id) || state.socket !== connection) return;
   try { await navigator.clipboard.writeText(content); toast('Terminal text copied to clipboard.'); }
   catch { toast('Clipboard access was denied by the browser.', 'error'); }
 }
-function selectSession(id) { if (state.sessions.has(id)) layout.select(id); }
-async function closeSession(id = state.active) {
-  if (!id || pendingCloses.has(id)) return;
-  const session = state.sessions.get(id); if (!session) return;
-  const connection = state.socket; pendingCloses.add(id);
+
+// Size estimate for a terminal that will become pane `index` of `count`.
+function estimateSize(count) {
+  const box = $('panes').getBoundingClientRect(), metrics = panes[0].renderer;
+  metrics.measure();
+  const columns = narrow.matches || count < 2 ? 1 : 2, rows = !narrow.matches && count > 2 ? 2 : 1;
+  const width = (box.width || window.innerWidth) / columns - 36, height = (box.height || window.innerHeight - 100) / rows - 52;
+  return {cols:Math.max(20, Math.min(300, Math.floor(width / metrics.cellWidth))), rows:Math.max(5, Math.min(120, Math.floor(height / metrics.lineHeight)))};
+}
+function openTerminal() {
+  const workspace = currentWorkspace();
+  if (!state.connectionReady || !workspace) { toast('Connection is unavailable. Reconnecting…', 'warning'); return; }
+  if (workspace.sessions.length >= PANE_LIMIT) { toast(`A workspace holds at most ${PANE_LIMIT} terminals. Create a new workspace for more.`); return; }
+  picker.open();
+}
+function createSession(path) {
+  const workspace = currentWorkspace();
+  if (!workspace) return false;
+  const request = nextRequest();
+  pendingCreates.set(request, {cwd:path});
+  if (send({op:'create', request, cwd:path, workspace:workspace.id, updates:true, ...estimateSize(workspace.sessions.length + 1)})) return true;
+  pendingCreates.delete(request); return false;
+}
+function createWorkspace() {
+  if (state.workspaces.length >= WORKSPACE_LIMIT) { toast(`Close a workspace first; at most ${WORKSPACE_LIMIT} are open at once.`); return; }
+  const request = nextRequest();
+  if (send({op:'create-workspace', request})) pendingWorkspaces.add(request);
+}
+function validName(name) {
+  const error = nameError(name);
+  if (error) toast(error, 'error');
+  return !error;
+}
+function renameSession(id, name) {
+  const session = state.sessions.get(id);
+  if (!session || !validName(name)) return false;
+  if (name.trim() === sessionName(session) && !session.name) return true;
+  if (!send({op:'rename', id, name})) return false;
+  state.sessions.set(id, {...session, name:name.trim() || null});
+  return true;
+}
+function renameWorkspace(id, name) {
+  const workspace = state.workspaces.find(item => item.id === id);
+  if (!workspace || !validName(name)) return false;
+  if (name.trim() === workspaceLabel(workspace, state.sessions) && !workspace.name) return true;
+  if (!send({op:'rename-workspace', id, name})) return false;
+  workspace.name = name.trim() || null;
+  return true;
+}
+function orderWorkspaces(ids) {
+  if (!send({op:'order-workspaces', ids})) return;
+  state.workspaces.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  synchronize();
+}
+function moveSession(id, target, position) {
+  const source = workspaceOf(id), destination = state.workspaces.find(item => item.id === target);
+  if (!source || !destination) return;
+  if (source !== destination && destination.sessions.length >= PANE_LIMIT) { toast(`A workspace holds at most ${PANE_LIMIT} terminals.`); return; }
+  position = Math.max(0, Math.min(position ?? destination.sessions.length, destination.sessions.length));
+  if (!send({op:'move', id, workspace:target, position})) return;
+  source.sessions = source.sessions.filter(item => item !== id);
+  destination.sessions.splice(Math.min(position, destination.sessions.length), 0, id);
+  synchronize();
+}
+// The server closes terminals idle at their shell at once and answers `busy`
+// while a program runs; only then does the view ask before forcing it.
+function closeSession(id) { if (state.sessions.has(id)) send({op:'close', id}); }
+function closeWorkspace(id) { if (state.workspaces.some(item => item.id === id)) send({op:'close-workspace', id}); }
+async function confirmClose({op, id, sessions = [], targets = []}) {
+  const key = `${op}:${id}`;
+  if (pendingCloses.has(key)) return;
+  const connection = state.socket, names = sessions.map(item => sessionName(state.sessions.get(item)));
+  const workspace = state.workspaces.find(item => item.id === id);
+  pendingCloses.add(key);
   let accepted;
-  try { accepted = await notices.ask({heading:session.alive ? 'Close terminal?' : 'Remove exited terminal?', description:session.alive ? 'The running program and its child processes will stop. The screen and scrollback for this terminal will be removed.' : 'The program has exited. Remove its retained screen and scrollback from Webterminal.', details:[['Terminal', `${sessionName(session)} · ${id}`],['Directory', displayPath(session.cwd)]], confirm:session.alive ? 'Close terminal' : 'Remove terminal'}); }
-  finally { pendingCloses.delete(id); }
-  if (!accepted) return;
-  if (state.socket !== connection || !state.connectionReady) { toast('The connection changed. Review the terminal before closing it.', 'warning'); return; }
-  if (!state.sessions.has(id)) { toast('This terminal has already been closed.'); return; }
-  if (!send({op:'close', id})) return;
-  state.snapshots.delete(id); state.sessions.delete(id); state.views.delete(id);
-  synchronize(true);
+  try {
+    accepted = await notices.ask(op === 'close'
+      ? {heading:'Stop the running program?', description:'A program is still running in this terminal. Closing it stops the program and its child processes.', details:[['Terminal', names[0]], ['Folder', displayPath(state.sessions.get(id)?.cwd)]], confirm:'Close terminal'}
+      : {heading:'Close workspace?', description:`${names.length === 1 ? 'One terminal is' : `${names.length} terminals are`} still running a program. Closing the workspace stops every terminal in it.`, details:[['Workspace', workspaceLabel(workspace, state.sessions)], ['Running', names.join(', ')]], confirm:'Close workspace'});
+  } finally { pendingCloses.delete(key); }
+  if (accepted && state.socket === connection) send({op, id, force:true, ...(op === 'close-workspace' ? {confirmed:targets} : {})});
 }
-function renameSession(id = state.active) {
-  const session = state.sessions.get(id); if (!session) return;
-  renameId = id; renameConnection = state.socket;
-  $('rename-input').value = session.name || sessionName(session); $('rename-error').hidden = true;
-  $('rename-dialog').showModal(); $('rename-input').focus(); $('rename-input').select();
+function forget(ids) {
+  for (const id of ids) {
+    state.snapshots.delete(id); state.sessions.delete(id); state.views.delete(id);
+    const workspace = workspaceOf(id);
+    if (workspace) workspace.sessions = workspace.sessions.filter(item => item !== id);
+  }
 }
-function saveName() {
-  const name = $('rename-input').value;
-  if ([...name.trim()].length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) { $('rename-error').textContent = 'Use at most 80 characters without control characters.'; $('rename-error').hidden = false; return; }
-  if (renameConnection !== state.socket || !state.connectionReady || !state.sessions.has(renameId)) { $('rename-error').textContent = 'The connection changed. Close this dialog and review the terminal.'; $('rename-error').hidden = false; return; }
-  if (send({op:'rename', id:renameId, name})) $('rename-dialog').close();
+function paneStatus(pane) {
+  const snapshot = state.snapshots.get(pane.id);
+  if (!pane.id) return '';
+  if (!state.connectionReady) return 'Reconnecting…';
+  if (!ready(pane) || !snapshot) return 'Connecting…';
+  if (!snapshot.alive) return `Exited${snapshot.exitCode === null ? '' : ` (${snapshot.exitCode})`}`;
+  return snapshot.controller === state.view ? 'Controlling' : 'Observing';
 }
 function updateChrome() {
-  layout.render();
-  const shot = currentSnapshot(), session = currentSession();
-  workbench.update({sessions:state.sessions, active:state.active, cwd:state.cwd, shell:session?.shell || state.shell, connected:state.connectionReady, fontSize:state.fontSize, groups:layout.split ? layout.groups : [layout.groups[0]], focusedGroup:String(layout.focused + 1), view:state.view});
-  $('tabs-empty').hidden = Boolean(layout.groups[0].sessions.length);
+  const workspace = currentWorkspace(), ids = workspace?.sessions || [], focused = focusedId(workspace);
+  tabs.render(state.workspaces, state.sessions, state.selected);
+  $('empty-state').hidden = !state.listed || ids.length > 0;
+  // The terminal action previews the layout it will produce.
+  const count = ids.length;
+  $('new').setAttribute('aria-disabled', String(count >= PANE_LIMIT));
+  $('new-icon').setAttribute('href', count >= PANE_LIMIT ? '#icon-layout-full' : `#icon-layout-${count + 1}`);
+  $('new-label').textContent = count ? 'Split' : 'Terminal';
+  $('new').title = count >= PANE_LIMIT ? `This workspace has ${PANE_LIMIT} terminals` : count ? `Split — add terminal ${count + 1} of ${PANE_LIMIT}` : 'Open a terminal in this workspace';
+  $('new-workspace').setAttribute('aria-disabled', String(state.workspaces.length >= WORKSPACE_LIMIT));
+  $('connection').classList.toggle('connected', state.connectionReady);
+  $('connection-status').textContent = state.connectionReady ? 'Connected' : 'Reconnecting…';
+  $('connection').title = state.connectionReady ? `Local server · ${state.shell}` : 'Waiting for the local Webterminal server';
+  renderSwitcher($('pane-switcher'), narrow.matches ? ids : [], state.sessions, focused, selectPane);
   for (const pane of panes) {
-    const snapshot = state.snapshots.get(pane.id);
-    const status = !pane.id ? '' : !state.connectionReady ? 'Reconnecting…' : !ready(pane) || !snapshot ? 'Connecting…' : !snapshot.alive ? `Exited${snapshot.exitCode === null ? '' : ` (${snapshot.exitCode})`}` : snapshot.controller === state.view ? 'Controlling' : 'Observing';
-    pane.update(state.sessions.get(pane.id), snapshot, status, ready(pane), state.view);
+    pane.root.classList.toggle('focused', Boolean(pane.id) && pane.id === focused);
+    if (pane.id) pane.update(state.sessions.get(pane.id), state.snapshots.get(pane.id), paneStatus(pane), ready(pane), state.view);
   }
-  $('view-status').textContent = focusedPane().root.dataset.status;
-  $('terminal-size').textContent = shot?.terminal ? `${shot.terminal.cols} × ${shot.terminal.rows}` : '';
-  document.title = state.active ? `${sessionName(session)} · Webterminal` : 'Webterminal';
+  document.title = workspace ? `${workspaceLabel(workspace, state.sessions)} · Webterminal` : 'Webterminal';
+}
+// Updates arrive faster than the display refreshes; paint the latest state once per frame.
+function scheduleFrame() {
+  if (state.frame) return;
+  state.frame = requestAnimationFrame(() => {
+    state.frame = 0;
+    for (const pane of panes) {
+      if (!pane.dirty) continue;
+      pane.dirty = false;
+      const shot = state.snapshots.get(pane.id);
+      if (shot) pane.render(shot);
+    }
+    scheduleResize();
+    updateChrome();
+  });
 }
 function scheduleResize() {
-  if (state.resizeFrame) cancelAnimationFrame(state.resizeFrame);
-  state.resizeFrame = requestAnimationFrame(() => {
-    state.resizeFrame = 0;
-    for (const tab of document.querySelectorAll('.tabs .tab.active')) tab.scrollIntoView({block:'nearest', inline:'nearest'});
+  // Throttled rather than debounced: continuous output must not postpone a
+  // resize, and dragging the window reflows terminals while it moves.
+  if (state.resizeTimer) return;
+  state.resizeTimer = setTimeout(() => {
+    state.resizeTimer = 0;
     for (const pane of panes) {
       if (!canInput(pane)) continue;
       const shot = state.snapshots.get(pane.id), size = pane.renderer.dimensions();
       if (size.cols !== shot.terminal.cols || size.rows !== shot.terminal.rows) send({op:'resize', id:pane.id, epoch:shot.epoch, ...size});
     }
-  });
+  }, 50);
 }
-function openDirectoryDialog(group = layout.focused) { creationGroup = group; directoryPicker.open(); }
-for (const [index, prefix] of ['', 'secondary-'].entries()) {
-  $(prefix + 'new').addEventListener('click', () => openDirectoryDialog(index));
-  $(prefix + 'split-terminal').addEventListener('click', () => layout.splitLayout());
-}
-$('rename-save').addEventListener('click', saveName);
-$('rename-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); saveName(); } });
-for (const [id,delta] of [['smaller',-1],['larger',1]]) $(id).addEventListener('click', () => {
-  state.fontSize = Math.max(10, Math.min(26, state.fontSize + delta));
+function setFontSize(size) {
+  state.fontSize = Math.max(10, Math.min(26, size));
   document.documentElement.style.setProperty('--font-size', `${state.fontSize}px`);
-  document.documentElement.style.setProperty('--line-height', `${Math.ceil(state.fontSize * 1.38)}px`);
-  localStorage.setItem('webterminal.fontSize', state.fontSize);
+  document.documentElement.style.setProperty('--line-height', `${Math.ceil(state.fontSize * 1.2)}px`);
+  $('preferences-font').textContent = `${state.fontSize} px`;
   for (const pane of panes) pane.renderer.measure();
-  scheduleResize(); updateChrome();
+}
+
+$('new').addEventListener('click', openTerminal);
+$('empty-new').addEventListener('click', openTerminal);
+$('new-workspace').addEventListener('click', createWorkspace);
+$('settings').addEventListener('click', () => $('preferences-dialog').showModal());
+$('preferences-close').addEventListener('click', () => $('preferences-dialog').close());
+for (const [id, delta] of [['smaller', -1], ['larger', 1]]) $(id).addEventListener('click', () => {
+  setFontSize(state.fontSize + delta);
+  try { localStorage.setItem('webterminal.fontSize', state.fontSize); } catch { /* Not persisted. */ }
+  scheduleResize();
 });
 $('fullscreen').addEventListener('click', async () => {
   $('preferences-dialog').close();
   try { if (document.fullscreenElement) { await document.exitFullscreen(); navigator.keyboard?.unlock?.(); } else { await document.documentElement.requestFullscreen(); try { await navigator.keyboard?.lock?.(); } catch { toast('The browser did not grant keyboard lock.'); } } }
   catch { toast('Fullscreen is unavailable.'); }
-  focusedPane().focus();
+  focusedPane()?.focus();
 });
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) navigator.keyboard?.unlock?.(); scheduleResize(); });
+narrow.addEventListener('change', () => synchronize());
 document.addEventListener('keydown', event => {
   if (event.target.closest?.('dialog[open]')) return;
-  const pane = focusedPane();
+  const pane = panes.find(pane => pane.id && pane.root.contains(event.target)) || focusedPane();
+  if (!pane) return;
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); pane.showFind(true); }
   else if (event.key === 'Escape' && !pane.ui.findbar.hidden) pane.showFind(false);
   else if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c' && !document.getSelection()?.isCollapsed) { event.preventDefault(); pane.copy(); }
@@ -276,13 +388,12 @@ document.addEventListener('copy', event => {
   const selection = document.getSelection();
   const pane = panes.find(pane => pane.ui['terminal-lines'].contains(selection?.anchorNode) && pane.ui['terminal-lines'].contains(selection?.focusNode));
   const text = pane?.renderer.selectionText();
+  reader.ignore(text || selection?.toString());
   if (text && event.clipboardData) { event.clipboardData.setData('text/plain', text); event.preventDefault(); }
 });
+document.addEventListener('dragend', () => { for (const element of document.querySelectorAll('.drop-target,.drop-before,.drop-after')) element.classList.remove('drop-target', 'drop-before', 'drop-after'); });
 document.fonts?.ready.then(scheduleResize);
-const savedSize = Number(localStorage.getItem('webterminal.fontSize'));
-if (savedSize >= 10 && savedSize <= 26) { state.fontSize = savedSize; document.documentElement.style.setProperty('--font-size', `${savedSize}px`); document.documentElement.style.setProperty('--line-height', `${Math.ceil(savedSize * 1.38)}px`); for (const pane of panes) pane.renderer.measure(); }
-// Reconcile saved groups only after this connection delivers its session list.
-// An empty pre-connection registry must not erase the restored layout.
-for (let i = 0; i < panes.length; i++) panes[i].bind(i === 1 && !layout.split ? null : layout.groups[i].active, state.views);
-state.active = layout.active;
+let savedSize = 0;
+try { savedSize = Number(localStorage.getItem('webterminal.fontSize')); } catch { /* Default size. */ }
+setFontSize(savedSize >= 10 && savedSize <= 26 ? savedSize : 14);
 updateChrome(); connect();

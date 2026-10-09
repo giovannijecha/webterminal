@@ -21,10 +21,24 @@ Updates are coalesced about every 16 ms. Slow viewers are disconnected rather
 than allowed to accumulate unbounded output; they can reconnect for a fresh
 snapshot.
 
-The workbench can show two editor groups. Session names and global tab order
-are server state. Group membership and selection are stored per browser tab in
-`sessionStorage`; font size uses a Webterminal-specific `localStorage` key. Server
-state, including custom names and history, does not survive a server restart.
+Rust owns workspace membership, workspace and pane order, and custom names.
+Each workspace shows up to four panes; narrow screens show one at a time with
+a pane switcher. Workspace selection is stored per browser tab in
+`sessionStorage`; font size and the Reader's Follow clipboard choice use
+Webterminal-specific `localStorage` keys. Server state, including workspaces,
+custom names and history, does not survive a server restart.
+
+Closing a terminal or workspace asks for confirmation only while a program runs
+beyond its shell. Workspace confirmation is checked against the sessions that
+were present when the dialog opened; membership changes from another view cannot
+silently add new targets to a confirmed close.
+
+The Reader renders copied Markdown through DOM nodes, keeping at most 20
+documents of 512 KiB each in browser memory. Terminal clipboard writes that look
+like prose become Reader documents automatically; replacing the system clipboard
+still requires confirmation. Follow clipboard reads only while enabled and the
+view is focused, and skips short single-line copies and text copied by
+Webterminal itself. Reader documents disappear on reload.
 
 ## Text-terminal coverage
 
@@ -55,6 +69,7 @@ confirmation and browser permission; terminal clipboard reads are unsupported.
 | Resource | Limit |
 | --- | --- |
 | Sessions / network connections | 32 sessions; 64 concurrent connections |
+| Workspaces / panes | 16 workspaces; at most four sessions per workspace |
 | Geometry | 2–300 columns; 1–120 rows |
 | Shell history | At most 1,000 rows, 100,000 cells, and 3 MiB serialized; oldest rows are discarded |
 | Grapheme text | 128 UTF-8 bytes per cell |

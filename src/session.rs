@@ -2,6 +2,7 @@
 use crate::{
     json, native,
     terminal::{Event, SnapshotBaseline, Terminal},
+    workspaces::{self, Workspaces},
 };
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Write};
@@ -31,39 +32,60 @@ pub fn geometry(value: &json::Value) -> Result<(u16, u16), String> {
     Ok((cols as u16, rows as u16))
 }
 
+/// Sessions and their workspace organization change under one lock.
+struct Inner {
+    sessions: Vec<Arc<Session>>,
+    workspaces: Workspaces,
+}
+
 pub struct Registry {
-    sessions: Mutex<Vec<Arc<Session>>>,
+    inner: Mutex<Inner>,
     next: AtomicU64,
     pub cwd: PathBuf,
     pub shell: String,
 }
 
+pub enum WorkspaceClose {
+    Closed,
+    Busy {
+        sessions: Vec<String>,
+        targets: Vec<String>,
+    },
+}
+
 impl Registry {
     pub fn new(cwd: PathBuf, shell: String) -> Self {
         Self {
-            sessions: Mutex::new(Vec::new()),
+            inner: Mutex::new(Inner {
+                sessions: Vec::new(),
+                workspaces: Workspaces::default(),
+            }),
             next: AtomicU64::new(1),
             cwd,
             shell,
         }
     }
+    /// Starts a session in `workspace`, or in the first workspace with room.
+    /// Returns the session and the workspace that received it.
     pub fn create(
         &self,
         cwd: &Path,
         cols: u16,
         rows: u16,
         view: &str,
-    ) -> Result<Arc<Session>, String> {
+        workspace: Option<&str>,
+    ) -> Result<(Arc<Session>, String), String> {
         let path = cwd
             .canonicalize()
             .map_err(|e| format!("Cannot open directory: {e}"))?;
         if !path.is_dir() {
             return Err("Working directory must be a directory".into());
         }
-        let mut sessions = self.sessions.lock().unwrap();
-        if sessions.len() >= SESSION_LIMIT {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.sessions.len() >= SESSION_LIMIT {
             return Err("Session limit reached (32); close a terminal first".into());
         }
+        let placement = inner.workspaces.placement(workspace)?;
         let spawned = native::spawn(&self.shell, &path, cols, rows)
             .map_err(|e| format!("Cannot start terminal: {e}"))?;
         let id = format!("s{}", self.next.fetch_add(1, Ordering::Relaxed));
@@ -90,8 +112,9 @@ impl Registry {
                 event_seq: 0,
             }),
         });
-        sessions.push(session.clone());
-        drop(sessions);
+        inner.sessions.push(session.clone());
+        let workspace = inner.workspaces.insert(placement, &id);
+        drop(inner);
         let weak = Arc::downgrade(&session);
         let mut input = spawned.input;
         thread::spawn(move || {
@@ -174,52 +197,95 @@ impl Registry {
                 thread::sleep(Duration::from_millis(50));
             }
         });
-        Ok(session)
+        Ok((session, workspace))
     }
     pub fn get(&self, id: &str) -> Result<Arc<Session>, String> {
-        self.sessions
+        self.inner
             .lock()
             .unwrap()
+            .sessions
             .iter()
             .find(|session| session.id == id)
             .cloned()
             .ok_or_else(|| "Terminal session no longer exists".into())
     }
     pub fn all(&self) -> Vec<Arc<Session>> {
-        self.sessions.lock().unwrap().clone()
+        self.inner.lock().unwrap().sessions.clone()
     }
     pub fn rename(&self, id: &str, name: &str) -> Result<(), String> {
-        if name.chars().any(char::is_control) {
-            return Err("Terminal name must be at most 80 characters without controls".into());
-        }
-        let name = name.trim();
-        if name.chars().count() > 80 {
-            return Err("Terminal name must be at most 80 characters without controls".into());
-        }
-        let sessions = self.sessions.lock().unwrap();
-        let session = sessions
+        let name = workspaces::custom_name(name, "Terminal")?;
+        self.get(id)?.state.lock().unwrap().name = name;
+        Ok(())
+    }
+    pub fn create_workspace(&self) -> Result<String, String> {
+        self.inner.lock().unwrap().workspaces.create()
+    }
+    pub fn rename_workspace(&self, id: &str, name: &str) -> Result<(), String> {
+        self.inner.lock().unwrap().workspaces.rename(id, name)
+    }
+    pub fn order_workspaces(&self, ids: &[String]) -> Result<(), String> {
+        self.inner.lock().unwrap().workspaces.reorder(ids)
+    }
+    pub fn move_session(&self, id: &str, workspace: &str, position: usize) -> Result<(), String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .workspaces
+            .move_session(id, workspace, position)
+    }
+    /// Checks the confirmation and removes the workspace under the same lock.
+    pub fn close_workspace(
+        &self,
+        id: &str,
+        confirmed: Option<&[String]>,
+    ) -> Result<WorkspaceClose, String> {
+        let mut inner = self.inner.lock().unwrap();
+        let targets = inner.workspaces.sessions(id)?.to_vec();
+        let busy = inner
+            .sessions
             .iter()
-            .find(|session| session.id == id)
-            .ok_or("Terminal session no longer exists")?;
-        session.state.lock().unwrap().name = (!name.is_empty()).then(|| name.to_owned());
-        Ok(())
-    }
-    pub fn reorder(&self, ids: &[String]) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        let unique: HashSet<&str> = ids.iter().map(String::as_str).collect();
-        if ids.len() != sessions.len()
-            || unique.len() != ids.len()
-            || sessions
-                .iter()
-                .any(|session| !unique.contains(session.id.as_str()))
-        {
-            return Err("Order must contain every current session ID exactly once".into());
+            .filter(|session| targets.contains(&session.id) && session.busy())
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        if let Some(confirmed) = confirmed {
+            let unique = confirmed.iter().map(String::as_str).collect::<HashSet<_>>();
+            if confirmed.len() != targets.len()
+                || unique.len() != confirmed.len()
+                || targets.iter().any(|id| !unique.contains(id.as_str()))
+            {
+                if busy.is_empty() {
+                    return Err("Workspace confirmation expired; retry close".into());
+                }
+                return Ok(WorkspaceClose::Busy {
+                    sessions: busy,
+                    targets,
+                });
+            }
+        } else if !busy.is_empty() {
+            return Ok(WorkspaceClose::Busy {
+                sessions: busy,
+                targets,
+            });
         }
-        sessions.sort_by_key(|session| ids.iter().position(|id| id == &session.id).unwrap());
-        Ok(())
+        let ids = inner.workspaces.close(id)?;
+        let mut closed = Vec::new();
+        inner.sessions.retain(|session| {
+            let keep = !ids.contains(&session.id);
+            if !keep {
+                closed.push(session.clone());
+            }
+            keep
+        });
+        drop(inner);
+        for session in closed {
+            session.stop();
+        }
+        Ok(WorkspaceClose::Closed)
     }
+    /// Sessions in workspace and pane order, plus the workspaces themselves.
     pub fn list_json(&self) -> String {
-        let entries = self.all().iter().map(|session| {
+        let inner = self.inner.lock().unwrap();
+        let entries = inner.workspaces.order().filter_map(|id| inner.sessions.iter().find(|session| session.id == id)).map(|session| {
             let state = session.state.lock().unwrap();
             format!("{{\"id\":{},\"cwd\":{},\"shell\":{},\"title\":{},\"name\":{},\"alive\":{},\"controller\":{},\"exitCode\":{}}}",
                 json::quote(&session.id), json::quote(&session.cwd.to_string_lossy()), json::quote(&session.shell),
@@ -227,7 +293,10 @@ impl Registry {
                 optional_string(&state.name),
                 state.alive, optional_string(&state.controller), optional_code(state.exit_code))
         }).collect::<Vec<_>>().join(",");
-        format!("{{\"type\":\"sessions\",\"sessions\":[{entries}]}}")
+        format!(
+            "{{\"type\":\"sessions\",\"sessions\":[{entries}],\"workspaces\":{}}}",
+            inner.workspaces.json()
+        )
     }
     pub fn detach_view(&self, view: &str) {
         for session in self.all() {
@@ -235,18 +304,20 @@ impl Registry {
         }
     }
     pub fn close(&self, id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        let index = sessions
+        let mut inner = self.inner.lock().unwrap();
+        let index = inner
+            .sessions
             .iter()
             .position(|session| session.id == id)
             .ok_or("Terminal session no longer exists")?;
-        let session = sessions.remove(index);
-        drop(sessions);
+        let session = inner.sessions.remove(index);
+        inner.workspaces.remove_session(id);
+        drop(inner);
         session.stop();
         Ok(())
     }
     pub fn shutdown(&self) {
-        let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
+        let sessions = std::mem::take(&mut self.inner.lock().unwrap().sessions);
         for session in &sessions {
             session.stop();
         }
@@ -351,10 +422,12 @@ impl Session {
         self.resize_locked(size)
     }
     fn resize_locked(&self, (cols, rows): (u16, u16)) -> Result<(), String> {
+        // Holding the state lock keeps the output reader from feeding ConPTY's
+        // post-resize repaint into the old geometry.
+        let mut state = self.state.lock().unwrap();
         self.pty
             .resize(cols, rows)
             .map_err(|e| format!("Cannot resize terminal: {e}"))?;
-        let mut state = self.state.lock().unwrap();
         state.terminal.resize(cols as usize, rows as usize);
         state.revision += 1;
         Ok(())
@@ -433,6 +506,11 @@ impl Session {
         state.alive = false;
         state.transfer(None);
         state.terminal.expire_sync();
+    }
+    /// A live terminal is busy while its job holds more than the shell process.
+    pub fn busy(&self) -> bool {
+        self.state.lock().unwrap().alive
+            && self.pty.active_processes().map_or(true, |count| count > 1)
     }
     fn stop(&self) {
         {

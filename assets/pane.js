@@ -1,15 +1,18 @@
 import {TerminalRenderer} from './render.js';
 import {TerminalInput} from './input.js';
-import {displayPath, sessionName} from './workbench.js';
+import {displayPath, editInline, sessionName, stateClass} from './common.js';
 
-// Each visible group has its own projection, input adapter and viewport.
+export const SESSION_DRAG = 'application/x-webterminal-session';
+const PARTS = ['pane-header', 'terminal-scroll', 'terminal-lines', 'keyboard', 'terminal-title', 'terminal-path', 'live-dot', 'pane-status', 'take-control', 'close-session', 'terminal-hint', 'find', 'findbar', 'find-input', 'find-count', 'find-prev', 'find-next', 'find-close'];
+
+// Each visible pane has its own projection, input adapter and viewport.
 // Terminal state and control epochs remain owned by the Rust server.
 export class TerminalPane {
   constructor(root, prefix, callbacks) {
     this.root = root;
     this.callbacks = callbacks;
     this.id = null;
-    this.ui = Object.fromEntries(['welcome','welcome-new','terminal-area','terminal-scroll','terminal-lines','keyboard','terminal-title','terminal-path','live-dot','take-control','copy','paste','close-session','terminal-hint','find','findbar','find-input','find-count','find-prev','find-next','find-close'].map(id => [id, document.getElementById(prefix + id)]));
+    this.ui = Object.fromEntries(PARTS.map(id => [id, document.getElementById(prefix + id)]));
     const ui = this.ui;
     this.renderer = new TerminalRenderer(ui['terminal-scroll'], ui['terminal-lines']);
     this.input = new TerminalInput({keyboard:ui.keyboard, scroll:ui['terminal-scroll'], renderer:this.renderer, snapshot:() => callbacks.snapshot(this.id), canInput:() => callbacks.canInput(this), send:data => callbacks.input(this, data), notify:callbacks.notify});
@@ -26,11 +29,30 @@ export class TerminalPane {
     ui['find-next'].addEventListener('click', () => this.advanceFind(1));
     ui['take-control'].addEventListener('click', () => callbacks.claim(this));
     ui['close-session'].addEventListener('click', () => callbacks.close(this.id));
-    ui.copy.addEventListener('click', () => this.copy());
-    ui.paste.addEventListener('click', () => this.paste());
-    ui['welcome-new'].addEventListener('click', () => callbacks.create(this));
+    ui['terminal-title'].addEventListener('click', () => this.rename());
     ui['terminal-scroll'].addEventListener('pointerdown', () => {
       if (!document.getSelection()?.isCollapsed) document.getSelection().removeAllRanges();
+    });
+    // The header drags the terminal to another pane position or workspace tab.
+    ui['pane-header'].addEventListener('dragstart', event => {
+      if (!this.id || event.target.closest('button')) { event.preventDefault(); return; }
+      event.dataTransfer.setData(SESSION_DRAG, this.id);
+      event.dataTransfer.effectAllowed = 'move';
+      document.documentElement.classList.add('dragging-session');
+    });
+    ui['pane-header'].addEventListener('dragend', () => document.documentElement.classList.remove('dragging-session'));
+    root.addEventListener('dragover', event => {
+      if (!event.dataTransfer.types.includes(SESSION_DRAG)) return;
+      event.preventDefault();
+      root.classList.add('drop-target');
+    });
+    root.addEventListener('dragleave', event => { if (!root.contains(event.relatedTarget)) root.classList.remove('drop-target'); });
+    root.addEventListener('drop', event => {
+      root.classList.remove('drop-target');
+      const id = event.dataTransfer.getData(SESSION_DRAG);
+      if (!id) return;
+      event.preventDefault();
+      if (id !== this.id) callbacks.drop(this, id);
     });
     const geometry = new ResizeObserver(callbacks.resize);
     geometry.observe(root);
@@ -45,6 +67,7 @@ export class TerminalPane {
     }
     this.input.reset();
     this.id = id;
+    this.root.hidden = !id;
     const view = views.get(id);
     this.renderer.clear();
     this.ui['find-input'].value = view?.query || '';
@@ -61,28 +84,33 @@ export class TerminalPane {
   }
 
   update(session, snapshot, status, ready, view) {
-    const ui = this.ui;
-    ui.welcome.hidden = Boolean(this.id);
-    ui['terminal-area'].hidden = !this.id;
-    ui.find.disabled = !this.id;
-    ui['terminal-title'].textContent = sessionName(session);
-    ui['terminal-title'].title = session?.title || sessionName(session);
-    ui['terminal-path'].textContent = displayPath(session?.cwd);
-    ui['terminal-path'].title = displayPath(session?.cwd);
-    ui['live-dot'].classList.toggle('live', Boolean(snapshot?.alive ?? session?.alive));
+    const ui = this.ui, name = sessionName(session), path = displayPath(session?.cwd);
+    ui['terminal-title'].textContent = name;
+    ui['terminal-title'].title = `${session?.title || name}\nClick to rename`;
+    ui['terminal-title'].setAttribute('aria-label', `Rename terminal ${name}`);
+    ui['terminal-path'].textContent = path;
+    ui['terminal-path'].title = path;
+    ui['live-dot'].className = `pane-dot${stateClass(snapshot ?? session)}`;
     ui['take-control'].hidden = !ready || !snapshot?.alive || snapshot.controller === view;
-    ui.paste.disabled = !this.callbacks.canInput(this);
+    ui['pane-status'].textContent = status === 'Controlling' ? '' : status;
+    ui['pane-status'].title = snapshot?.terminal ? `${snapshot.terminal.cols} × ${snapshot.terminal.rows}` : '';
+    ui['close-session'].setAttribute('aria-label', `Close terminal ${name}`);
     ui['terminal-hint'].textContent = ready && snapshot?.alive && snapshot.controller !== view ? 'This view is observing. Take control to type, paste, resize, or use the mouse.' : 'Click to type · Select text to copy · Shift+drag selects text when an app uses the mouse';
     this.root.dataset.status = status;
-    const label = this.root.querySelector('.pane-status');
-    if (label) label.textContent = status;
+    this.root.setAttribute('aria-label', `Terminal ${name}`);
+  }
+
+  rename() {
+    if (!this.id) return;
+    const id = this.id, label = this.ui['terminal-title'];
+    editInline(label, {value:label.textContent, accessibleName:'Terminal name', save:name => this.callbacks.rename(id, name), closed:() => this.callbacks.renamed()});
   }
 
   render(snapshot) { this.renderer.render(snapshot); }
   focus() { this.input.focus(); }
 
   showFind(show) {
-    if (show && !this.id) { this.callbacks.notify('Create a terminal to search its output.'); return; }
+    if (show && !this.id) return;
     this.ui.findbar.hidden = !show;
     if (show) { this.ui['find-input'].focus(); this.ui['find-input'].select(); }
     else { this.ui['find-input'].value = ''; this.renderer.setSearch(''); this.focus(); }
@@ -96,49 +124,30 @@ export class TerminalPane {
     const position = this.renderer.nextMatch(direction);
     if (position) this.ui['find-count'].textContent = `${position.index} / ${position.total}`;
   }
-  selectAll() {
-    if (!this.id) return;
-    const range = document.createRange();
-    range.selectNodeContents(this.ui['terminal-lines']);
-    document.getSelection().removeAllRanges();
-    document.getSelection().addRange(range);
-    this.renderer.setFrozen(true);
-  }
   async copy() {
     const text = this.renderer.selectionText();
     if (!text) { this.callbacks.notify('Select terminal text to copy.'); return; }
-    try { await navigator.clipboard.writeText(text); this.callbacks.notify('Copied selection.'); }
+    try { await navigator.clipboard.writeText(text); this.callbacks.copied(text); this.callbacks.notify('Copied selection.'); }
     catch { this.callbacks.notify('Clipboard access was denied by the browser.', 'error'); }
-  }
-  async paste() {
-    const id = this.id;
-    const epoch = this.callbacks.snapshot(id)?.epoch;
-    const connection = this.callbacks.connection();
-    try {
-      const text = await navigator.clipboard.readText();
-      if (this.id !== id || this.callbacks.connection() !== connection || this.callbacks.snapshot(id)?.epoch !== epoch || !this.callbacks.canInput(this)) return;
-      this.input.pasteText(text);
-      this.focus();
-    } catch { this.callbacks.notify('Clipboard access was denied by the browser.', 'error'); }
   }
 }
 
-export function createSecondGroup() {
-  const primary = document.getElementById('editor-primary');
-  const secondary = primary.cloneNode(true);
-  secondary.id = 'editor-secondary';
-  secondary.dataset.group = '2';
-  secondary.setAttribute('aria-label', 'Terminal group 2');
-  for (const element of secondary.querySelectorAll('[id]')) element.id = 'secondary-' + element.id;
-  for (const element of secondary.querySelectorAll('*')) {
-    for (const attr of ['for','aria-controls','aria-labelledby','aria-describedby']) {
-      if (element.hasAttribute(attr)) element.setAttribute(attr, element.getAttribute(attr).split(' ').map(id => 'secondary-' + id).join(' '));
+// Pane 1 keeps the plain IDs from the page; panes 2 to 4 are prefixed clones.
+export function createPanes(count, callbacks) {
+  const primary = document.getElementById('pane');
+  const panes = [new TerminalPane(primary, '', callbacks)];
+  for (let index = 2; index <= count; index++) {
+    const prefix = `pane${index}-`, clone = primary.cloneNode(true);
+    clone.id = prefix + 'pane';
+    for (const element of clone.querySelectorAll('[id]')) element.id = prefix + element.id;
+    for (const element of clone.querySelectorAll('[for],[aria-controls],[aria-labelledby],[aria-describedby]')) {
+      for (const attr of ['for', 'aria-controls', 'aria-labelledby', 'aria-describedby']) {
+        if (element.hasAttribute(attr)) element.setAttribute(attr, element.getAttribute(attr).split(' ').map(id => prefix + id).join(' '));
+      }
     }
+    primary.parentElement.append(clone);
+    panes.push(new TerminalPane(clone, prefix, callbacks));
   }
-  secondary.querySelector('#secondary-welcome h1').textContent = 'Group 2';
-  secondary.querySelector('#secondary-welcome .welcome-heading p').textContent = 'Open a terminal or move a tab here.';
-  secondary.querySelector('#secondary-editor-more').dataset.menu = 'Terminal';
-  secondary.hidden = true;
-  document.getElementById('editor-groups').append(secondary);
-  return secondary;
+  panes.forEach((pane, index) => { pane.index = index; pane.root.dataset.index = String(index); });
+  return panes;
 }

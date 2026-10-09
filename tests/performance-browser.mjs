@@ -8,7 +8,7 @@ import {chromeProbe,findChrome,freePort,proxyFor,ready,stopChild,stopProxy,quote
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const target=resolve(root,'target');
-const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(target,'perf-build/debug'));
+const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(target,'debug'));
 const runRoot=resolve(target,`performance-${process.pid}-${Date.now()}`);
 assert.ok(runRoot.startsWith(target+sep));
 const reports=resolve(target,'performance');
@@ -56,7 +56,7 @@ async function workload(name,command,marker,sequence){
   report.workloads.push({name,latencyMs:summary(samples),renderMs:summary(renderSamples),parseMs:summary(parseSamples),receiveMs:summary(receivedSamples),payloadBytes:summary(payloads),historyRows:last.terminal.history.length,domNodes:$('terminal-lines').querySelectorAll('*').length,raw:{latencyMs:samples,renderMs:renderSamples,parseMs:parseSamples,receiveMs:receivedSamples,payloadBytes:payloads}});
 }
 async function main(){
-  await until(()=>$('connection-status').textContent==='Connected','connection');$('new').click();await until(()=>!$('directory-create').disabled,'directory');$('directory-create').click();await until(()=>$('view-status').textContent==='Controlling'&&$('terminal-lines').textContent.includes('PERF_READY'),'fixture');
+  await until(()=>$('connection-status').textContent==='Connected','connection');$('new').click();await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'directory');$('directory-create').click();await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PERF_READY'),'fixture');
   if(FLOW_ONLY){send('history\r');await until(()=>$('terminal-lines').textContent.includes('HISTORY_READY'),'flow history');await workload('active-tui-output','stream','STREAM_READY',3000);report.frameGapMs=summary(frameGaps);report.rawFrameGapMs=frameGaps;}
   else{await workload('shell-empty','', '',0);await workload('shell-history-600','history','HISTORY_READY',1000);await workload('alternate-tui','tui','TUI_READY',2000);}
   report.errors=window.__probeErrors;report.pass=!report.errors.length;

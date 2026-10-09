@@ -87,26 +87,63 @@ fn history_resize_and_scroll_region() {
     let mut t = Terminal::new(8, 2);
     t.feed(b"abcdef");
     t.resize(3, 2);
-    assert_eq!((t.active().x, t.active().y), (2, 0));
-    assert_eq!(texts(&t), vec!["def", "   "]);
-    assert_eq!(
-        t.primary.history[0]
-            .cells
-            .iter()
-            .map(|c| c.text.as_str())
-            .collect::<String>(),
-        "abc"
-    );
+    assert_eq!((t.active().x, t.active().y), (2, 1));
+    assert_eq!(texts(&t), vec!["abc", "def"]);
+    assert!(t.primary.history.is_empty());
+    let mut t = Terminal::new(4, 5);
+    t.feed(b"AB\r\nCD");
+    t.resize(4, 2);
+    assert!(t.primary.history.is_empty());
+    assert_eq!(texts(&t), vec!["AB  ", "CD  "]);
+    assert_eq!((t.active().x, t.active().y), (2, 1));
+    t.resize(4, 1);
+    assert_eq!(texts(&t), vec!["CD  "]);
+    assert_eq!(t.primary.history.len(), 1);
     let mut t = Terminal::new(4, 3);
     t.feed(b"\x1b[2;2H");
     t.resize(4, 2);
+    assert_eq!((t.active().x, t.active().y), (1, 1));
+    t.resize(4, 1);
     assert_eq!((t.active().x, t.active().y), (1, 0));
     t.resize(4, 3);
-    assert_eq!((t.active().x, t.active().y), (1, 1));
+    assert_eq!((t.active().x, t.active().y), (1, 0));
     let mut t = Terminal::new(2, 2);
     t.feed("\u{754c}".as_bytes());
     t.resize(1, 2);
     assert!(texts(&t).iter().any(|line| line == "\u{fffd}"));
+}
+
+#[test]
+fn resize_keeps_history_disjoint_from_the_conpty_viewport() {
+    // ConPTY repaints its viewport after every resize, so history must hold
+    // exactly the rows above it: no duplicates when narrowing, no lost rows
+    // when widening or growing.
+    let history = |t: &Terminal| -> Vec<String> {
+        let rows = t.primary.history.iter();
+        rows.map(|l| l.cells.iter().map(|c| c.text.as_str()).collect::<String>())
+            .map(|text| text.trim_end().to_owned())
+            .collect()
+    };
+    let mut t = Terminal::new(6, 4);
+    t.feed(b"aaaaaa\r\nb\r\ncc");
+    t.resize(3, 4);
+    assert_eq!(texts(&t), vec!["aaa", "aaa", "b  ", "cc "]);
+    assert!(history(&t).is_empty());
+    t.resize(3, 2);
+    assert_eq!(
+        (history(&t), texts(&t)),
+        (
+            vec!["aaa".into(), "aaa".into()],
+            vec!["b  ".into(), "cc ".into()]
+        )
+    );
+    t.resize(6, 2);
+    assert_eq!(history(&t), vec!["aaaaaa"]);
+    assert_eq!(texts(&t), vec!["b     ", "cc    "]);
+    t.resize(6, 4);
+    assert_eq!(history(&t), vec!["aaaaaa"]);
+    assert_eq!(texts(&t)[..2], ["b     ", "cc    "]);
+    assert_eq!((t.active().x, t.active().y), (2, 1));
 }
 
 #[test]
