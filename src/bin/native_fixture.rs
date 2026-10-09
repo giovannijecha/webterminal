@@ -60,6 +60,8 @@ fn main() -> ExitCode {
             }
             out.write_all(b"\r\nFLOOD_END\r\n")
                 .expect("write end marker");
+            out.write_all(b"\x1b]0;FLOOD_END\x07")
+                .expect("write final title marker");
             ExitCode::SUCCESS
         }
         Some("--hold") => loop {

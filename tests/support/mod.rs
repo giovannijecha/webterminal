@@ -13,7 +13,7 @@ use webterminal::server::{Config, Server};
 // Parallel tests can read the same clock tick; the counter keeps folders unique.
 static NEXT_HARNESS: AtomicUsize = AtomicUsize::new(0);
 
-const TIMEOUT: Duration = Duration::from_secs(8);
+pub const TIMEOUT: Duration = Duration::from_secs(8);
 
 pub fn fixture() -> &'static str {
     env!("CARGO_BIN_EXE_native_fixture")
@@ -121,6 +121,8 @@ pub struct Socket {
     stream: TcpStream,
     pending: Vec<u8>,
     mask: u32,
+    /// The view id the server assigned in its hello message.
+    pub view: String,
     last_sent: String,
     last_received: String,
 }
@@ -163,8 +165,14 @@ impl Socket {
             mask: 0,
             last_sent: "handshake".into(),
             last_received: String::new(),
+            view: String::new(),
         };
-        socket.recv_type("hello");
+        let hello = socket.recv_type("hello");
+        socket.view = webterminal::json::parse(&hello)
+            .unwrap()
+            .field("view")
+            .unwrap()
+            .to_string();
         socket
     }
     pub fn send(&mut self, json: &str) {
@@ -197,7 +205,14 @@ impl Socket {
         self.recv_matching(|text| text.starts_with(&format!("{{\"type\":\"{kind}\"")))
     }
     pub fn recv_matching(&mut self, predicate: impl Fn(&str) -> bool) -> String {
-        let until = Instant::now() + TIMEOUT;
+        self.recv_matching_with_timeout(TIMEOUT, predicate)
+    }
+    pub fn recv_matching_with_timeout(
+        &mut self,
+        timeout: Duration,
+        predicate: impl Fn(&str) -> bool,
+    ) -> String {
+        let until = Instant::now() + timeout;
         loop {
             let text = self.read_text(until);
             self.last_received = text.chars().take(180).collect();

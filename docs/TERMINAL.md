@@ -63,6 +63,14 @@ process output. Ordinary shell paste uses CR for newlines; bracketed paste
 uses LF within its delimiters. Hold Shift to select or scroll locally while
 an application captures the mouse. OSC 52 clipboard writes require Webterminal
 confirmation and browser permission; terminal clipboard reads are unsupported.
+A file drop uploads files one at a time and pastes each successful staged path
+through the same paste path, separated by spaces. Earlier files remain usable
+if a later upload fails. PowerShell receives single-quoted paths with embedded
+apostrophes doubled; other server-wide program overrides retain double quotes.
+With a `cmd.exe` override, paths containing `%` or `!` are rejected because
+CMD may expand them as environment variables.
+Alt-modified keys, including Alt+V, are sent to the program; Webterminal never
+reads the clipboard for them.
 
 ## Bounds
 
@@ -78,6 +86,7 @@ confirmation and browser permission; terminal clipboard reads are unsupported.
 | Input | 32 queued messages of at most 64 KiB each; browser pending input capped at 1 MiB |
 | WebSocket message / snapshot | 128 KiB input messages; terminal state under the 32 MiB snapshot ceiling |
 | Output delivery | About 16 ms between coalesced updates; blocked network writes time out after 500 ms |
+| Dropped files | 64 per drop, 1 GiB each, uploaded one at a time; a transfer idle for 30 s is abandoned |
 
 Longer control strings and links are discarded. Extra grapheme-joining text
 beyond a cell's limit is dropped. Alternate-screen content does not enter shell

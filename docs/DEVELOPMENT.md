@@ -25,12 +25,21 @@ The `--help` invocation exits after printing the options. A successful build
 produces `target/debug/webterminal.exe`. These checks require an installed pinned
 toolchain and linker; `--offline` does not install either one.
 
+The Windows PowerShell acceptance test allows 45 seconds for the first `ls`
+with PSReadLine loaded. A cold `ls` took about 28 seconds on the Windows 2025
+CI runner; other PowerShell command waits retain their eight-second limit.
+The fixture supplies PowerShell's built-in module path (PowerShell may add
+AllUsers) and resolves `pwd` before comparison to handle 8.3 path aliases.
+The 1 MiB ConPTY flood fixture has a separate 30-second completion limit; it
+still checks a clean exit, the final output marker, and a bounded late snapshot
+while another viewer stops reading.
+
 Node 24 and Chrome are optional test tools. With a built executable, the
 browser and module suites can be run from the repository root:
 
 ```powershell
 $env:WEBTERMINAL_TEST_BIN_DIR = "$PWD\target\debug"
-node --test tests/browser.mjs tests/reader.mjs
+node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
 node tests/browser-runtime.mjs
 node tests/browser-e2e.mjs
 node tests/workbench-browser.mjs
@@ -48,7 +57,10 @@ replacing a running server. The optional performance harness is
 production CLI session.
 
 Optional CLI probes need installed executables. Set `WEBTERMINAL_JECODE_EXE` to
-the Jecode executable for `node tests/cli-browser.mjs`. Set both
+the Jecode executable for `node tests/cli-browser.mjs` and
+`node tests/drop-browser.mjs`; the latter drops a file through Chrome DevTools
+and presses Alt+V, which makes Jecode read the clipboard without changing it.
+Set both
 `WEBTERMINAL_CODEX_EXE` and `WEBTERMINAL_CLAUDE_EXE` for
 `node tests/cli-api-browser.mjs`, or pass `codex` or `claude` to probe only
 one. These probes use disposable profiles. Codex and Claude receive fixed
@@ -56,6 +68,22 @@ responses from an owned loopback API; Jecode uses local drafts and commands.
 They do not establish compatibility with authenticated provider sessions.
 Do not run them against personal credentials or live providers as an acceptance
 shortcut.
+Set `WEBTERMINAL_DROP_FILE_ONLY=1` for the drop probe to verify its file path
+without sending Alt+V or reading the clipboard. Set
+`WEBTERMINAL_DROP_POWERSHELL=1` to run Jecode inside PowerShell and exercise
+PowerShell path quoting end to end.
+
+On 2026-10-09 the drop probe passed with headless Chrome and an isolated debug
+Jecode: a 70,000-byte binary from outside the working directory was staged with
+identical bytes, pasted as its path and attached by Jecode, and Alt+V reached
+Jecode. Rust fixtures cover the upload fence (Origin, view, epoch, session),
+size limits, short and stalled transfers with terminal I/O continuing, and
+staging cleanup on terminal close, shutdown and at the next server startup
+after a crash. A PowerShell round-trip fixture covers literal spaces,
+apostrophes, dollar signs, backticks, metacharacters and Unicode in paths. A
+file-only Chrome drop with those characters passed through both direct Jecode
+and Jecode launched inside PowerShell, including the staged and pooled bytes.
+A drag from the Windows desktop with a physical mouse has not been exercised.
 
 ## What has been exercised
 
@@ -114,6 +142,11 @@ directory picker lists directory names but does not serve their files. The
 native boundary starts each child suspended, assigns it to a private Windows
 Job Object, and resumes it; closing a session or server tears down owned
 descendants. Terminal transcripts and server configuration are not persisted.
+Dropped files are staged through a same-origin upload fenced like terminal
+input and removed with their session. A later server removes crashed staging
+only when its inactive lock and directory both carry Webterminal's marker;
+unknown temporary directories and locks, including staging from older unmarked
+builds, are left alone. See [`SPEC.md`](../SPEC.md).
 
 The design requirements are in [`SPEC.md`](../SPEC.md), and supported terminal
 behavior and bounds are in [`TERMINAL.md`](TERMINAL.md).

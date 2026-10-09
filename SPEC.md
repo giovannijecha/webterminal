@@ -95,6 +95,16 @@ directory content on the terminal origin. Configuration, when needed, belongs
 under `~/.webterminal/`; sessions and bounded history initially remain in memory.
 Never inspect CLI credentials or change another application's files or processes.
 
+Dropped files use a same-origin `POST /api/upload`, the only request with a
+body. It requires the page's Origin, the controlling view and its current
+control epoch, and a Content-Length of at most 1 GiB. The body streams on its
+own connection into a session-owned folder under the system temporary
+directory, so terminal I/O continues. Incomplete transfers, and transfers idle
+for 30 seconds, leave nothing behind; staging is removed with its session, at
+shutdown, or by the next server after a crash. The browser then pastes the
+staged paths as quoted, space-separated text. Webterminal does not interpret
+the files or depend on the program that receives them.
+
 ## Terminal compatibility
 
 Use protocol specifications as references, not copied implementations.

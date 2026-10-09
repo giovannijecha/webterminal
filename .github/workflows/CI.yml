@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Windows checks
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: rust-lld
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0-x86_64-pc-windows-gnullvm --profile minimal --component rustfmt --component clippy --component rust-mingw
+      - name: Install Node for owned browser tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build offline
+        run: cargo build --locked --offline
+      - name: Check all targets
+        run: cargo clippy --locked --offline --all-targets -- -D warnings
+      - name: Run Rust tests
+        run: cargo test --locked --offline --quiet
+      - name: Run JavaScript module tests
+        run: node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
+      - name: Run Chrome terminal acceptance
+        run: node tests/browser-e2e.mjs
+      - name: Run Chrome workbench acceptance
+        run: node tests/workbench-browser.mjs
+      - name: Run Chrome workspace acceptance
+        run: node tests/workspace-browser.mjs
+      - name: Run Chrome runtime acceptance
+        run: node tests/browser-runtime.mjs

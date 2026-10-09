@@ -1,5 +1,9 @@
 # Webterminal
 
+[![CI](https://github.com/giovannijecha/webterminal/actions/workflows/CI.yml/badge.svg)](https://github.com/giovannijecha/webterminal/actions/workflows/CI.yml)
+
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
 Webterminal is a local Windows terminal in your browser. A Rust server starts real
 PowerShell sessions through ConPTY and keeps the terminal screen and scrollback
 in memory. Open several terminals, organize them in workspaces, and return to a
@@ -68,6 +72,13 @@ produces an error without stopping its owner. `--help` lists all options.
 - Drag to select text. Use **Find** or Ctrl+Shift+F to search retained history,
   and Ctrl+Shift+C to copy. Paste uses the browser clipboard; supported
   terminal clipboard writes ask for confirmation.
+- Drop files from the desktop onto a terminal you control to paste their
+  paths, as native terminals do. Each file is first uploaded to a staging
+  folder owned by that terminal under `%TEMP%\webterminal-uploads\`, at most 64
+  files of 1 GiB each per drop. Staged copies are removed when the terminal
+  closes or the server stops; a later server removes those left by a crash.
+  Alt shortcuts such as Alt+V reach the program, while Ctrl+V stays the
+  browser paste.
 - **Reader** opens a side panel that renders Markdown, for example an agent
   reply copied with `/copy`. Paste with the panel button or Ctrl+V; terminal
   clipboard writes that look like prose are added automatically. With
@@ -80,7 +91,8 @@ produces an error without stopping its owner. `--help` lists all options.
 
 The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
-they disappear when the server stops. Browser storage holds font size, the
+they disappear when the server stops. Dropped files are the only session data
+written to disk, in the staging folder above. Browser storage holds font size, the
 selected workspace and the Follow clipboard choice.
 
 ## Compatibility and limits

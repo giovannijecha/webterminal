@@ -5,6 +5,7 @@ import {NoticeCenter} from './notices.js';
 import {DirectoryPicker} from './directory.js';
 import {mergeUpdate} from './updates.js';
 import {Reader} from './reader.js';
+import {dropProblem, pathList, uploadFiles} from './upload.js';
 
 const $ = id => document.getElementById(id);
 const MAX_QUEUED_INPUT = 1024 * 1024, MAX_SOCKET_BUFFER = 128 * 1024;
@@ -12,7 +13,7 @@ const encoder = new TextEncoder();
 const narrow = matchMedia('(max-width:760px)');
 const state = {socket:null, view:null, cwd:'', shell:'', listed:false, sessions:new Map(), workspaces:[], selected:read('webterminal.workspace'), selectedIndex:0, focus:new Map(), snapshots:new Map(), views:new Map(), attachments:new Map(), request:0, inputSeq:new Map(), inputQueue:[], inputQueuedBytes:0, inputTimer:0, reconnect:0, connectionReady:false, fontSize:14, resizeTimer:0, frame:0};
 const notices = new NoticeCenter(), pendingCloses = new Set(), pendingCreates = new Map(), pendingWorkspaces = new Set();
-const panes = createPanes(PANE_LIMIT, {snapshot:id => state.snapshots.get(id), connection:() => state.socket, canInput, input:sendInput, notify:toast, focus:focusPane, resize:scheduleResize, claim:pane => send({op:'claim', id:pane.id, ...pane.renderer.dimensions()}), close:closeSession, rename:renameSession, renamed:updateChrome, copied:text => reader.ignore(text), drop:(pane, id) => moveSession(id, state.selected, currentWorkspace().sessions.indexOf(pane.id))});
+const panes = createPanes(PANE_LIMIT, {snapshot:id => state.snapshots.get(id), connection:() => state.socket, canInput, input:sendInput, files:dropFiles, notify:toast, focus:focusPane, resize:scheduleResize, claim:pane => send({op:'claim', id:pane.id, ...pane.renderer.dimensions()}), close:closeSession, rename:renameSession, renamed:updateChrome, copied:text => reader.ignore(text), drop:(pane, id) => moveSession(id, state.selected, currentWorkspace().sessions.indexOf(pane.id))});
 const tabs = new WorkspaceTabs($('workspace-tabs'), {select:selectWorkspace, rename:renameWorkspace, close:closeWorkspace, reorder:orderWorkspaces, move:(id, workspace) => moveSession(id, workspace)});
 const reader = new Reader({notify:toast});
 const picker = new DirectoryPicker({startDirectory:() => state.sessions.get(focusedId())?.cwd || state.cwd, create:createSession});
@@ -86,6 +87,25 @@ function discardInput(id) {
   state.inputQueue = state.inputQueue.filter(message => message.id !== id);
   state.inputQueuedBytes = state.inputQueue.reduce((total, message) => total + message.bytes, 0);
 }
+// Staged paths are pasted only if this view still controls the same terminal.
+async function dropFiles(pane, files) {
+  if (!files.length) return;
+  if (!canInput(pane)) { toast('Take control of this terminal to drop files.', 'warning'); return; }
+  const problem = dropProblem(files, state.shell);
+  if (problem) { toast(problem, 'error'); return; }
+  const target = {id:pane.id, view:state.view, epoch:state.snapshots.get(pane.id).epoch};
+  toast(files.length === 1 ? `Uploading ${files[0].name}…` : `Uploading ${files.length} files…`);
+  try { await uploadFiles(files, target, fetch, path => {
+    if (pane.id !== target.id || state.view !== target.view || state.snapshots.get(target.id)?.epoch !== target.epoch || !canInput(pane)) {
+      throw new Error('Control changed during the upload; the remaining files were not pasted.');
+    }
+    // Each file can arrive as a separate paste; separate adjacent paths.
+    pane.input.pasteText(`${pathList([path], state.shell)} `);
+  }); }
+  catch (error) { toast(error.message, 'error'); return; }
+}
+// A file dropped outside a terminal must not navigate away from the sessions.
+for (const name of ['dragover', 'drop']) addEventListener(name, event => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); });
 function sendInput(pane, data) {
   const shot = state.snapshots.get(pane.id);
   if (!canInput(pane) || !data) return;

@@ -1,5 +1,6 @@
 import {TerminalRenderer} from './render.js';
 import {TerminalInput} from './input.js';
+import {droppedFiles} from './upload.js';
 import {displayPath, editInline, sessionName, stateClass} from './common.js';
 
 export const SESSION_DRAG = 'application/x-webterminal-session';
@@ -41,14 +42,22 @@ export class TerminalPane {
       document.documentElement.classList.add('dragging-session');
     });
     ui['pane-header'].addEventListener('dragend', () => document.documentElement.classList.remove('dragging-session'));
+    // Files dropped from the desktop are staged and pasted as paths.
+    const files = event => !event.dataTransfer.types.includes(SESSION_DRAG) && event.dataTransfer.types.includes('Files');
     root.addEventListener('dragover', event => {
-      if (!event.dataTransfer.types.includes(SESSION_DRAG)) return;
+      if (files(event) && this.id) event.dataTransfer.dropEffect = 'copy';
+      else if (!event.dataTransfer.types.includes(SESSION_DRAG)) return;
       event.preventDefault();
       root.classList.add('drop-target');
     });
     root.addEventListener('dragleave', event => { if (!root.contains(event.relatedTarget)) root.classList.remove('drop-target'); });
     root.addEventListener('drop', event => {
       root.classList.remove('drop-target');
+      if (files(event)) {
+        event.preventDefault();
+        if (this.id) callbacks.files(this, droppedFiles(event.dataTransfer));
+        return;
+      }
       const id = event.dataTransfer.getData(SESSION_DRAG);
       if (!id) return;
       event.preventDefault();

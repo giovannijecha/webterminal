@@ -75,6 +75,24 @@ fn ordinary_profile_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+#[cfg(windows)]
+fn windows_module_path(path: &Path) -> OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    let units = path
+        .as_os_str()
+        .encode_wide()
+        .map(|unit| {
+            if unit == b'/' as u16 {
+                b'\\' as u16
+            } else {
+                unit
+            }
+        })
+        .collect::<Vec<_>>();
+    OsString::from_wide(&units)
+}
+
 #[cfg(not(windows))]
 fn ordinary_profile_path(path: &Path) -> PathBuf {
     path.to_path_buf()
@@ -151,6 +169,23 @@ fn isolated_command(invocation: &Invocation, profile: &Path) -> Command {
         .env("DISABLE_AUTOUPDATER", "1")
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor");
+    #[cfg(windows)]
+    {
+        let executable = Path::new(&invocation.exe);
+        if executable.is_absolute()
+            && executable
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.eq_ignore_ascii_case("powershell.exe"))
+        {
+            // Supply the native module path instead of machine-specific SDK
+            // and user paths. PowerShell can still add its AllUsers directory.
+            command.env(
+                "PSModulePath",
+                windows_module_path(&executable.parent().unwrap().join("Modules")),
+            );
+        }
+    }
     // Ordinary fixture launches have no API credential. The explicit option
     // gives the child only an inert key and its owned loopback API endpoint.
     if let Some(url) = &invocation.fixture_api {
@@ -237,5 +272,38 @@ mod tests {
             ordinary_profile_path(Path::new(r"\\?\UNC\server\share\profile")),
             PathBuf::from(r"\\server\share\profile")
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn only_explicit_windows_powershell_uses_builtin_module_path() {
+        let powershell = invocation(&[
+            "profile",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.EXE",
+        ])
+        .unwrap();
+        let command = isolated_command(&powershell, Path::new("profile"));
+        let expected = PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules");
+        assert_eq!(
+            environment(&command, "PSModulePath"),
+            Some(expected.as_os_str())
+        );
+
+        let mixed_slashes = invocation(&[
+            "profile",
+            "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        ])
+        .unwrap();
+        let command = isolated_command(&mixed_slashes, Path::new("profile"));
+        assert_eq!(
+            environment(&command, "PSModulePath"),
+            Some(expected.as_os_str())
+        );
+
+        for executable in ["powershell.exe", "pwsh.exe", "fixture.exe"] {
+            let other = invocation(&["profile", executable]).unwrap();
+            let command = isolated_command(&other, Path::new("profile"));
+            assert!(environment(&command, "PSModulePath").is_none());
+        }
     }
 }

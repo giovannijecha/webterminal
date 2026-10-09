@@ -151,6 +151,19 @@ test('focus loss and session switch do not carry Win32 keys into later input', (
   assert.equal(sent.length, count);
 });
 
+test('Alt+V reaches the program while Ctrl+V stays the browser paste', () => {
+  for (const [modes, expected] of [[{}, [`${ESC}v`]], [{win32:true}, [`${ESC}[86;47;118;1;2;1_`, `${ESC}[86;47;118;0;2;1_`]]]) {
+    const {input, sent} = inputFixture(modes);
+    const altV = key('v','KeyV',{keyCode:86,altKey:true});
+    const ctrlV = key('v','KeyV',{keyCode:86,ctrlKey:true});
+    input.keydown(altV); input.keyup(altV);
+    input.keydown(ctrlV); input.keyup(ctrlV);
+    assert.deepEqual(sent, expected);
+    assert.equal(altV.prevented, true);
+    assert.equal(ctrlV.prevented, false);
+  }
+});
+
 test('classic mode encodes modified navigation, function keys and keypad', () => {
   const {input, sent} = inputFixture({appCursor:true,appKeypad:true});
   for (const event of [

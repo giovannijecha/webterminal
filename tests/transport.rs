@@ -336,14 +336,28 @@ fn disconnected_and_slow_viewers_do_not_stop_console_drain() {
     attach(&mut slow, &flood_id);
     // Keep the observer connected without reading its large snapshots.
     drop(source);
-    let until = Instant::now() + Duration::from_secs(8);
-    while !flood
-        .request("/api/sessions", "")
-        .contains("\"alive\":false")
-    {
+    // This 1 MiB ConPTY flood takes over six seconds locally and exceeded
+    // the ordinary eight-second wait on hosted Windows. Bound only this stress
+    // workload separately while verifying that the fixture exited normally.
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        let response = flood.request("/api/sessions", "");
+        let sessions = parsed(response.split("\r\n\r\n").nth(1).unwrap());
+        let Value::Array(entries) = sessions.get("sessions").unwrap() else {
+            panic!("sessions array")
+        };
+        let session = entries
+            .iter()
+            .find(|entry| entry.field("id") == Ok(flood_id.as_str()))
+            .unwrap();
+        if session.get("alive") == Some(&Value::Bool(false))
+            && session.get("exitCode") == Some(&Value::Number(0))
+        {
+            break;
+        }
         assert!(
             Instant::now() < until,
-            "flood fixture did not exit while viewer was slow"
+            "flood fixture did not exit cleanly while viewer was slow: {session:?}"
         );
         thread::sleep(Duration::from_millis(20));
     }
@@ -352,6 +366,7 @@ fn disconnected_and_slow_viewers_do_not_stop_console_drain() {
     let snapshot = late.recv_type("snapshot");
     assert!(snapshot.contains("\"alive\":false"));
     assert!(snapshot.contains("\"history\":"));
+    assert!(snapshot.contains("\"title\":\"FLOOD_END\""));
     assert!(snapshot.len() < 32 * 1024 * 1024);
 }
 

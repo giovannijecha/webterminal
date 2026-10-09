@@ -7,7 +7,9 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+pub(super) const UPLOAD: &str = "/api/upload?";
 pub(super) struct Request {
+    pub upload: bool,
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub extra: Vec<u8>,
@@ -48,14 +50,16 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 .unwrap_or_default()
                 .split(' ')
                 .collect::<Vec<_>>();
+            // POST exists only to stage dropped files; every other route is GET.
+            let upload = line.len() == 3 && line[0] == "POST" && line[1].starts_with(UPLOAD);
             if line.len() != 3
-                || line[0] != "GET"
+                || (line[0] != "GET" && !upload)
                 || line[2] != "HTTP/1.1"
                 || !line[1].starts_with('/')
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Only HTTP/1.1 GET is supported",
+                    "Only HTTP/1.1 GET and file uploads are supported",
                 ));
             }
             let path = line[1].to_string();
@@ -84,7 +88,7 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 }
             }
             if headers.contains_key("transfer-encoding")
-                || headers.get("content-length").is_some_and(|v| v != "0")
+                || (!upload && headers.get("content-length").is_some_and(|v| v != "0"))
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -92,6 +96,7 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 ));
             }
             return Ok(Request {
+                upload,
                 path,
                 headers,
                 extra: data[end + 4..].to_vec(),
@@ -138,6 +143,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ),
     ("/common.js", SCRIPT, include_str!("../../assets/common.js")),
     ("/pane.js", SCRIPT, include_str!("../../assets/pane.js")),
+    ("/upload.js", SCRIPT, include_str!("../../assets/upload.js")),
     ("/reader.js", SCRIPT, include_str!("../../assets/reader.js")),
     (
         "/markdown.js",
@@ -267,7 +273,7 @@ fn directories(encoded: &str) -> Result<String, String> {
             .unwrap_or_else(|| "null".into())
     ))
 }
-fn decode_path(s: &str) -> Result<String, String> {
+pub(super) fn decode_path(s: &str) -> Result<String, String> {
     if s.len() > 8192 {
         return Err("Directory path too long".into());
     }

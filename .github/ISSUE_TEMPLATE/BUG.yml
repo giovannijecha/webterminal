@@ -1,0 +1,30 @@
+name: Bug report
+description: Report reproducible behavior in Webterminal.
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples. Report vulnerabilities privately through the Security tab; omit credentials, terminal content and personal uploads.
+  - type: input
+    id: revision
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Windows, browser and shell versions
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true

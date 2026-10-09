@@ -2,6 +2,7 @@
 use crate::{
     json, native,
     terminal::{Event, SnapshotBaseline, Terminal},
+    uploads::Uploads,
     workspaces::{self, Workspaces},
 };
 use std::collections::{HashSet, VecDeque};
@@ -41,6 +42,7 @@ struct Inner {
 pub struct Registry {
     inner: Mutex<Inner>,
     next: AtomicU64,
+    pub uploads: Uploads,
     pub cwd: PathBuf,
     pub shell: String,
 }
@@ -54,7 +56,7 @@ pub enum WorkspaceClose {
 }
 
 impl Registry {
-    pub fn new(cwd: PathBuf, shell: String) -> Self {
+    pub fn new(cwd: PathBuf, shell: String, uploads: Uploads) -> Self {
         Self {
             inner: Mutex::new(Inner {
                 sessions: Vec::new(),
@@ -63,6 +65,7 @@ impl Registry {
             next: AtomicU64::new(1),
             cwd,
             shell,
+            uploads,
         }
     }
     /// Starts a session in `workspace`, or in the first workspace with room.
@@ -314,6 +317,7 @@ impl Registry {
         inner.workspaces.remove_session(id);
         drop(inner);
         session.stop();
+        self.uploads.remove_session(id);
         Ok(())
     }
     pub fn shutdown(&self) {
@@ -321,6 +325,7 @@ impl Registry {
         for session in &sessions {
             session.stop();
         }
+        self.uploads.remove_all();
     }
 }
 
@@ -397,6 +402,10 @@ impl Session {
         if state.controller.as_deref() == Some(view) {
             state.transfer(None);
         }
+    }
+    /// Uploads follow the same control fence as input.
+    pub fn check_control(&self, view: &str, epoch: i64) -> Result<(), String> {
+        self.state.lock().unwrap().check_control(view, epoch)
     }
     pub fn send_input(&self, view: &str, epoch: i64, seq: i64, data: &str) -> Result<(), String> {
         if data.len() > INPUT_LIMIT {

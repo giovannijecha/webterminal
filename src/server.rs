@@ -1,9 +1,11 @@
 //! Loopback-only HTTP/WebSocket service with bounded connections and messages.
 mod http;
+mod upload;
 use crate::{
     json, native,
     session::{self, Registry, WorkspaceClose},
     terminal::SnapshotBaseline,
+    uploads::Uploads,
     websocket::{self, Decoder, Message},
 };
 use std::collections::BTreeMap;
@@ -51,7 +53,11 @@ impl Server {
         let port = listener.local_addr()?.port();
         Ok(Self {
             listener,
-            registry: Arc::new(Registry::new(config.cwd, config.shell)),
+            registry: Arc::new(Registry::new(
+                config.cwd,
+                config.shell,
+                Uploads::temporary(format!("{}-{port}", std::process::id())),
+            )),
             stop: Arc::new(AtomicBool::new(false)),
             port,
         })
@@ -194,6 +200,8 @@ fn connection(
             key.unwrap()
         )?;
         socket_loop(stream, registry, stop, &req.extra)
+    } else if req.upload {
+        upload::handle(&mut stream, &req, &registry, &origin)
     } else {
         http::serve(&mut stream, &req.path, &registry)
     }
