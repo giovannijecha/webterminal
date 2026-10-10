@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   workflow_dispatch:
@@ -14,6 +15,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  attribution:
+    name: Commit attribution
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Check out policy and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Node for maintainer checks
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+      - name: Test attribution checks
+        run: node --test tests/attribution.mjs
+      - name: Verify commit and pull request attribution
+        run: node scripts/check-attribution.mjs --event "$env:GITHUB_EVENT_PATH"
   check:
     name: Windows checks
     runs-on: windows-2025

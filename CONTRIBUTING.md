@@ -23,6 +23,8 @@ cargo fmt --all -- --check
 cargo clippy --locked --offline --all-targets -- -D warnings
 cargo test --locked --offline
 node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
+node --test tests/attribution.mjs
+node scripts/check-attribution.mjs --history
 ```
 
 Node and Chrome are development tools; they are not runtime requirements.
@@ -40,5 +42,10 @@ cohesive and around 500 lines or fewer; split by responsibility when necessary.
 Submit changes through a pull request to `main`. Explain the problem,
 resulting behavior, tests actually run and relevant limitations. The
 maintainer reviews and merges changes after required checks pass.
+
+The maintainer is the sole commit author. Commit messages and pull requests
+must omit coauthor trailers, generated attribution and agent signatures.
+The required `Commit attribution` check validates complete commit ancestry
+and pull request metadata. GitHub's web committer is allowed for web merges.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
