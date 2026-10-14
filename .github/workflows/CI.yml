@@ -17,7 +17,7 @@ concurrency:
 jobs:
   attribution:
     name: Commit attribution
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, workspace-ci]
     timeout-minutes: 5
     steps:
       - name: Check out policy and complete history
@@ -36,19 +36,24 @@ jobs:
         run: node scripts/check-attribution.mjs --event "$env:GITHUB_EVENT_PATH"
   check:
     name: Windows checks
-    runs-on: windows-2025
+    runs-on: [self-hosted, Windows, X64, workspace-ci]
     timeout-minutes: 20
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: rust-lld
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install 1.95.0-x86_64-pc-windows-gnullvm --profile minimal --component rustfmt --component clippy --component rust-mingw
+        run: |
+          rustup toolchain install 1.95.0-x86_64-pc-windows-gnullvm --profile minimal --component rustfmt --component clippy --component rust-mingw
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $taskSysroot = rustc +1.95.0-x86_64-pc-windows-gnullvm --print sysroot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $taskLinker = Join-Path $taskSysroot 'lib/rustlib/x86_64-pc-windows-gnullvm/bin/rust-lld.exe'
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER=$taskLinker"
       - name: Install Node for owned browser tests
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
