@@ -294,7 +294,8 @@ fn windows_cmd_waits_for_prompt_and_accepts_edited_unicode_input() {
     let id = created(&mut socket, &app.cwd);
     let ready = wait_snapshot(&mut socket, &id, |v| {
         let screen = text_on_screen(v);
-        screen.contains('>') && screen.contains("webterminal-transport-")
+        screen.contains('>')
+            && screen.replace('\n', "").contains("webterminal-transport-")
     });
     let epoch = ready.integer("epoch").unwrap();
 
