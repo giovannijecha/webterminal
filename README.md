@@ -22,6 +22,12 @@ PowerShell as you would in another terminal.
 
 Webterminal has no Cargo dependencies, npm packages, or frontend build step.
 
+GitHub Actions runs the required `Commit attribution` and `Windows checks`
+jobs on the maintainer's native Windows runner. Rust, JavaScript and headless
+Chrome acceptance checks are unchanged. Each job uses a fresh checkout and
+one-job credentials; the host policy rejects fork code before workflow steps.
+Checks queue while the maintainer's PC is offline.
+
 ## Build and run
 
 In PowerShell, from this repository's root:
