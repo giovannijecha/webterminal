@@ -116,7 +116,7 @@ try {
   const direct = [copied.isolated, profile, jecode].map(quote).join(' ');
   const script = '& ' + [copied.isolated, profile, jecode].map(path => `'${path.replaceAll("'", "''")}'`).join(' ');
   const command = viaPowerShell ? `powershell.exe -NoLogo -NoProfile -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}` : direct;
-  child = spawn(copied.webterminal, ['--port', String(port), '--cwd', cwd, '--shell', command], {cwd, env:environment, windowsHide:true, stdio:['ignore','pipe','pipe']});
+  child = spawn(copied.webterminal, ['--port', String(port), '--cwd', cwd, '--shell', command, '--config', resolve(runRoot, 'settings.json')], {cwd, env:environment, windowsHide:true, stdio:['ignore','pipe','pipe']});
   staging = join(tmpdir(), 'webterminal-uploads', `${child.pid}-${port}`);
   await ready(port, child);
 

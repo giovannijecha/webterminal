@@ -1,8 +1,10 @@
 //! Windows ConPTY and process ownership boundary.
 //!
-//! Requires Windows 10 1809 or Windows Server 2019 or newer. The only foreign
-//! interface is Kernel32. The two synchronous pipes must be serviced on
-//! separate threads; in particular, keep reading `output` through teardown.
+//! Requires Windows 10 1809 or Windows Server 2019 or newer. The foreign
+//! interface is Kernel32, plus ntdll's documented `NtQueryInformationProcess`
+//! for parent identifiers in process snapshots (see `native/processes.rs`).
+//! The two synchronous pipes must be serviced on separate threads; in
+//! particular, keep reading `output` through teardown.
 //! Each spawned process joins a private, non-breakaway job before it resumes.
 //! Closing that job on normal or abnormal server exit kills its descendants.
 #![allow(unsafe_code)]
@@ -28,6 +30,34 @@ pub struct Spawned {
     pub output: File,
 }
 
+/// Most processes one snapshot inspects or returns per session.
+pub const PROCESS_LIMIT: usize = 64;
+
+/// One live process of a session's job, from `Pty::processes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    /// Creator, only when it is in the same list and started no later.
+    pub parent: Option<u32>,
+    /// Image file name; empty when the image path is unavailable.
+    pub name: String,
+    pub path: Option<String>,
+    /// Creation time in Unix epoch milliseconds.
+    pub started_ms: Option<u64>,
+    /// The process the session started.
+    pub root: bool,
+}
+
+/// A bounded snapshot of the processes in a session's job.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProcessList {
+    pub processes: Vec<ProcessInfo>,
+    /// Active processes the job reported, including any not listed.
+    pub total: u32,
+    /// Some live processes may be missing from `processes`.
+    pub truncated: bool,
+}
+
 #[cfg(not(windows))]
 pub struct Pty;
 
@@ -43,6 +73,9 @@ impl Pty {
         unsupported()
     }
     pub fn active_processes(&self) -> io::Result<u32> {
+        unsupported()
+    }
+    pub fn processes(&self, _: usize) -> io::Result<ProcessList> {
         unsupported()
     }
     pub fn process_id(&self) -> u32 {

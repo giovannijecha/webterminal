@@ -1,7 +1,7 @@
 # Third-party notices
 
-The project code is licensed under MIT. The data identified below retains
-its separate copyright and license.
+The project code is licensed under MIT. The data and fonts identified below
+retain their separate copyright and license.
 
 ## Unicode Character Database 17.0.0
 
@@ -61,3 +61,16 @@ follows.
     not be used in advertising or otherwise to promote the sale, use or other
     dealings in these Data Files or Software without prior written
     authorization of the copyright holder.
+
+## Nunito
+
+The browser interface embeds the Nunito typeface as
+[nunito-latin.woff2](assets/fonts/nunito-latin.woff2) and
+[nunito-latin-ext.woff2](assets/fonts/nunito-latin-ext.woff2).
+
+Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito).
+
+The font is distributed under the SIL Open Font License, Version 1.1
+(SPDX: OFL-1.1). The complete license is in
+[NUNITO-LICENSE.txt](assets/fonts/NUNITO-LICENSE.txt) and is also served with
+the interface at `/fonts/NUNITO-LICENSE.txt`.

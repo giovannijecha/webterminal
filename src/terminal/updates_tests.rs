@@ -136,3 +136,28 @@ fn view_baselines_are_small_independent_and_restore_full_history() {
     );
     assert!(first.history.len() <= 1000 && first.screen.len() <= 120);
 }
+
+#[test]
+fn style_only_changes_and_band_reflow_project_exactly() {
+    let mut terminal = Terminal::new(10, 3);
+    let mut baseline = SnapshotBaseline::default();
+    let mut previous = None;
+    check(&terminal, &mut baseline, &mut previous);
+    for output in [
+        "same\r\n\x1b[48;5;238m\x1b[K\x1b[0m\r\n\x1b[44m \x1b[0m",
+        "\x1b[1;1H\x1b[1;2;7msame",
+        "\x1b[1;1H\x1b[22;27;38;5;208msame\x1b[0m",
+        "\x1b[2;1H\x1b[48;2;48;48;48m\x1b[K\x1b[0m",
+        "\x1b[3;1H\x1b[45m \x1b[0m\x1b[?25l",
+        "\x1b[3;1H\r\n\r\n\r\n\x1b[?25h",
+    ] {
+        terminal.feed(output.as_bytes());
+        check(&terminal, &mut baseline, &mut previous);
+    }
+    for (cols, rows) in [(16, 3), (6, 3), (10, 5), (10, 2)] {
+        terminal.resize(cols, rows);
+        check(&terminal, &mut baseline, &mut previous);
+    }
+    let snapshot = terminal.snapshot_json();
+    assert!(snapshot.contains("\"#303030\""), "History band was lost");
+}

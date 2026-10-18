@@ -167,6 +167,7 @@ fn isolated_command(invocation: &Invocation, profile: &Path) -> Command {
         .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         .env("DISABLE_TELEMETRY", "1")
         .env("DISABLE_AUTOUPDATER", "1")
+        .env("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1")
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor");
     #[cfg(windows)]

@@ -1,5 +1,6 @@
 //! Strict small HTTP reader and embedded asset routing.
-use crate::{json, session::Registry};
+use super::{Context, api};
+use crate::json;
 use std::{
     collections::BTreeMap,
     io::{self, Read, Write},
@@ -8,8 +9,16 @@ use std::{
     time::{Duration, Instant},
 };
 pub(super) const UPLOAD: &str = "/api/upload?";
+pub(super) const HOOK: &str = "/api/bridge?";
+/// POST exists only to stage dropped files and to receive program events.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Route {
+    Get,
+    Upload,
+    Hook,
+}
 pub(super) struct Request {
-    pub upload: bool,
+    pub route: Route,
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub extra: Vec<u8>,
@@ -50,16 +59,20 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 .unwrap_or_default()
                 .split(' ')
                 .collect::<Vec<_>>();
-            // POST exists only to stage dropped files; every other route is GET.
-            let upload = line.len() == 3 && line[0] == "POST" && line[1].starts_with(UPLOAD);
+            let route = match (line.first(), line.get(1)) {
+                (Some(&"GET"), _) => Route::Get,
+                (Some(&"POST"), Some(path)) if path.starts_with(UPLOAD) => Route::Upload,
+                (Some(&"POST"), Some(path)) if path.starts_with(HOOK) => Route::Hook,
+                _ => Route::Get,
+            };
             if line.len() != 3
-                || (line[0] != "GET" && !upload)
+                || (line[0] != "GET" && route == Route::Get)
                 || line[2] != "HTTP/1.1"
                 || !line[1].starts_with('/')
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Only HTTP/1.1 GET and file uploads are supported",
+                    "Only HTTP/1.1 GET, file uploads and program events are supported",
                 ));
             }
             let path = line[1].to_string();
@@ -88,7 +101,7 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 }
             }
             if headers.contains_key("transfer-encoding")
-                || (!upload && headers.get("content-length").is_some_and(|v| v != "0"))
+                || (route == Route::Get && headers.get("content-length").is_some_and(|v| v != "0"))
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -96,7 +109,7 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
                 ));
             }
             return Ok(Request {
-                upload,
+                route,
                 path,
                 headers,
                 extra: data[end + 4..].to_vec(),
@@ -104,90 +117,92 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
         }
     }
 }
+const POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 pub(super) fn response(
     stream: &mut TcpStream,
     status: &str,
     mime: &str,
     body: &str,
 ) -> io::Result<()> {
+    response_bytes(stream, status, mime, body.as_bytes())
+}
+fn response_bytes(stream: &mut TcpStream, status: &str, mime: &str, body: &[u8]) -> io::Result<()> {
     write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: {POLICY}\r\n\r\n",
         body.len()
-    )
+    )?;
+    stream.write_all(body)
 }
 const SCRIPT: &str = "text/javascript; charset=utf-8";
-const ASSETS: &[(&str, &str, &str)] = &[
+const STYLE: &str = "text/css; charset=utf-8";
+macro_rules! assets {
+    ($(($route:literal, $mime:expr, $file:literal)),* $(,)?) => {
+        &[$(($route, $mime, include_bytes!(concat!("../../assets/", $file)) as &[u8])),*]
+    };
+}
+const ASSETS: &[(&str, &str, &[u8])] = assets![
+    ("/index.html", "text/html; charset=utf-8", "index.html"),
+    ("/style.css", STYLE, "style.css"),
+    ("/shell.css", STYLE, "shell.css"),
+    ("/terminal.css", STYLE, "terminal.css"),
+    ("/overlays.css", STYLE, "overlays.css"),
+    ("/inventory.css", STYLE, "inventory.css"),
+    ("/reader.css", STYLE, "reader.css"),
+    ("/system.css", STYLE, "system.css"),
+    ("/favicon.svg", "image/svg+xml", "favicon.svg"),
     (
-        "/index.html",
-        "text/html; charset=utf-8",
-        include_str!("../../assets/index.html"),
+        "/fonts/nunito-latin.woff2",
+        "font/woff2",
+        "fonts/nunito-latin.woff2"
     ),
     (
-        "/style.css",
-        "text/css; charset=utf-8",
-        include_str!("../../assets/style.css"),
+        "/fonts/nunito-latin-ext.woff2",
+        "font/woff2",
+        "fonts/nunito-latin-ext.woff2"
     ),
     (
-        "/favicon.svg",
-        "image/svg+xml",
-        include_str!("../../assets/favicon.svg"),
+        "/fonts/NUNITO-LICENSE.txt",
+        "text/plain; charset=utf-8",
+        "fonts/NUNITO-LICENSE.txt"
     ),
-    ("/app.js", SCRIPT, include_str!("../../assets/app.js")),
-    ("/input.js", SCRIPT, include_str!("../../assets/input.js")),
-    ("/render.js", SCRIPT, include_str!("../../assets/render.js")),
-    (
-        "/updates.js",
-        SCRIPT,
-        include_str!("../../assets/updates.js"),
-    ),
-    ("/common.js", SCRIPT, include_str!("../../assets/common.js")),
-    ("/pane.js", SCRIPT, include_str!("../../assets/pane.js")),
-    ("/upload.js", SCRIPT, include_str!("../../assets/upload.js")),
-    ("/reader.js", SCRIPT, include_str!("../../assets/reader.js")),
-    (
-        "/markdown.js",
-        SCRIPT,
-        include_str!("../../assets/markdown.js"),
-    ),
-    (
-        "/workspaces.js",
-        SCRIPT,
-        include_str!("../../assets/workspaces.js"),
-    ),
-    (
-        "/notices.js",
-        SCRIPT,
-        include_str!("../../assets/notices.js"),
-    ),
-    (
-        "/directory.js",
-        SCRIPT,
-        include_str!("../../assets/directory.js"),
-    ),
+    ("/app.js", SCRIPT, "app.js"),
+    ("/model.js", SCRIPT, "model.js"),
+    ("/connection.js", SCRIPT, "connection.js"),
+    ("/dom.js", SCRIPT, "dom.js"),
+    ("/ui.js", SCRIPT, "ui.js"),
+    ("/overlays.js", SCRIPT, "overlays.js"),
+    ("/dock.js", SCRIPT, "dock.js"),
+    ("/actions.js", SCRIPT, "actions.js"),
+    ("/launcher.js", SCRIPT, "launcher.js"),
+    ("/transfers.js", SCRIPT, "transfers.js"),
+    ("/sidebar.js", SCRIPT, "sidebar.js"),
+    ("/workspace.js", SCRIPT, "workspace.js"),
+    ("/palette.js", SCRIPT, "palette.js"),
+    ("/alerts.js", SCRIPT, "alerts.js"),
+    ("/pane.js", SCRIPT, "pane.js"),
+    ("/input.js", SCRIPT, "input.js"),
+    ("/render.js", SCRIPT, "render.js"),
+    ("/updates.js", SCRIPT, "updates.js"),
+    ("/common.js", SCRIPT, "common.js"),
+    ("/upload.js", SCRIPT, "upload.js"),
+    ("/directory.js", SCRIPT, "directory.js"),
+    ("/markdown.js", SCRIPT, "markdown.js"),
+    ("/reader.js", SCRIPT, "reader.js"),
+    ("/documents.js", SCRIPT, "documents.js"),
+    ("/overview.js", SCRIPT, "overview.js"),
+    ("/attention.js", SCRIPT, "attention.js"),
+    ("/requests.js", SCRIPT, "requests.js"),
+    ("/processes.js", SCRIPT, "processes.js"),
+    ("/files.js", SCRIPT, "files.js"),
+    ("/settings.js", SCRIPT, "settings.js"),
+    ("/appearance.js", SCRIPT, "appearance.js"),
+    ("/preferences.js", SCRIPT, "preferences.js"),
 ];
-pub(super) fn serve(stream: &mut TcpStream, path: &str, registry: &Registry) -> io::Result<()> {
+pub(super) fn serve(stream: &mut TcpStream, path: &str, context: &Context) -> io::Result<()> {
     let route = if path == "/" { "/index.html" } else { path };
     if let Some((_, mime, body)) = ASSETS.iter().find(|(name, ..)| *name == route) {
-        return response(stream, "200 OK", mime, body);
-    }
-    if path == "/api/sessions" {
-        return response(stream, "200 OK", "application/json", &registry.list_json());
-    }
-    if path == "/api/places" {
-        return response(stream, "200 OK", "application/json", &places(registry));
-    }
-    if path == "/api/info" {
-        return response(
-            stream,
-            "200 OK",
-            "application/json",
-            &format!(
-                "{{\"cwd\":{},\"shell\":{}}}",
-                json::quote(&registry.cwd.to_string_lossy()),
-                json::quote(&registry.shell)
-            ),
-        );
+        return response_bytes(stream, "200 OK", mime, body);
     }
     if let Some(path) = path.strip_prefix("/api/directories?path=") {
         return match directories(path) {
@@ -200,41 +215,15 @@ pub(super) fn serve(stream: &mut TcpStream, path: &str, registry: &Registry) -> 
             ),
         };
     }
+    if let Some(body) = api::get(path, context) {
+        return response(stream, "200 OK", "application/json", &body);
+    }
     response(
         stream,
         "404 Not Found",
         "text/plain; charset=utf-8",
         "Webterminal asset not found",
     )
-}
-/// Quick-access folders and drive roots for the folder picker. Only existing
-/// folders are listed; drives come from the native boundary without probing.
-fn places(registry: &Registry) -> String {
-    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
-    let mut folders = vec![("Start folder", Some(registry.cwd.clone()))];
-    folders.push(("Home", home.clone()));
-    for name in ["Desktop", "Documents", "Downloads"] {
-        folders.push((name, home.as_ref().map(|home| home.join(name))));
-    }
-    let entry = |name: &str, path: &str| {
-        format!(
-            "{{\"name\":{},\"path\":{}}}",
-            json::quote(name),
-            json::quote(path)
-        )
-    };
-    let folders = folders
-        .into_iter()
-        .filter_map(|(name, path)| path.filter(|path| path.is_dir()).map(|path| (name, path)))
-        .map(|(name, path)| entry(name, &path.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(",");
-    let drives = crate::native::logical_drives()
-        .iter()
-        .map(|root| entry(root.trim_end_matches('\\'), root))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{\"folders\":[{folders}],\"drives\":[{drives}]}}")
 }
 fn directories(encoded: &str) -> Result<String, String> {
     let path = PathBuf::from(decode_path(encoded)?)

@@ -68,6 +68,8 @@ jobs:
         run: cargo test --locked --offline --quiet
       - name: Run JavaScript module tests
         run: node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
+      - name: Run Workbench flow tests
+        run: node --test tests/workbench-flows.mjs
       - name: Run Chrome terminal acceptance
         run: node tests/browser-e2e.mjs
       - name: Run Chrome workbench acceptance
@@ -76,3 +78,11 @@ jobs:
         run: node tests/workspace-browser.mjs
       - name: Run Chrome runtime acceptance
         run: node tests/browser-runtime.mjs
+      - name: Run Chrome runtime with reduced motion
+        env:
+          WEBTERMINAL_TEST_REDUCED_MOTION: '1'
+        run: node tests/browser-runtime.mjs
+      - name: Run Chrome color and reflow acceptance
+        run: node tests/colors-browser.mjs ci
+      - name: Run Chrome shell acceptance
+        run: node tests/shells-browser.mjs

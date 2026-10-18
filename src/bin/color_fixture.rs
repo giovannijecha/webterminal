@@ -36,6 +36,7 @@ fn main() -> ExitCode {
         Some("--interactive") => {
             report();
             paint();
+            let mut completed = 0;
             for line in io::stdin().lock().lines() {
                 match line.unwrap().trim() {
                     "paint" => paint(),
@@ -51,8 +52,10 @@ fn main() -> ExitCode {
                     }
                     "primary" => print!("\x1b[?1049l"),
                     "exit" => break,
-                    _ => {}
+                    _ => continue,
                 }
+                println!("COLOR_DONE:{completed}");
+                completed += 1;
                 io::stdout().flush().unwrap();
             }
             ExitCode::SUCCESS
@@ -101,6 +104,15 @@ fn paint() {
         println!("\x1b[48;2;26;43;60mRGB_BACKGROUND\x1b[0m");
         println!("\x1b[31;7mINVERSE_RED\x1b[0m");
         println!("\x1b[32mUNICODE_é_界_👩‍💻\x1b[0m");
+        // Background bands from an erase, a blank erased row and explicit
+        // spaces followed by default padding.
+        println!("\x1b[48;2;48;48;48mBAND_TEXT\x1b[K\x1b[0m");
+        println!("\x1b[48;2;48;48;48m\x1b[K\x1b[0m");
+        println!("\x1b[48;2;48;48;48mBAND_SPACES      \x1b[0m");
+        println!(
+            "\x1b[1mSTYLE_BOLD\x1b[22m \x1b[2mSTYLE_FAINT\x1b[22m \
+             \x1b[7mSTYLE_INVERSE\x1b[27m STYLE_RESET"
+        );
         println!("DEFAULT_TEXT");
     }
     println!("PAINT_END");

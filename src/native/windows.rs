@@ -1,6 +1,8 @@
 use super::Spawned;
 #[path = "environment.rs"]
 mod environment;
+#[path = "processes.rs"]
+mod processes;
 use std::ffi::{OsStr, c_void};
 use std::fs::File;
 use std::io;

@@ -1,23 +1,46 @@
 //! Owned loopback Responses/Messages fixture for manual CLI terminal checks.
-//! Request bodies are consumed only to enforce bounds; no request content is logged.
+//! By default request bodies are consumed only to enforce bounds. The opt-in
+//! `--tool-probe` mode parses them to script tool calls for `bridge_probe`; it
+//! logs tool names and the selected scenario only, never request content.
 use std::collections::BTreeSet;
+use std::env;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use webterminal::json::quote;
+#[path = "api_fixture/probe.rs"]
+mod api_fixture_probe;
+use api_fixture_probe::{probe_messages, probe_responses};
 
 const HEADER_LIMIT: usize = 16 * 1024;
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const CONNECTION_LIMIT: usize = 64;
 const REQUEST_LIMIT: usize = 32;
+// Probe sessions add side requests and several tool round trips per scenario.
+const PROBE_REQUEST_LIMIT: usize = 256;
 const TEXT: &str = "Webterminal local fixture response.";
+const USAGE: &str = "Usage: api_fixture [--tool-probe]";
+const MESSAGE_ID: &str = "msg_webterminal_fixture";
+const MESSAGE_START: &str = r#"{"type":"message_start","message":{"id":"{id}","type":"message","role":"assistant","content":[],"model":"fixture-model","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":32,"output_tokens":0}}}"#;
 
 struct Request {
     method: String,
     path: String,
     host: String,
+    body: Vec<u8>,
 }
 
 fn main() -> io::Result<()> {
+    let probe = match env::args().skip(1).collect::<Vec<_>>().as_slice() {
+        [] => false,
+        [flag] if flag == "--tool-probe" => true,
+        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE)),
+    };
+    let (connection_limit, request_limit) = if probe {
+        (PROBE_REQUEST_LIMIT, PROBE_REQUEST_LIMIT)
+    } else {
+        (CONNECTION_LIMIT, REQUEST_LIMIT)
+    };
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     println!("http://127.0.0.1:{port}/v1");
@@ -26,12 +49,12 @@ fn main() -> io::Result<()> {
     let mut requests = 0;
     let mut responses_submitted = 0usize;
     let mut messages_submitted = 0usize;
-    while connections < CONNECTION_LIMIT && requests < REQUEST_LIMIT {
+    while connections < connection_limit && requests < request_limit {
         let (mut stream, _) = listener.accept()?;
         connections += 1;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        let request = match read_request(&mut stream) {
+        let request = match read_request(&mut stream, probe) {
             Ok(request) => request,
             Err(status) => {
                 let _ = reply(&mut stream, status, "application/json", "{}");
@@ -55,11 +78,21 @@ fn main() -> io::Result<()> {
         let (status, mime, body) = match (request.method.as_str(), request.path.as_str()) {
             ("POST", "/v1/responses") => {
                 responses_submitted += 1;
-                ("200 OK", "text/event-stream", responses_stream())
+                let body = if probe {
+                    probe_responses(&request.body, responses_submitted)
+                } else {
+                    responses_stream()
+                };
+                ("200 OK", "text/event-stream", body)
             }
             ("POST", "/v1/messages") => {
                 messages_submitted += 1;
-                ("200 OK", "text/event-stream", messages_stream())
+                if probe {
+                    let (mime, body) = probe_messages(&request.body, messages_submitted);
+                    ("200 OK", mime, body)
+                } else {
+                    ("200 OK", "text/event-stream", messages_stream())
+                }
             }
             ("GET", "/fixture/status") => (
                 "200 OK",
@@ -86,7 +119,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<Request, &'static str> {
+fn read_request(stream: &mut TcpStream, keep_body: bool) -> Result<Request, &'static str> {
     let mut bytes = Vec::new();
     let end = loop {
         let mut buffer = [0; 4096];
@@ -163,6 +196,10 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, &'static str> {
     if already > length {
         return Err("400 Bad Request");
     }
+    let mut body = Vec::new();
+    if keep_body {
+        body.extend_from_slice(&bytes[end + 4..]);
+    }
     let mut remaining = length - already;
     while remaining > 0 {
         let mut buffer = [0; 4096];
@@ -173,12 +210,16 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, &'static str> {
         if n == 0 {
             return Err("400 Bad Request");
         }
+        if keep_body {
+            body.extend_from_slice(&buffer[..n]);
+        }
         remaining -= n;
     }
     Ok(Request {
         method: method.to_owned(),
         path: path.split('?').next().unwrap_or(path).to_owned(),
         host: host.ok_or("400 Bad Request")?,
+        body,
     })
 }
 
@@ -200,26 +241,40 @@ fn push_event(body: &mut String, kind: &str, data: &str) {
 }
 
 fn responses_stream() -> String {
+    responses_text_stream(&quote(TEXT))
+}
+
+/// Responses API envelope shared by the created and completed events.
+fn response_envelope(status: &str, output: &str) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let part =
-        format!(r#"{{"type":"output_text","text":"{TEXT}","annotations":[],"logprobs":[]}}"#);
+    if status == "completed" {
+        format!(
+            r#"{{"id":"resp_webterminal_fixture","object":"response","created_at":{now},"completed_at":{now},"status":"completed","model":"fixture-model","output":[{output}],"usage":{{"input_tokens":1,"output_tokens":6,"total_tokens":7,"input_tokens_details":{{"cached_tokens":0}},"output_tokens_details":{{"reasoning_tokens":0}}}}}}"#
+        )
+    } else {
+        format!(
+            r#"{{"id":"resp_webterminal_fixture","object":"response","created_at":{now},"status":"in_progress","model":"fixture-model","output":[],"usage":null}}"#
+        )
+    }
+}
+
+/// Streams one assistant message whose `text` is already a JSON string literal.
+fn responses_text_stream(text: &str) -> String {
+    let part = format!(r#"{{"type":"output_text","text":{text},"annotations":[],"logprobs":[]}}"#);
     let message = format!(
         r#"{{"id":"msg_webterminal_fixture","type":"message","role":"assistant","status":"completed","phase":"final_answer","content":[{part}]}}"#
-    );
-    let created = format!(
-        r#"{{"id":"resp_webterminal_fixture","object":"response","created_at":{now},"status":"in_progress","model":"fixture-model","output":[],"usage":null}}"#
-    );
-    let completed = format!(
-        r#"{{"id":"resp_webterminal_fixture","object":"response","created_at":{now},"completed_at":{now},"status":"completed","model":"fixture-model","output":[{message}],"usage":{{"input_tokens":1,"output_tokens":6,"total_tokens":7,"input_tokens_details":{{"cached_tokens":0}},"output_tokens_details":{{"reasoning_tokens":0}}}}}}"#
     );
     let mut body = String::new();
     push_event(
         &mut body,
         "response.created",
-        &format!(r#"{{"type":"response.created","sequence_number":1,"response":{created}}}"#),
+        &format!(
+            r#"{{"type":"response.created","sequence_number":1,"response":{}}}"#,
+            response_envelope("in_progress", "")
+        ),
     );
     push_event(
         &mut body,
@@ -235,14 +290,14 @@ fn responses_stream() -> String {
         &mut body,
         "response.output_text.delta",
         &format!(
-            r#"{{"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_webterminal_fixture","output_index":0,"content_index":0,"delta":"{TEXT}","logprobs":[]}}"#
+            r#"{{"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_webterminal_fixture","output_index":0,"content_index":0,"delta":{text},"logprobs":[]}}"#
         ),
     );
     push_event(
         &mut body,
         "response.output_text.done",
         &format!(
-            r#"{{"type":"response.output_text.done","sequence_number":5,"item_id":"msg_webterminal_fixture","output_index":0,"content_index":0,"text":"{TEXT}","logprobs":[]}}"#
+            r#"{{"type":"response.output_text.done","sequence_number":5,"item_id":"msg_webterminal_fixture","output_index":0,"content_index":0,"text":{text},"logprobs":[]}}"#
         ),
     );
     push_event(
@@ -262,30 +317,43 @@ fn responses_stream() -> String {
     push_event(
         &mut body,
         "response.completed",
-        &format!(r#"{{"type":"response.completed","sequence_number":8,"response":{completed}}}"#),
+        &format!(
+            r#"{{"type":"response.completed","sequence_number":8,"response":{}}}"#,
+            response_envelope("completed", &message)
+        ),
     );
     body.push_str("data: [DONE]\n\n");
     body
 }
 
 fn messages_stream() -> String {
+    message_events(
+        MESSAGE_ID,
+        r#"{"type":"text","text":""}"#,
+        &format!(r#"{{"type":"text_delta","text":{}}}"#, quote(TEXT)),
+        "end_turn",
+    )
+}
+
+/// Streams one Messages API content block followed by its single delta.
+/// `id` must differ per response when a CLI keeps a multi-turn history: Claude
+/// Code merges assistant blocks that share a message id.
+fn message_events(id: &str, block: &str, delta: &str, stop_reason: &str) -> String {
     let mut body = String::new();
     push_event(
         &mut body,
         "message_start",
-        r#"{"type":"message_start","message":{"id":"msg_webterminal_fixture","type":"message","role":"assistant","content":[],"model":"fixture-model","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":32,"output_tokens":0}}}"#,
+        &MESSAGE_START.replace("{id}", id),
     );
     push_event(
         &mut body,
         "content_block_start",
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        &format!(r#"{{"type":"content_block_start","index":0,"content_block":{block}}}"#),
     );
     push_event(
         &mut body,
         "content_block_delta",
-        &format!(
-            r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{TEXT}"}}}}"#
-        ),
+        &format!(r#"{{"type":"content_block_delta","index":0,"delta":{delta}}}"#),
     );
     push_event(
         &mut body,
@@ -295,7 +363,9 @@ fn messages_stream() -> String {
     push_event(
         &mut body,
         "message_delta",
-        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}"#,
+        &format!(
+            r#"{{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":6}}}}"#
+        ),
     );
     push_event(&mut body, "message_stop", r#"{"type":"message_stop"}"#);
     body

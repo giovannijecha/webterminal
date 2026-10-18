@@ -1,0 +1,161 @@
+/* Processes, Settings and Themes & Appearance. */
+
+/* Preference pages: one centered column; the save bar sticks to the bottom. */
+.prefs-content{display:flex;flex-direction:column;padding-bottom:0}
+.prefs-root{display:flex;flex-direction:column;gap:20px;flex:1 0 auto;width:100%;max-width:1000px;min-width:0;margin:0 auto;padding-bottom:40px}
+.prefs-root:has(>.prefs-footer:not([hidden])){padding-bottom:0}
+.prefs-tabs{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.prefs-tab{min-height:36px;padding:8px 12px;border:0;border-radius:8px;background:none;color:var(--muted-2);font-size:14px;line-height:21px;font-weight:600}
+.prefs-tab:hover{background:var(--well);color:var(--panel-text)}
+.prefs-tab[aria-selected="true"]{background:var(--selected);color:var(--panel-text);box-shadow:inset 0 0 0 1px var(--selected-edge)}
+.prefs-tab[aria-selected="true"]:hover{background:var(--selected-hover)}
+.prefs-panel{min-width:0}
+.prefs-section{min-width:0;border:1px solid var(--prefs-line);border-radius:12px;background:var(--frame);container-type:inline-size}
+.prefs-section-head{padding:20px 20px 8px}
+.prefs-section-head h2{font-size:16px;line-height:24px;font-weight:600;color:var(--panel-text)}
+.prefs-section-head p{margin-top:4px;color:var(--muted-2);font-size:12px;line-height:18px}
+.prefs-rows{padding:0 20px 4px}
+.prefs-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(0,360px);align-items:center;gap:16px;min-width:0;padding:16px 0}
+.prefs-row+.prefs-row{border-top:1px solid #38383f}
+.prefs-row.wide{grid-template-columns:minmax(0,1fr);gap:12px}
+.prefs-row.wide>.btn{justify-self:start}
+.prefs-label{min-width:0}
+.prefs-label :is(label,b){display:block;color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
+.prefs-label p{max-width:56ch;margin-top:4px;color:var(--muted-2);font-size:12px;line-height:18px}
+.prefs-control{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px 12px;min-width:0}
+.prefs-fact-value{min-width:0;color:var(--muted-2);font-family:var(--mono);font-size:12px;line-height:20px;text-align:right;overflow-wrap:anywhere}
+.prefs-folder{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;min-width:0}
+.prefs-folder .field{font-size:12px}
+.prefs-folder :is(.help,.error){margin:0;overflow-wrap:anywhere}
+.prefs-folder-actions{display:flex;flex-wrap:wrap;gap:8px}
+.prefs-programs{display:grid;gap:8px;min-width:0;list-style:none}
+.prefs-program{display:flex;align-items:flex-start;gap:12px;min-width:0;padding:12px;border-radius:10px;background:var(--well)}
+.prefs-program>div{display:grid;gap:2px;min-width:0}
+.prefs-program b{color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
+.prefs-program .muted{font-size:12px;line-height:18px}
+.prefs-program .mono{color:var(--muted-2);overflow-wrap:anywhere}
+.prefs-problem{display:flex;gap:12px;padding:16px;border:1px solid #6b5a33;border-radius:12px;background:var(--amber-fill)}
+.prefs-problem>.icon{width:20px;height:20px;margin-top:1px;color:var(--warning)}
+.prefs-problem>div{display:grid;justify-items:start;gap:4px;min-width:0}
+.prefs-problem h2{color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
+.prefs-problem p{font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.prefs-problem .btn{margin-top:8px}
+.prefs-footer{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px 16px;margin-top:auto;padding:16px 0;border-top:1px solid var(--prefs-line);background:var(--container)}
+.prefs-footer-text{min-width:0}
+.prefs-status{color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
+.prefs-footer[data-tone="error"] .prefs-status{color:var(--danger)}
+.prefs-detail{margin-top:2px;color:var(--muted-2);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.prefs-detail:empty{display:none}
+.prefs-save-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;flex:none;max-width:100%}
+
+/* The draft preview keeps its own terminal colors, so the live terminals'
+   :root values change only after a save. */
+.prefs-terminal{min-width:0;max-width:100%;padding:12px 14px;overflow:auto;border:1px solid var(--prefs-line);border-radius:8px;background:var(--terminal-bg);scrollbar-width:thin;scrollbar-color:#676772 transparent}
+.prefs-terminal[data-theme="light"]{scrollbar-color:#a1a1aa transparent}
+
+/* Themes & Appearance: controls beside a sticky preview. */
+.appearance-root{container:appearance/inline-size}
+.appearance-split{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);align-items:start;gap:20px;min-width:0}
+.appearance-controls{display:grid;gap:16px;min-width:0}
+.appearance-controls .prefs-row:not(.wide){grid-template-columns:minmax(0,1fr);gap:10px}
+.appearance-controls .prefs-control{justify-content:flex-start}
+.appearance-controls .prefs-fact-value{text-align:left}
+.appearance-restore{display:grid;justify-items:start;gap:4px}
+.appearance-restore .help{margin:0}
+.appearance-preview{position:sticky;top:0;min-width:0;margin:0;overflow:hidden;border:1px solid var(--prefs-line);border-radius:12px;background:var(--frame)}
+.appearance-preview>figcaption{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:4px 12px;padding:16px;border-bottom:1px solid var(--prefs-line)}
+.appearance-preview>figcaption b{color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
+.appearance-status{color:var(--muted-2);font-size:12px;line-height:18px}
+.appearance-sample{display:grid;gap:12px;min-width:0;padding:16px}
+.appearance-sample-head{display:flex;align-items:center;gap:8px;min-width:0;color:var(--panel-text);font-size:13px;line-height:20px}
+.appearance-sample-head .tile{width:20px;height:20px}
+.appearance-sample-head .mono{margin-left:auto}
+.appearance-sample .prefs-terminal{min-height:200px}
+/* One column: the Terminal panel, then its preview, then the fixed Interface facts. */
+@container appearance (max-width:600px){
+  .appearance-split{grid-template-columns:minmax(0,1fr)}
+  .appearance-controls{display:contents}
+  .appearance-controls>:last-child,.appearance-preview{order:-1}
+  .appearance-preview{position:static}
+}
+
+/* Processes: terminal groups, with details beside the list on desktop. */
+.process-root{display:grid;gap:16px;max-width:1200px;min-width:0;margin:0 auto}
+.process-tools{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;min-width:0}
+.process-tools .search-field{width:min(420px,100%);min-width:0}
+.process-summary{flex:none;color:var(--muted-2);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+.process-alert{display:flex;align-items:center;gap:12px;padding:12px 16px;border:1px solid #6b5a33;border-radius:12px;background:var(--amber-fill);font-size:13px;line-height:20px}
+.process-alert>.icon{color:var(--warning)}
+.process-alert>span{flex:1;min-width:0;overflow-wrap:anywhere}
+.process-layout{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:16px;min-width:0}
+.process-layout[data-inspecting="true"]{grid-template-columns:minmax(0,1fr) 288px}
+.process-main{min-width:0}
+.process-groups{display:grid;gap:16px;min-width:0}
+.process-group{min-width:0;overflow:hidden;border:1px solid var(--panel-line);border-radius:16px;background:var(--frame);container-type:inline-size}
+.process-group-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;background:var(--well)}
+.process-group-title{min-width:0}
+.process-group-title h2{font-size:14px;line-height:21px;font-weight:600}
+.process-terminal{padding:0;border:0;background:none;color:var(--panel-text);font:inherit;text-align:left;overflow-wrap:anywhere}
+.process-terminal:hover,.process-name:hover{text-decoration:underline;text-underline-offset:3px}
+.process-group-meta{display:flex;align-items:center;gap:8px;min-width:0;margin-top:4px;color:var(--muted-2);font-size:12px;line-height:18px}
+.process-group-meta>span{min-width:0;overflow-wrap:anywhere}
+.process-count{flex:none;color:var(--muted-2);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+.process-problem,.process-none{padding:12px 16px;border-top:1px solid #3e3e47;font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.process-problem{color:var(--warning)}
+.process-none{color:var(--muted-2)}
+.process-none:empty{display:none}
+.process-list{min-width:0;list-style:none}
+.process-row{display:grid;grid-template-columns:minmax(0,1fr) auto 32px;align-items:center;gap:16px;min-height:60px;padding:10px 12px 10px 16px;border-top:1px solid #3e3e47}
+.process-row:hover{background:#242428}
+.process-row[data-selected="true"]{background:var(--selected);box-shadow:inset 0 0 0 1px var(--selected-edge)}
+.process-row[data-selected="true"]:hover{background:var(--selected-hover)}
+.process-identity{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.process-row[data-root="false"] .process-identity{padding-left:calc(min(var(--depth,1),4) * 14px)}
+.process-name{max-width:100%;min-height:24px;padding:0;border:0;background:none;color:var(--panel-text);text-align:left;overflow-wrap:anywhere}
+.process-name .mono{font-size:13px;line-height:21px;font-weight:500}
+.process-meta{display:grid;grid-template-columns:72px 88px 96px;gap:16px;align-items:center}
+.process-fact{display:flex;flex-direction:column;min-width:0}
+.process-fact>span{color:var(--muted-2);font-size:11.5px;line-height:16px}
+.process-fact>b{color:var(--panel-text);font-family:var(--mono);font-size:12px;line-height:18px;font-weight:400;font-variant-numeric:tabular-nums;white-space:nowrap}
+.process-inspector-slot{position:sticky;top:0;min-width:0}
+.process-inspector{display:grid;gap:16px;max-height:calc(100dvh - 220px);min-width:0;padding:20px;overflow:auto;border:1px solid var(--panel-line);border-radius:16px;background:var(--frame)}
+.process-inspector-head{display:flex;align-items:flex-start;gap:12px}
+.process-inspector-head h2{flex:1;min-width:0;color:var(--panel-text);font:500 15px/23px var(--mono);overflow-wrap:anywhere}
+.process-exited{padding:12px;border-radius:10px;background:var(--neutral-fill);font-size:13px;line-height:20px}
+.process-exited p{color:var(--muted-2);font-size:12px;line-height:18px}
+.process-facts{display:grid;gap:12px;margin:0}
+.process-facts>div{display:grid;gap:2px;min-width:0}
+.process-facts dt{color:var(--muted-2);font-size:12px;line-height:18px}
+.process-facts dd{margin:0;color:var(--panel-text);font-size:14px;line-height:21px;overflow-wrap:anywhere}
+.process-detail-actions{display:grid;gap:8px}
+.process-detail-actions .btn{justify-content:flex-start}
+.process-detail-actions .help{margin:0}
+.process-dialog .process-detail-actions{margin-top:20px}
+.process-footnote{max-width:88ch;color:var(--muted-2);font-size:12px;line-height:18px}
+
+/* Narrow groups put the facts under the name and keep the menu at the side. */
+@container (max-width:600px){
+  .prefs-row{grid-template-columns:minmax(0,1fr);gap:12px}
+  .prefs-row:has(>.prefs-control>.switch){grid-template-columns:minmax(0,1fr) 44px}
+  .prefs-control{justify-content:flex-start}
+  .prefs-fact-value{text-align:left}
+  .process-row{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:10px 8px 10px 12px}
+  .process-meta{display:flex;flex-wrap:wrap;gap:2px 16px;grid-column:1;grid-row:2}
+  .process-fact{flex-direction:row;align-items:baseline;gap:4px}
+  .process-menu{grid-column:2;grid-row:1/3}
+}
+@media(max-width:700px){
+  .prefs-root{gap:16px}
+  .prefs-section-head{padding:16px 12px 8px}
+  .prefs-rows{padding:0 12px}
+  .prefs-row{padding:12px 0}
+  .prefs-footer{flex-wrap:wrap;padding-block:12px}
+  .prefs-save-actions{margin-left:auto}
+  .process-tools{flex-direction:column;align-items:stretch}
+  .process-tools .search-field{width:100%}
+  .process-group-head{align-items:flex-start;padding:12px}
+}
+@media(max-width:620px),(pointer:coarse){
+  .prefs-tab{min-height:44px;padding-inline:10px}
+  .process-name,.process-terminal{display:inline-flex;align-items:center;min-height:44px}
+}

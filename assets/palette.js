@@ -1,0 +1,159 @@
+// Command palette, keyboard shortcut help and the few documented global keys.
+// Keys typed inside a terminal reach the program, except the "Anywhere" ones.
+import {avatar, badge, el, icon, plural, programTile} from './dom.js';
+import {displayPath} from './common.js';
+import {PROGRAM_LABELS, failedSessions, focusedId, go, orderedSessions, programLabel, requestSummary, requestsFor, shellLabel, showTerminal, state, terminalName, terminalStatus, waitingRequests, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {dialogs, menu, notify} from './ui.js';
+import {createWorkspace} from './actions.js';
+import {createTerminal, openLauncher, splitFolder} from './launcher.js';
+import {closeDrawer} from './sidebar.js';
+
+export const PAGES = [
+  {page:'overview', label:'Overview', icon:'layout-dashboard'},
+  {page:'workspace', label:'Terminals', icon:'square-terminal'},
+  {page:'attention', label:'Needs you', icon:'bell-ring'},
+  {page:'reader', label:'Reader', icon:'book-open-text'},
+  {page:'processes', label:'Processes', icon:'cpu'},
+  {page:'files', label:'Dropped files', icon:'paperclip'},
+  {page:'settings', label:'Settings', icon:'settings'},
+  {page:'appearance', label:'Themes & Appearance', icon:'palette'},
+];
+
+// Terminals that need an answer first, then failures, in sidebar order.
+function attentionOrder() {
+  const order = orderedSessions(), waiting = new Set(waitingRequests().map(request => request.session)), failed = new Set(failedSessions().map(session => session.id));
+  return [...order.filter(id => waiting.has(id)), ...order.filter(id => failed.has(id) && !waiting.has(id))];
+}
+export function nextNeedingYou() {
+  const ids = attentionOrder();
+  if (!ids.length) { notify('Nothing needs you', 'No agent is waiting and no terminal has failed.'); return; }
+  const current = state.page === 'workspace' ? focusedId() : null;
+  showTerminal(ids[(ids.indexOf(current) + 1) % ids.length]);
+}
+
+function items(query) {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const match = text => words.every(word => text.toLowerCase().includes(word));
+  const next = attentionOrder()[0];
+  const suggested = next ? [{group:'Suggested', icon:'bell-ring', title:'Go to the next terminal that needs you',
+    sub:requestsFor(next)[0] ? `${programLabel(state.sessions.get(next))} ${requestSummary(requestsFor(next)[0])}` : `${terminalName(next)} · ${terminalStatus(next).label}`, run:nextNeedingYou}] : [];
+  const terminals = orderedSessions().map(id => {
+    const session = state.sessions.get(id), workspace = workspaceOf(id), status = terminalStatus(id);
+    return {group:'Terminals', tile:true, status, title:terminalName(id), sub:`${programLabel(session)} in ${workspaceLabel(workspace)}, ${displayPath(session.cwd)}`, run:() => showTerminal(id)};
+  });
+  const workspaces = state.workspaces.map(workspace => ({group:'Workspaces', workspace, title:workspaceLabel(workspace), sub:plural(workspace.sessions.length, 'terminal'),
+    run:() => { state.selected = workspace.id; go('workspace'); }}));
+  const here = state.page === 'workspace' ? workspaceById(state.selected) : null, folder = splitFolder();
+  const programs = (state.programs?.programs || []).filter(program => program.available && state.programs.hosted);
+  const actions = [
+    {icon:'plus', title:'New terminal', sub:'Choose a program and a folder', run:() => openLauncher({workspace:state.selected})},
+    ...(here && here.sessions.length < 4 ? [
+      {icon:'square-terminal', title:`New ${shellLabel(state.hello?.shell)} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, workspace:here.id})},
+      ...programs.map(program => ({icon:'sparkles', title:`New ${PROGRAM_LABELS[program.id] || program.label} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, program:program.id, workspace:here.id})})),
+    ] : []),
+    {icon:'layers', title:'New workspace', sub:'An empty workspace for up to four terminals', run:() => createWorkspace()},
+    {icon:'keyboard', title:'Keyboard shortcuts', sub:'', run:() => showShortcuts()},
+  ].map(item => ({group:'Actions', ...item}));
+  const pages = PAGES.map(page => ({group:'Go to', icon:page.icon, title:page.label, sub:'', run:() => go(page.page)}));
+  return [...suggested, ...terminals, ...workspaces, ...actions, ...pages].filter(item => !words.length || match(`${item.title} ${item.sub}`));
+}
+
+let palette = null;
+export function openPalette() {
+  if (palette?.open) { palette.querySelector('input').select(); return; }
+  closeDrawer(false);
+  menu.close(false);
+  const origin = document.activeElement;
+  const input = el('input', {type:'text', id:'palette-input', autocomplete:'off', spellcheck:'false', placeholder:'Search terminals, workspaces, folders and actions', 'aria-label':'Search terminals, workspaces, folders and actions',
+    role:'combobox', 'aria-expanded':'true', 'aria-controls':'palette-list', 'aria-autocomplete':'list'});
+  const list = el('div', {class:'pal-list', id:'palette-list', role:'listbox', 'aria-label':'Results'});
+  const dialog = el('dialog', {class:'palette', 'aria-label':'Search and commands'},
+    el('div', {class:'pal-input'}, icon('search'), input, el('kbd', {text:'Esc'})), list,
+    el('div', {class:'pal-foot'}, el('span', {text:'↑ ↓ to move · Enter to open'}), el('span', {text:'Ctrl K'})));
+  let results = [], active = 0;
+  const run = index => {
+    const item = results[index];
+    if (!item) return;
+    dialog.close();
+    item.run();
+  };
+  const draw = () => {
+    let group = null;
+    const nodes = [];
+    results.forEach((item, index) => {
+      if (item.group !== group) { group = item.group; nodes.push(el('div', {class:'pal-group', role:'presentation', text:group})); }
+      const mark = item.tile ? programTile() : item.workspace ? avatar(workspaceIndex(item.workspace), item.title) : icon(item.icon);
+      nodes.push(el('button', {class:'pal-item', type:'button', role:'option', id:`palette-item-${index}`, tabindex:'-1', 'aria-selected':String(index === active),
+        onpointermove:() => { if (active !== index) { active = index; highlight(); } }, onclick:() => run(index)},
+      mark, el('span', {class:'t'}, el('b', {text:item.title}), item.sub ? el('span', {text:item.sub}) : null),
+      item.status && item.status.tone !== 'neutral' ? badge(item.status.label, item.status.tone) : null, el('kbd', {text:'↵'})));
+    });
+    if (!results.length) nodes.push(el('div', {class:'pal-empty', role:'status'}, el('b', {text:'No results'}), el('span', {text:'Try a terminal, workspace, folder or page name.'})));
+    list.replaceChildren(...nodes);
+    highlight();
+  };
+  const highlight = () => {
+    for (const node of list.querySelectorAll('.pal-item')) node.setAttribute('aria-selected', String(node.id === `palette-item-${active}`));
+    if (results.length) { input.setAttribute('aria-activedescendant', `palette-item-${active}`); list.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'}); }
+    else input.removeAttribute('aria-activedescendant');
+  };
+  input.addEventListener('input', () => { results = items(input.value); active = 0; draw(); });
+  input.addEventListener('keydown', event => {
+    const last = results.length - 1;
+    if (event.key === 'ArrowDown') active = Math.min(last, active + 1);
+    else if (event.key === 'ArrowUp') active = Math.max(0, active - 1);
+    else if (event.key === 'Home' && event.ctrlKey) active = 0;
+    else if (event.key === 'End' && event.ctrlKey) active = Math.max(0, last);
+    else if (event.key === 'Enter') { event.preventDefault(); run(active); return; }
+    else return;
+    event.preventDefault();
+    highlight();
+  });
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener('close', () => {
+    dialog.remove();
+    if (palette === dialog) palette = null;
+    // Return focus only when the chosen action did not move it.
+    requestAnimationFrame(() => { if (document.activeElement === document.body && origin?.isConnected) origin.focus(); });
+  });
+  palette = dialog;
+  document.body.append(dialog);
+  results = items('');
+  draw();
+  dialog.showModal();
+  input.focus();
+}
+
+const SHORTCUTS = [
+  ['Anywhere', [['Search and commands', 'Ctrl', 'Shift', 'P'], ['Next terminal that needs you', 'Ctrl', 'Shift', 'A']]],
+  ['Outside a terminal', [['Search', 'Ctrl', 'K'], ['Search', '/'], ['Keyboard shortcuts', '?'], ['New terminal', 'N'], ['Reorder a workspace in the sidebar', 'Alt', '↑ ↓']]],
+  ['In a terminal', [['Find in history', 'Ctrl', 'Shift', 'F'], ['Copy selection', 'Ctrl', 'Shift', 'C'], ['Paste', 'Ctrl', 'V'], ['Select text while an app uses the mouse', 'Shift', 'drag']]],
+];
+export function showShortcuts() {
+  closeDrawer(false);
+  menu.close(false);
+  return dialogs.show({
+    title:'Keyboard shortcuts', description:'Outside a terminal. Inside one, keys go to the program.', action:'Done', cancel:false, className:'shortcuts',
+    body:el('div', {class:'key-groups'}, SHORTCUTS.map(([heading, rows]) => el('section', {}, el('h3', {text:heading}),
+      rows.map(([label, ...keys]) => el('div', {class:'key-row'}, el('span', {text:label}), el('span', {}, keys.map(key => el('kbd', {text:key})))))))),
+  });
+}
+
+// A key belongs to the page only outside terminals, fields and open overlays.
+function pageOwnsKey(target) {
+  return !document.querySelector('dialog[open]') && !menu.open && !target.closest?.('.pane, input, textarea, select, [contenteditable], [role="combobox"], [role="menu"]');
+}
+document.addEventListener('keydown', event => {
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && event.shiftKey && !event.altKey && (key === 'p' || key === 'a')) {
+    if (document.querySelector('dialog[open]:not(.palette)')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (key === 'p') openPalette(); else { palette?.close(); nextNeedingYou(); }
+    return;
+  }
+  if (event.defaultPrevented || event.altKey || event.metaKey || !pageOwnsKey(event.target)) return;
+  if ((event.ctrlKey && !event.shiftKey && key === 'k') || (!event.ctrlKey && event.key === '/')) { event.preventDefault(); openPalette(); }
+  else if (!event.ctrlKey && event.key === '?') { event.preventDefault(); showShortcuts(); }
+  else if (!event.ctrlKey && !event.shiftKey && key === 'n') { event.preventDefault(); openLauncher({workspace:state.selected}); }
+}, true);

@@ -46,6 +46,8 @@ impl Harness {
             port: 0,
             cwd: cwd.clone(),
             shell,
+            settings: cwd.join("settings.json"),
+            helper: None,
         })
         .unwrap();
         let port = server.port;
@@ -127,7 +129,7 @@ pub struct Socket {
     last_received: String,
 }
 impl Socket {
-    fn connect(port: u16) -> Self {
+    pub fn connect(port: u16) -> Self {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_millis(200)))
@@ -203,6 +205,27 @@ impl Socket {
     }
     pub fn recv_type(&mut self, kind: &str) -> String {
         self.recv_matching(|text| text.starts_with(&format!("{{\"type\":\"{kind}\"")))
+    }
+    #[allow(dead_code)] // Other integration suites share this helper module.
+    pub fn recv_close(&mut self) -> u16 {
+        let until = Instant::now() + TIMEOUT;
+        loop {
+            let head = self.take(2, until);
+            let size = match head[1] & 127 {
+                126 => u16::from_be_bytes(self.take(2, until).try_into().unwrap()) as usize,
+                127 => u64::from_be_bytes(self.take(8, until).try_into().unwrap()) as usize,
+                n => n as usize,
+            };
+            let payload = self.take(size, until);
+            if head[0] & 15 == 8 {
+                assert!(payload.len() >= 2, "close frame has no status code");
+                return u16::from_be_bytes(payload[..2].try_into().unwrap());
+            }
+            assert!(
+                matches!(head[0] & 15, 1 | 9),
+                "unexpected frame before close"
+            );
+        }
     }
     pub fn recv_matching(&mut self, predicate: impl Fn(&str) -> bool) -> String {
         self.recv_matching_with_timeout(TIMEOUT, predicate)

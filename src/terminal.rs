@@ -20,6 +20,7 @@ mod unicode;
 #[path = "terminal/updates.rs"]
 mod updates;
 
+pub use screen::HISTORY_LIMIT;
 pub use updates::SnapshotBaseline;
 
 use screen::{Screen, Style};
@@ -486,6 +487,9 @@ impl Terminal {
     }
 }
 
+#[cfg(test)]
+#[path = "terminal/reflow_tests.rs"]
+mod reflow_tests;
 #[cfg(test)]
 #[path = "terminal/tests.rs"]
 mod tests;

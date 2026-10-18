@@ -1,11 +1,14 @@
 //! `POST /api/upload?id=&view=&epoch=&name=` stages one dropped file for the
-//! view that controls the session and replies with its local path.
+//! view that controls the session and replies with the registered copy.
 use super::http::{self, Request};
-use crate::{json, session::Registry};
+use crate::{
+    json,
+    session::Registry,
+    uploads::{StagedCopy, UploadError},
+};
 use std::collections::BTreeMap;
 use std::io;
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::time::Duration;
 
 // A stalled browser transfer releases its connection and partial file.
@@ -24,11 +27,17 @@ pub(super) fn handle(
         Err(("403 Forbidden", "Same-origin upload required".into()))
     };
     match result {
-        Ok(path) => http::response(
+        Ok(copy) => http::response(
             stream,
             "200 OK",
             "application/json",
-            &format!("{{\"path\":{}}}", json::quote(&path.to_string_lossy())),
+            &format!(
+                "{{\"path\":{},\"id\":{},\"name\":{},\"size\":{}}}",
+                json::quote(&copy.path.to_string_lossy()),
+                json::quote(&copy.id),
+                json::quote(&copy.name),
+                copy.size
+            ),
         ),
         Err((status, error)) => http::response(
             stream,
@@ -43,8 +52,14 @@ fn receive(
     stream: &mut TcpStream,
     req: &Request,
     registry: &Registry,
-) -> Result<PathBuf, (&'static str, String)> {
+) -> Result<StagedCopy, (&'static str, String)> {
     let bad = |error: String| ("400 Bad Request", error);
+    let gone = || {
+        (
+            "410 Gone",
+            "Terminal session closed during the upload".to_string(),
+        )
+    };
     let query = query(&req.path[http::UPLOAD.len()..]).map_err(bad)?;
     let field = |name: &str| {
         query
@@ -74,18 +89,28 @@ fn receive(
     stream
         .set_read_timeout(Some(IDLE))
         .map_err(|error| bad(error.to_string()))?;
-    let path = registry
+    let pending = registry
         .uploads
         .receive(id, name, length, &req.extra, stream)
-        .map_err(|error| bad(format!("Upload failed: {error}")))?;
+        .map_err(|error| match error {
+            UploadError::Full => ("507 Insufficient Storage", error.to_string()),
+            UploadError::Closed => gone(),
+            UploadError::Failed(error) => bad(format!("Upload failed: {error}")),
+        })?;
+    // The body is complete: the copy is listed only if the same view still
+    // controls a live session. Returning early drops and deletes `pending`.
     if registry.get(id).is_err() {
-        registry.uploads.discard(&path);
-        return Err((
-            "410 Gone",
-            "Terminal session closed during the upload".into(),
-        ));
+        return Err(gone());
     }
-    Ok(path)
+    session
+        .with_control(view, epoch, || Ok(pending.commit()))
+        .map_err(|_| {
+            (
+                "409 Conflict",
+                "Control changed during upload; the copy was discarded".into(),
+            )
+        })?
+        .map_err(|_| gone())
 }
 
 fn query(text: &str) -> Result<BTreeMap<String, String>, String> {

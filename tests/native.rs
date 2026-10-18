@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn fixture() -> &'static str {
@@ -377,5 +377,121 @@ fn termination_kills_descendants_and_server_loss_closes_job() {
     unrelated.0.kill().unwrap();
     unrelated.0.wait().unwrap();
     await_unlock(&unrelated_marker);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// Terminates the session's job when a snapshot test finishes or panics.
+struct OwnedSession(Arc<native::Pty>);
+impl Drop for OwnedSession {
+    fn drop(&mut self) {
+        let _ = self.0.terminate();
+    }
+}
+impl OwnedSession {
+    fn end(self) {
+        self.0.terminate().unwrap();
+        await_exit(&self.0);
+    }
+}
+
+fn snapshot_until(
+    pty: &native::Pty,
+    done: impl Fn(&native::ProcessList) -> bool,
+) -> native::ProcessList {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let list = pty.processes(native::PROCESS_LIMIT).unwrap();
+        if done(&list) {
+            return list;
+        }
+        assert!(Instant::now() < until, "snapshot did not settle: {list:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn assert_fixture_image(process: &native::ProcessInfo) {
+    let expected = Path::new(fixture()).file_name().unwrap().to_string_lossy();
+    assert!(process.name.eq_ignore_ascii_case(&expected), "{process:?}");
+    let path = process.path.as_deref().unwrap_or_default();
+    assert!(path.ends_with(&process.name), "{process:?}");
+}
+
+/// Starts `--tree`: the root fixture spawns one `--hold-lock` child, which
+/// joins the job at creation, and prints its PID. Returns once the child
+/// holds `marker`, with the guard, the child PID and the output lines.
+fn spawn_tree(marker: &Path, dir: &Path) -> (OwnedSession, u32, mpsc::Receiver<String>) {
+    let spawned = native::spawn(&command("--tree", Some(marker)), dir, 80, 24).unwrap();
+    let session = OwnedSession(spawned.pty);
+    let lines = collect_lines(spawned.output);
+    loop {
+        let line = lines.recv_timeout(Duration::from_secs(10)).unwrap();
+        if let Some(start) = line.find("CHILD:") {
+            let digits = line[start + 6..].chars().take_while(char::is_ascii_digit);
+            let child = digits.collect::<String>().parse().unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.exists() {
+                assert!(Instant::now() < until, "fixture child did not open marker");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            return (session, child, lines);
+        }
+    }
+}
+
+#[test]
+fn process_snapshot_reports_only_the_root() {
+    let dir = scratch();
+    let before = SystemTime::now();
+    let spawned = native::spawn(&command("--hold", None), &dir, 80, 24).unwrap();
+    let session = OwnedSession(spawned.pty);
+    let _output = collect(spawned.output);
+    let list = snapshot_until(&session.0, |list| !list.processes.is_empty());
+    assert_eq!(list.processes.len(), 1, "{list:?}");
+    assert!(list.total >= 1 && !list.truncated, "{list:?}");
+    let root = &list.processes[0];
+    assert!(root.root && root.parent.is_none(), "{root:?}");
+    assert_eq!(root.pid, session.0.process_id());
+    assert_fixture_image(root);
+    let started = UNIX_EPOCH + Duration::from_millis(root.started_ms.unwrap());
+    let slack = Duration::from_secs(2);
+    assert!(started + slack >= before && started <= SystemTime::now() + slack);
+    session.end();
+    fs::remove_dir(dir).unwrap();
+}
+
+#[test]
+fn process_snapshot_links_children_and_empties_after_termination() {
+    let dir = scratch();
+    let marker = dir.join("child.lock");
+    let (session, child, _lines) = spawn_tree(&marker, &dir);
+    let root = session.0.process_id();
+    let list = session.0.processes(native::PROCESS_LIMIT).unwrap();
+    assert_eq!(list.processes.len(), 2, "{list:?}");
+    assert!(list.total >= 2 && !list.truncated, "{list:?}");
+    assert!(list.processes[0].root && list.processes[0].pid == root);
+    let entry = &list.processes[1];
+    assert_eq!((entry.pid, entry.parent), (child, Some(root)), "{entry:?}");
+    assert_fixture_image(entry);
+    assert!(entry.started_ms.unwrap() >= list.processes[0].started_ms.unwrap());
+    session.0.terminate().unwrap();
+    snapshot_until(&session.0, |list| list.processes.is_empty());
+    await_unlock(&marker);
+    session.end();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn process_snapshot_limit_truncates_after_the_root() {
+    let dir = scratch();
+    let marker = dir.join("child.lock");
+    let (session, _child, _lines) = spawn_tree(&marker, &dir);
+    let list = session.0.processes(1).unwrap();
+    assert_eq!(list.processes.len(), 1, "{list:?}");
+    assert!(list.truncated && list.total >= 2, "{list:?}");
+    assert!(list.processes[0].root && list.processes[0].parent.is_none());
+    let empty = session.0.processes(0).unwrap();
+    assert!(empty.processes.is_empty() && empty.truncated, "{empty:?}");
+    session.end();
+    await_unlock(&marker);
     fs::remove_dir_all(dir).unwrap();
 }
