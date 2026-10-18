@@ -100,6 +100,10 @@ terminated rather than blocking its output reader indefinitely.
 
 ## Known limits
 
+Starting a process in a working directory beyond Windows' `MAX_PATH` limit can
+fail even when the folder picker can list that directory. Keep the selected
+path within the [process current-directory limit](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setcurrentdirectory).
+
 Classic X10 mouse reports are limited to coordinates 1–95 because higher raw
 bytes are corrupted by ConPTY's UTF-8 input; SGR mouse reports cover the full
 supported geometry. Raw 8-bit C1 controls, graphics/SIXEL, arbitrary DCS

@@ -11,7 +11,9 @@ const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const scratch=resolve(root,'.tmp'), runRoot=resolve(scratch,`workbench-${process.pid}-${Date.now()}`);
 assert.ok(runRoot.startsWith(scratch+sep));
 const cwd=resolve(runRoot,'sample-workspace'), childFolder=resolve(cwd,'reports & notes');
-const longFolder=resolve(cwd,'a-deliberately-long-folder-name-that-must-wrap-or-truncate-in-pane-headers','and-a-nested-segment-with-more-words');
+// Wrap the context at narrow widths without exceeding the native process
+// working-directory limit in the runner's longer checkout path.
+const longFolder=resolve(cwd,'long-header-context','and-a-nested-segment');
 const screenshots=resolve(scratch,'browser-qa-workbench');
 const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(root,'target/debug'));
 
@@ -42,7 +44,11 @@ function publish(report){document.body.dataset.probeResult=btoa(unescape(encodeU
 async function open(folder,count){
   $('new').click();await until(launcher,'launcher');$('launch-folder').value=folder;
   launcher().querySelector('.dlg-foot .btn.primary').click();
-  await until(async()=>(await sessions()).length===count&&!launcher()&&focused()?.dataset.status==='Controlling','terminal '+count);
+  await until(async()=>{
+    const error=launcher()?.querySelector('.dlg-error:not([hidden])');
+    if(error)throw new Error('Terminal launch failed: '+error.textContent);
+    return (await sessions()).length===count&&!launcher()&&focused()?.dataset.status==='Controlling';
+  },'terminal '+count);
 }
 async function main(){
   await until(()=>$('connection-status').textContent==='Connected'&&!$('empty-state').hidden,'empty workspace');
