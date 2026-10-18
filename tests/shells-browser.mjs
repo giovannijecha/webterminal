@@ -80,7 +80,10 @@ async function main(){
   const firstMetadata=(await sessions()).find(session=>session.id===first);
   check(!('profile' in firstMetadata)&&firstMetadata.shell==='powershell.exe -NoLogo -NoProfile','default actually launches PowerShell without a per-terminal profile');
   await run('ls','webterminal-listing-marker.txt');check(true,'ls lists files in the selected directory');
-  await run('pwd','Path');check(screen().includes(CWD),'pwd renders the selected working directory');
+  // PowerShell's default table formatter abbreviates paths wider than the pane.
+  send("Write-Output ('WORKING_' + 'DIRECTORY=' + (pwd).Path)");
+  await until(()=>transcript().replaceAll('\n','').includes('WORKING_DIRECTORY='+CWD),'pwd full path');
+  check(true,'pwd renders the selected working directory');
   await run("$webterminalProbeValue = 41; Write-Output ('SESSION_' + ($webterminalProbeValue + 1))",'SESSION_42');
   const seq=current().seq;send('clear');
   await until(()=>current().seq>seq&&!screen().includes('webterminal-listing-marker.txt')&&!screen().includes('SESSION_42')&&screen().includes('PS '),'clear screen');
