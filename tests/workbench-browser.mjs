@@ -87,7 +87,8 @@ async function main(){
   check(same((await sessions())[0].cwd,CHILD),'selected child reaches native process');
   await capture('terminal-desktop',1280);check(fits($('pane-menu')),'terminal actions fit desktop');
 
-  await go('settings');$('settings-tab-terminal').click();
+  await go('settings');
+  (await until(()=>$('settings-tab-terminal'),'settings tabs')).click();
   const panel=$('settings-panel-terminal'),step=label=>panel.querySelector('[aria-label="'+label+' terminal text"]').click();
   step('Larger');await until(()=>$('settings-font-value').textContent==='14 px','larger');check(true,'font size increases');
   step('Smaller');await until(()=>$('settings-font-value').textContent==='13 px','smaller');check(true,'font size decreases');

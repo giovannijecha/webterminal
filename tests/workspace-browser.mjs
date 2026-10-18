@@ -95,6 +95,7 @@ async function main(){
   check([1,2,3,4].every(index=>fits(pane(index))),'four-pane layout fits desktop');
   $('new-workspace').click();await until(async()=> (await listing()).workspaces.length===2,'second workspace');
   const second=(await listing()).workspaces[1].id;
+  await until(()=>active()?.dataset.workspace===second&&!$('empty-state').hidden,'second workspace selected and empty');
   check(active().dataset.workspace===second&&!$('empty-state').hidden,'new workspace is empty and selected');
   $('workspace-title').click();
   const name=document.querySelector('#page-workspace .inline-edit');check(name&&document.activeElement===name,'workspace rename uses inline editor');

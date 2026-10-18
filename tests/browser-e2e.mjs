@@ -105,6 +105,8 @@ async function echo() {
     verify(sameCwd(first.cwd), 'first cwd is selected directory');
     $('new-workspace').click();
     await until(() => workspaceItems().length===2, 'second workspace');
+    const secondWorkspace = workspaceItems()[1].closest('[data-workspace]').dataset.workspace;
+    await until(() => activeWorkspace()===secondWorkspace && !$('empty-state').hidden, 'second workspace selected and empty');
     await newTerminal(2);
     await until(() => terminalText().includes('READY'), 'second READY');
     const all = await sessions();
