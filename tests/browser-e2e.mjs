@@ -58,11 +58,11 @@ function key(name, code, options={}, keyCode=0, type='keydown') {
   part('keyboard').dispatchEvent(event);
 }
 async function launcher() {
+  await until(() => $('connection-status').textContent === 'Connected' && $('new').getAttribute('aria-disabled') === 'false', 'workspace ready for launcher');
   $('new').click();
   return until(() => document.querySelector('dialog.launcher[open]'), 'launcher dialog; dock='+$('dock').textContent);
 }
 async function newTerminal(expectedCount) {
-  await pause(300);
   const open = await launcher();
   $('launch-folder').value = CWD;
   open.querySelector('.dlg-foot .btn.primary').click();
