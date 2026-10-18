@@ -40,6 +40,7 @@ function send(command){const transfer=new DataTransfer();transfer.setData('text/
 async function run(command,marker,exact=false){const seq=current().seq;send(command);await until(()=>{const next=transcript();if(current().seq>seq&&(exact?next.split('\n').some(line=>line.trim()===marker):next.includes(marker))){lastMatch=next;return true;}return false;},'command '+command);}
 function launcher(){return document.querySelector('dialog.launcher[open]');}
 async function openPicker(){
+  await until(()=>$('new').getAttribute('aria-disabled')==='false','workspace ready for launcher');
   $('new').click();await until(launcher,'launcher');$('launch-folder').value=CWD;
   check(!launcher().querySelector('[data-shell],select[name=shell],.directory-profile'),'launcher has no shell selection');
 }

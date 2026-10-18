@@ -116,6 +116,7 @@ async function main(){
     const report={pass:true,checks,userAgent:navigator.userAgent,session:current().id,seq:current().seq,errors:window.__probeErrors};
     document.body.dataset.probeResult=btoa(JSON.stringify(report));return;
   }
+  await until(()=>$('new').getAttribute('aria-disabled')==='false','workspace ready for launcher');
   $('new').click();await until(()=>document.querySelector('dialog.launcher[open]'),'launcher');document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();
   await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
   check($('terminal-lines').textContent.includes('COLOR_ENABLED=true'),'CLI-style color detection ignores the redirected host');
