@@ -38,13 +38,15 @@ async function sessions(){return(await(await fetch('/api/sessions',{cache:'no-st
 function key(name,code,keyCode){for(const type of ['keydown','keyup']){const event=new KeyboardEvent(type,{key:name,code,bubbles:true,cancelable:true});Object.defineProperty(event,'keyCode',{value:keyCode});keyboard().dispatchEvent(event);}}
 function send(command){const transfer=new DataTransfer();transfer.setData('text/plain',command);keyboard().focus();keyboard().dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));key('Enter','Enter',13);}
 async function run(command,marker,exact=false){const seq=current().seq;send(command);await until(()=>{const next=transcript();if(current().seq>seq&&(exact?next.split('\n').some(line=>line.trim()===marker):next.includes(marker))){lastMatch=next;return true;}return false;},'command '+command);}
+function launcher(){return document.querySelector('dialog.launcher[open]');}
 async function openPicker(){
-  $('new').click();await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'picker');
-  check(!$('directory-shell')&&!document.querySelector('.directory-profile'),'folder picker has no shell selection');
+  await until(()=>$('new').getAttribute('aria-disabled')==='false','workspace ready for launcher');
+  $('new').click();await until(launcher,'launcher');$('launch-folder').value=CWD;
+  check(!launcher().querySelector('[data-shell],select[name=shell],.directory-profile'),'launcher has no shell selection');
 }
 async function nativeKey(name){document.body.dataset.shellKey=name;await until(()=>document.body.dataset.shellKeyDone===name,'native key '+name);document.body.dataset.shellKey='';document.body.dataset.shellKeyDone='';}
 async function capture(name,width){document.body.dataset.shellCapture=JSON.stringify({name,width});await until(()=>document.body.dataset.shellCaptured===name,'capture '+name);}
-async function create(count){$('directory-create').focus();await nativeKey('Enter');await until(async()=>(await sessions()).length===count&&$(count===1?'pane':'pane'+count+'-pane').dataset.status==='Controlling','session '+count);activeIndex=count;activeId=(await sessions())[count-1].id;sessionStorage.setItem('shellActive',activeId);sessionStorage.setItem('shellIndex',String(count));return activeId;}
+async function create(count){launcher().querySelector('.dlg-foot .btn.primary').focus();await nativeKey('Enter');await until(async()=>(await sessions()).length===count&&$(count===1?'pane':'pane'+count+'-pane').dataset.status==='Controlling','session '+count);activeIndex=count;activeId=(await sessions())[count-1].id;sessionStorage.setItem('shellActive',activeId);sessionStorage.setItem('shellIndex',String(count));return activeId;}
 async function switchTo(id){const all=await sessions();activeIndex=all.findIndex(session=>session.id===id)+1;activeId=id;sessionStorage.setItem('shellActive',id);sessionStorage.setItem('shellIndex',String(activeIndex));keyboard().focus();await until(()=>pane().classList.contains('focused')&&pane().dataset.status==='Controlling','focus '+id);}
 async function rejectedProfile(profile){
   const ws=new WebSocket('ws://'+location.host+'/ws');await new Promise(resolve=>ws.addEventListener('open',resolve,{once:true}));
@@ -72,13 +74,16 @@ async function main(){
   await openPicker();
   check((await(await fetch('/api/info')).json()).shell==='powershell.exe -NoLogo -NoProfile','PowerShell is the server default');
   await capture('picker-desktop',1280);await capture('picker-mobile',320);
-  const box=$('directory-dialog').getBoundingClientRect();check(box.left>=0&&box.right<=innerWidth,'folder picker fits at 320px');
+  const box=launcher().getBoundingClientRect();check(box.left>=0&&box.right<=innerWidth,'launcher fits at 320px');
   await capture('picker-restored',1280);
   const first=await create(1);await until(()=>screen().includes('PS ')&&screen().includes('>'),'PowerShell prompt');
   const firstMetadata=(await sessions()).find(session=>session.id===first);
   check(!('profile' in firstMetadata)&&firstMetadata.shell==='powershell.exe -NoLogo -NoProfile','default actually launches PowerShell without a per-terminal profile');
   await run('ls','webterminal-listing-marker.txt');check(true,'ls lists files in the selected directory');
-  await run('pwd','Path');check(screen().includes(CWD),'pwd renders the selected working directory');
+  // PowerShell's default table formatter abbreviates paths wider than the pane.
+  send("Write-Output ('WORKING_' + 'DIRECTORY=' + (pwd).Path)");
+  await until(()=>transcript().replaceAll('\n','').includes('WORKING_DIRECTORY='+CWD),'pwd full path');
+  check(true,'pwd renders the selected working directory');
   await run("$webterminalProbeValue = 41; Write-Output ('SESSION_' + ($webterminalProbeValue + 1))",'SESSION_42');
   const seq=current().seq;send('clear');
   await until(()=>current().seq>seq&&!screen().includes('webterminal-listing-marker.txt')&&!screen().includes('SESSION_42')&&screen().includes('PS '),'clear screen');
@@ -86,7 +91,7 @@ async function main(){
   await run("Write-Output ('AFTER_CLEAR_' + ($webterminalProbeValue + 1))",'AFTER_CLEAR_42');check(true,'clear preserves the running shell and its variables');
   await run('Get-WebterminalMissingFixtureCommand','Get-WebterminalMissingFixtureCommand');
   await until(()=>screen().includes('not recognized'),'native unknown command error');
-  check(current().terminal.screen.some(line=>line.cells.some(cell=>cell[1]>0&&cell[0].trim()&&!['#d4d4d4','#ffffff'].includes(cell[2]))),'PowerShell errors retain their native colors');
+  check(current().terminal.screen.some(line=>line.cells.some(cell=>cell[1]>0&&cell[0].trim()&&!['#cccccc','#ffffff'].includes(cell[2]))),'PowerShell errors retain their native colors');
   await capture('powershell-terminal',1280);
   await openPicker();
   const second=await create(2);await until(()=>screen().includes('PS ')&&screen().includes('>'),'second PowerShell prompt');
@@ -99,7 +104,7 @@ async function main(){
   const metadata=await sessions();check(first!==second&&metadata.every(session=>session.alive&&session.shell==='powershell.exe -NoLogo -NoProfile')&&metadata[0].cwd===metadata[1].cwd,'independent PowerShell sessions can share the same directory');
   await rejectedProfile('cmd');await rejectedProfile('cmd.exe /c unwanted-fixture');await rejectedProfile(42);
   await openPicker();
-  document.querySelector('#directory-form button[value="cancel"]').click();
+  launcher().querySelector('.dlg-foot .btn:not(.primary)').click();await until(()=>!launcher(),'launcher closes');
   await switchTo(first);check((await sessions()).find(item=>item.id===first).shell.includes('powershell.exe'),'switching panes retains PowerShell metadata');
   await run("Write-Output ('SWITCHED_' + $webterminalProbeValue)",'SWITCHED_41');check(true,'switching tabs retains independent PowerShell variables');
   sessionStorage.setItem('shellFirst',first);sessionStorage.setItem('shellSecond',second);sessionStorage.setItem('shellChecks',JSON.stringify(checks));sessionStorage.setItem('shellListingLines',JSON.stringify(listingLines));sessionStorage.setItem('shellStage','reloaded');location.reload();
@@ -112,7 +117,7 @@ for(const key of ['SystemRoot','WINDIR','PATH','PATHEXT'])if(process.env[key])en
 Object.assign(environment,{USERPROFILE:profile,HOME:profile,APPDATA:resolve(profile,'AppData/Roaming'),LOCALAPPDATA:resolve(profile,'AppData/Local'),TEMP:resolve(profile,'Temp'),TMP:resolve(profile,'Temp'),PSModulePath:resolve(environment.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules'),TERM:'dumb',NO_COLOR:'1'});
 let child,proxy,lastCapture;
 try{
-  const port=await freePort();child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',cwd],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  const port=await freePort();child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',cwd,'--config',resolve(runRoot,'settings.json')],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   await ready(port,child);proxy=await proxyFor(port,harness.replace('__CWD__',JSON.stringify(cwd)));
   const report=await chromeProbe(await findChrome(),'http://127.0.0.1:'+proxy.port+'/',resolve(runRoot,'chrome'),'shellStage',async({protocol,evaluate})=>{
     const name=await evaluate('document.body.dataset.shellKey||""');

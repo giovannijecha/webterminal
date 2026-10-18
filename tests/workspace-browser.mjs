@@ -22,12 +22,16 @@ function pane(index){return $(index===1?'pane':'pane'+index+'-pane');}
 function input(index){return $(index===1?'keyboard':'pane'+index+'-keyboard');}
 function lines(index){return $(index===1?'terminal-lines':'pane'+index+'-terminal-lines');}
 async function listing(){return await(await fetch('/api/sessions',{cache:'no-store'})).json();}
-function active(){return document.querySelector('.workspace-tab.active');}
-function tab(id){return document.querySelector('.workspace-tab[data-workspace="'+id+'"]');}
+function active(){return document.querySelector('#navigation-projects .navigation-workspace-row .navigation-item[aria-current]')?.closest('.navigation-project');}
+function tab(id){return document.querySelector('#navigation-projects .navigation-project[data-workspace="'+id+'"] .navigation-workspace-row .navigation-item');}
+async function select(id){tab(id).click();await until(()=>active()?.dataset.workspace===id,'workspace '+id+' selected');}
+function visible(element){return element.getClientRects().length>0;}
+function launcher(){return document.querySelector('dialog.launcher[open]');}
+function dialog(){return document.querySelector('dialog.dlg[open]');}
 async function capture(name,width){document.body.dataset.viewportRequest=String(width);await until(()=>document.body.dataset.viewportDone===String(width),'viewport '+width);document.body.dataset.capture=name;await until(()=>document.body.dataset.captured===name,'capture '+name);}
 function fits(element){const r=element.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1;}
 function paste(index,value){const transfer=new DataTransfer();transfer.setData('text/plain',value);input(index).focus();input(index).dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));}
-async function create(count){$('new').click();await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'folder picker');$('directory-create').click();await until(async()=>(await listing()).sessions.length===count,'session '+count);await until(()=>pane(count).dataset.status==='Controlling'&&lines(count).textContent.includes('PERF_READY'),'pane '+count);}
+async function create(count){$('new').click();await until(launcher,'launcher');launcher().querySelector('.dlg-foot .btn.primary').click();await until(async()=>(await listing()).sessions.length===count,'session '+count);await until(()=>pane(count).dataset.status==='Controlling'&&lines(count).textContent.includes('PERF_READY'),'pane '+count);}
 async function probe(index,tag){paste(index,'probe:'+tag+'\r');await until(()=>lines(index).textContent.includes('ACK:'+tag),'ACK '+tag);}
 function drag(source,target){const dataTransfer=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{dataTransfer,bubbles:true,cancelable:true}));target.dispatchEvent(new DragEvent('dragover',{dataTransfer,bubbles:true,cancelable:true}));target.dispatchEvent(new DragEvent('drop',{dataTransfer,bubbles:true,cancelable:true}));source.dispatchEvent(new DragEvent('dragend',{dataTransfer,bubbles:true,cancelable:true}));}
 async function observer(id){
@@ -46,15 +50,15 @@ async function main(){
     const data=await listing();
     check(data.workspaces.length===2&&data.workspaces[0].sessions.length===3&&data.workspaces[1].sessions.length===1,'reload restores Rust workspace membership');
     check(data.workspaces[1].sessions[0]===ids[3],'moved terminal retains identity');
-    tab(data.workspaces[0].id).click();
+    await select(data.workspaces[0].id);
     await until(()=>pane(1).dataset.status==='Controlling'&&lines(1).textContent.includes('PERF_READY'),'first workspace after reload');
     await probe(1,'RELOADED');
     await capture('workspace-mobile',390);
-    check(!$('pane-switcher').hidden&&$('pane-switcher').querySelectorAll('.switcher-item').length===3,'narrow layout lists three terminal panes');
-    $('pane-switcher').querySelectorAll('.switcher-item')[1].click();
-    await until(()=>pane(2).dataset.status==='Controlling'&&!pane(2).hidden&&pane(1).hidden,'narrow switcher selects second terminal');
+    check(!$('pane-tabs').hidden&&$('pane-tabs').querySelectorAll('button').length===3,'narrow layout lists three terminal panes');
+    $('pane-tabs').querySelectorAll('button')[1].click();
+    await until(()=>pane(2).dataset.status==='Controlling'&&visible(pane(2))&&!visible(pane(1)),'narrow switcher selects second terminal');
     await probe(2,'MOBILE');
-    check(fits($('new'))&&fits($('pane2-close-session')),'mobile terminal controls fit');
+    check(fits($('new'))&&fits($('pane2-pane-menu')),'mobile terminal controls fit');
     await capture('workspace-mobile-selected',390);
     await capture('workspace-desktop-restored',1280);
     check(window.__probeErrors.length===0,'no browser exceptions or invalid updates');
@@ -79,10 +83,10 @@ async function main(){
   await Promise.all([probe(1,'RECONNECTED-ONE'),probe(4,'RECONNECTED-FOUR')]);
   check(true,'each visible pane restores input after WebSocket reconnect');
   check($('new').getAttribute('aria-disabled')==='true','fifth terminal is unavailable in a full workspace');
-  $('new').click();check(!$('directory-dialog').open,'full workspace does not open the picker');
-  $('terminal-title').click();const rename=$('pane-header').querySelector('.inline-edit');
-  check(rename&&document.activeElement===rename,'terminal rename focuses an inline editor');
-  rename.value='Research';rename.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+  $('new').click();check(!launcher(),'full workspace does not open the launcher');
+  $('terminal-title').click();const rename=await until(()=>document.activeElement===$('rename-terminal')&&$('rename-terminal'),'terminal rename field');
+  check(rename,'terminal rename focuses its name field');
+  rename.value='Research';dialog().querySelector('.dlg-foot .btn.primary').click();
   await until(async()=> (await listing()).sessions[0].name==='Research','terminal name persisted');
   const before=ids.join(',');drag($('pane4-pane-header'),pane(2));
   await until(async()=> (await listing()).workspaces[0].sessions.join(',')!==before,'pane order persisted');
@@ -91,21 +95,22 @@ async function main(){
   check([1,2,3,4].every(index=>fits(pane(index))),'four-pane layout fits desktop');
   $('new-workspace').click();await until(async()=> (await listing()).workspaces.length===2,'second workspace');
   const second=(await listing()).workspaces[1].id;
+  await until(()=>active()?.dataset.workspace===second&&!$('empty-state').hidden,'second workspace selected and empty');
   check(active().dataset.workspace===second&&!$('empty-state').hidden,'new workspace is empty and selected');
-  active().dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-  const name=active().querySelector('.inline-edit');check(name&&document.activeElement===name,'workspace rename uses inline editor');
+  $('workspace-title').click();
+  const name=document.querySelector('#page-workspace .inline-edit');check(name&&document.activeElement===name,'workspace rename uses inline editor');
   name.value='Review';name.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
   await until(async()=> (await listing()).workspaces[1].name==='Review','workspace name persisted');
-  tab(initial).click();await until(()=>pane(4).dataset.status==='Controlling','first workspace restored');
+  await select(initial);await until(()=>pane(4).dataset.status==='Controlling','first workspace restored');
   const moved=(await listing()).workspaces[0].sessions[3];drag($('pane4-pane-header'),tab(second));
   await until(async()=> (await listing()).workspaces[1].sessions[0]===moved,'drag moved terminal between Rust workspaces');
   check((await listing()).workspaces[0].sessions.length===3,'source workspace released one pane');
-  tab(second).click();await until(()=>pane(1).dataset.status==='Controlling'&&lines(1).textContent.includes('PERF_READY'),'moved terminal attached in destination');
+  await select(second);await until(()=>pane(1).dataset.status==='Controlling'&&lines(1).textContent.includes('PERF_READY'),'moved terminal attached in destination');
   await probe(1,'MOVED');await capture('workspace-moved',1280);
   sessionStorage.setItem('workspaceIds',JSON.stringify([...ids.slice(0,3),moved]));
   sessionStorage.setItem('workspaceChecks',JSON.stringify(checks));sessionStorage.setItem('workspaceStage','reloaded');location.reload();
 }
-main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{workspace:active()?.dataset.workspace,panes:[1,2,3,4].map(index=>({status:pane(index)?.dataset.status,text:lines(index)?.textContent.slice(0,80)})),toast:$('toast-message')?.textContent}}));
+main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{workspace:active()?.dataset.workspace,panes:[1,2,3,4].map(index=>({status:pane(index)?.dataset.status,text:lines(index)?.textContent.slice(0,80)})),dock:$('dock')?.textContent,wire:window.__wire.slice(-8),snapshots:window.__snapshots.slice(-4)}}));
 `;
 
 await mkdir(cwd,{recursive:true});await mkdir(screenshots,{recursive:true});
@@ -115,7 +120,7 @@ let child,proxy,lastCapture='';
 try{
   const port=await freePort(),env={};
   for(const key of ['SystemRoot','WINDIR','PATH','PATHEXT','TEMP','TMP'])if(process.env[key])env[key]=process.env[key];
-  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',cwd,'--shell',quote(resolve(runRoot,'perf_fixture.exe'))],{cwd,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',cwd,'--shell',quote(resolve(runRoot,'perf_fixture.exe')),'--config',resolve(runRoot,'settings.json')],{cwd,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
   await ready(port,child);proxy=await proxyFor(port,harness);
   const report=await chromeProbe(await findChrome(),'http://127.0.0.1:'+proxy.port+'/',resolve(runRoot,'chrome'),'workspaceStage',async({protocol,evaluate})=>{
     const width=await evaluate('document.body?.dataset.viewportRequest||""'),done=await evaluate('document.body?.dataset.viewportDone||""');

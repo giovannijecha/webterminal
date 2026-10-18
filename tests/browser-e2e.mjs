@@ -44,20 +44,36 @@ async function until(probe, label) {
 function verify(value, label) { if (!value) throw new Error(label); results.push({pass:true,label}); }
 async function sessions() { const response=await fetch('/api/sessions',{cache:'no-store'}); const body=await response.text(); if (!response.ok) throw new Error('Sessions HTTP '+response.status+': '+body); return JSON.parse(body).sessions; }
 function sameCwd(path) { return (path.startsWith('\\\\?\\') ? path.slice(4) : path).toLowerCase() === CWD.toLowerCase(); }
-function terminalText() { return $('terminal-lines').textContent || ''; }
+// The focused visible pane of the selected workspace, and its parts.
+const pane = () => document.querySelector('#panes > .pane.focused:not([hidden])') || document.querySelector('#panes > .pane:not([hidden])');
+const part = name => pane()?.querySelector('[id$="'+name+'"]');
+const status = () => pane()?.dataset.status || '';
+const dialog = () => document.querySelector('dialog.dlg[open]');
+const workspaceItems = () => [...document.querySelectorAll('#navigation-projects .navigation-workspace-row .navigation-item')];
+const activeWorkspace = () => workspaceItems().find(item => item.hasAttribute('aria-current'))?.closest('[data-workspace]')?.dataset.workspace;
+function terminalText() { return pane()?.querySelector('.terminal-lines')?.textContent || ''; }
 function key(name, code, options={}, keyCode=0, type='keydown') {
   const event = new KeyboardEvent(type,{key:name,code,bubbles:true,cancelable:true,...options});
   Object.defineProperty(event,'keyCode',{value:keyCode});
-  $('keyboard').dispatchEvent(event);
+  part('keyboard').dispatchEvent(event);
+}
+async function launcher() {
+  await until(() => $('connection-status').textContent === 'Connected' && $('new').getAttribute('aria-disabled') === 'false', 'workspace ready for launcher');
+  $('new').click();
+  return until(() => document.querySelector('dialog.launcher[open]'), 'launcher dialog; dock='+$('dock').textContent);
 }
 async function newTerminal(expectedCount) {
-  await pause(300);
-  $('new').click();
-  await until(() => $('directory-dialog').open, 'directory dialog; new='+$('new').outerHTML+' toast='+$('toast').textContent);
-  await until(() => !$('directory-create').disabled, 'directory browser');
-  $('directory-create').click();
+  const open = await launcher();
+  $('launch-folder').value = CWD;
+  open.querySelector('.dlg-foot .btn.primary').click();
   await until(async () => (await sessions()).length === expectedCount, 'session creation');
-  await until(() => $('pane').dataset.status === 'Controlling', 'terminal control');
+  await until(() => status() === 'Controlling', 'terminal control');
+}
+async function closeFocused() {
+  part('pane-menu').click();
+  const item = await until(() => [...document.querySelectorAll('.menu-item')].find(node => node.textContent.includes('Close terminal')), 'close terminal menu item');
+  item.click();
+  (await until(() => dialog()?.querySelector('.dlg-foot .btn.primary'), 'close confirmation')).click();
 }
 function navigate(path) {
   $('directory-address').click();
@@ -88,7 +104,9 @@ async function echo() {
     const first = (await sessions())[0];
     verify(sameCwd(first.cwd), 'first cwd is selected directory');
     $('new-workspace').click();
-    await until(() => $('workspace-tabs').querySelectorAll('.workspace-tab').length===2, 'second workspace');
+    await until(() => workspaceItems().length===2, 'second workspace');
+    const secondWorkspace = workspaceItems()[1].closest('[data-workspace]').dataset.workspace;
+    await until(() => activeWorkspace()===secondWorkspace && !$('empty-state').hidden, 'second workspace selected and empty');
     await newTerminal(2);
     await until(() => terminalText().includes('READY'), 'second READY');
     const all = await sessions();
@@ -107,17 +125,23 @@ async function echo() {
   const first=sessionStorage.getItem('browserE2eFirst');
   const second=sessionStorage.getItem('browserE2eSecond');
   await pause(1000);
-  await until(() => $('workspace-tabs').querySelectorAll('.workspace-tab').length===2 && terminalText().includes('READY'), 'restored snapshot after reload');
+  await until(() => workspaceItems().length===2 && terminalText().includes('READY'), 'restored snapshot after reload');
   verify((await sessions()).length===2, 'browser reload kept both sessions');
-  await until(() => $('pane').dataset.status==='Controlling', 'control after reload');
-  verify($('pane').hidden===false, 'restored active terminal is visible');
+  await until(() => status()==='Controlling', 'control after reload');
+  verify(pane()?.hidden===false, 'restored active terminal is visible');
 
-  $('new').click();
+  const open = await launcher();
+  open.querySelector('.folder-row > button:last-child').click();
   await until(() => $('directory-dialog').open, 'directory dialog');
   navigate(CWD+'\\missing-e2e');
   await until(() => !$('directory-error').hidden, 'invalid directory error');
-  verify((await sessions()).length===2, 'invalid directory did not create a session');
   $('directory-dialog').close();
+  $('launch-folder').value = CWD+'\\missing-e2e';
+  open.querySelector('.dlg-foot .btn.primary').click();
+  await until(() => !open.querySelector('.dlg-error').hidden, 'launcher refuses a missing folder');
+  verify((await sessions()).length===2, 'invalid directory did not create a session');
+  open.querySelector('.dlg-foot .btn:not(.primary)').click();
+  await until(() => !dialog(), 'launcher closes');
 
   const copied=[];
   const clipboard=navigator.clipboard;
@@ -127,11 +151,11 @@ async function echo() {
   const bytes=new TextEncoder().encode(markdown);
   const data=btoa(Array.from(bytes,byte=>String.fromCharCode(byte)).join(''));
   const frameClipboard=()=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'clipboard',id:second,data})}));
-  frameClipboard();await until(()=>$('notice-dialog').open,'clipboard consent notice');
-  $('notice-cancel').click();
+  frameClipboard();(await until(dialog,'clipboard consent notice')).querySelector('.dlg-foot .btn:not(.primary)').click();
+  await until(()=>!dialog(),'declined notice closes');
   verify(copied.length===0,'declined OSC 52 copy leaves clipboard alone');
-  frameClipboard();await until(()=>$('notice-dialog').open,'second clipboard consent notice');
-  $('notice-confirm').click();await until(()=>copied.length===1,'approved clipboard write');
+  frameClipboard();(await until(dialog,'second clipboard consent notice')).querySelector('.dlg-foot .btn.primary').click();
+  await until(()=>copied.length===1,'approved clipboard write');
   verify(copied[0]===markdown,'approved OSC 52 copy preserves UTF-8 text');
   clipboard.writeText=originalWrite;
 
@@ -141,30 +165,30 @@ async function echo() {
   await until(() => peer.messages.some(message=>message.type==='error'), 'observer input rejection');
   verify(!terminalText().includes('BAD'), 'observer input did not reach terminal');
   peer.ws.send(JSON.stringify({op:'claim',id:second,cols:80,rows:24}));
-  await until(() => $('pane').dataset.status==='Observing', 'control transfer to observer');
-  $('take-control').click();
-  await until(() => $('pane').dataset.status==='Controlling', 'UI takes control back');
+  await until(() => status()==='Observing', 'control transfer to observer');
+  part('take-control').click();
+  await until(() => status()==='Controlling', 'UI takes control back');
   peer.ws.close();
 
-  $('keyboard').focus();
+  part('keyboard').focus();
   for (const character of 'hello ') key(character,character===' '?'Space':'Key'+character.toUpperCase());
   const transfer=new DataTransfer(); transfer.setData('text/plain','café🙂');
-  $('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
+  part('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
   key('Enter','Enter',{},13);
   await until(() => terminalText().includes('ECHO:hello café🙂'), 'Unicode echo through ConPTY');
-  await until(() => $('pane').dataset.status.startsWith('Exited'), 'normal echo exit');
+  await until(() => status().startsWith('Exited'), 'normal echo exit');
   verify(terminalText().includes('ECHO:hello café🙂'), 'browser keyboard and paste reached fixture');
-  $('close-session').click();
+  await closeFocused();
   await until(async () => (await sessions()).length===1, 'close second session');
   verify((await sessions())[0].id===first && (await sessions())[0].alive, 'closing second left first running');
-  $('workspace-tabs').querySelector('.workspace-tab:not(.active)').click();
-  await until(() => terminalText().includes('READY') && $('pane').dataset.status==='Controlling', 'first workspace resumes');
-  $('keyboard').focus();
+  workspaceItems().find(item => !item.hasAttribute('aria-current')).click();
+  await until(() => terminalText().includes('READY') && status()==='Controlling', 'first workspace resumes');
+  part('keyboard').focus();
   for (const character of 'other') key(character,'Key'+character.toUpperCase());
   key('Enter','Enter',{},13);
   await until(() => terminalText().includes('ECHO:other'), 'first independent echo');
-  await until(() => $('pane').dataset.status.startsWith('Exited'), 'first normal exit');
-  $('close-session').click();
+  await until(() => status().startsWith('Exited'), 'first normal exit');
+  await closeFocused();
   await until(async () => (await sessions()).length===0, 'close first session');
   await until(() => !$('empty-state').hidden, 'empty state');
   verify($('empty-state').hidden===false, 'empty state returns');
@@ -174,7 +198,7 @@ async function echo() {
   const fake={id:'s1',cwd:CWD,title:'Old session',alive:true,controller:'synthetic',exitCode:null};
   const frame=message=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}));
   const snapshot=(seq,text)=>({type:'snapshot',id:'s1',seq,epoch:1,controller:'synthetic',alive:true,exitCode:null,terminal:{cols:80,rows:1,cursor:[0,0,false,'block'],title:text,alternate:false,modes:{},history:[],screen:[{wrapped:false,cells:[...text].map(character=>[character,1,'#dce4ed','#10151c',0,''])}]}});
-  const workspace=$('workspace-tabs').querySelector('.workspace-tab.active').dataset.workspace;
+  const workspace=activeWorkspace();
   frame({type:'sessions',sessions:[fake],workspaces:[{id:workspace,name:null,sessions:['s1']}]});
   frame(snapshot(9000,'OLD SCREEN'));
   await until(() => terminalText().includes('OLD SCREEN'), 'old server screen');
@@ -190,7 +214,7 @@ async function echo() {
   verify(true, 'ordered row update reaches actual app renderer');
   const stale=snapshot(3,'STALE PATCH');
   frame({...stale,type:'update',base:1,terminal:{...stale.terminal,history:undefined,screen:undefined,screenChanges:[[0,stale.terminal.screen[0]]]}});
-  verify(!terminalText().includes('STALE PATCH')&&$('pane').dataset.status==='Connecting\u2026', 'wrong update base gates input and requests a fresh attachment');
+  verify(!terminalText().includes('STALE PATCH')&&status()==='Connecting\u2026','wrong update base gates input and requests a fresh attachment');
   frame(snapshot(4,'RESTORED SCREEN'));
   await until(() => terminalText().includes('RESTORED SCREEN'), 'restored screen');
   verify(true, 'full snapshot repairs an interrupted update stream');
@@ -203,18 +227,18 @@ async function records() {
   await until(() => peer.messages.some(message=>message.type==='snapshot' && message.terminal.modes.win32), 'negotiated Win32 input mode');
   verify(true,'ConPTY requested Win32 input mode');
   peer.ws.close();
-  $('keyboard').focus();
+  part('keyboard').focus();
   key('Enter','Enter',{shiftKey:true},13);
   key('Enter','Enter',{shiftKey:true},13,'keyup');
   key(' ','Space',{ctrlKey:true},32);
   key(' ','Space',{ctrlKey:true},32,'keyup');
   await until(() => terminalText().includes('KEY 13 13 16') && terminalText().includes('KEY 32 0 8'), 'native modified key records');
-  await until(() => $('pane').dataset.status.startsWith('Exited'), 'records normal exit');
+  await until(() => status().startsWith('Exited'), 'records normal exit');
   verify(terminalText().includes('KEY 13 13 16') && terminalText().includes('KEY 32 0 8'), 'native console received Shift+Enter and Ctrl+Space');
 }
 async function main() {
   try { const outcome=PHASE==='echo' ? await echo() : await records(); if (outcome==='reloading') return; }
-  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({tabs:$('workspace-tabs').querySelectorAll('.workspace-tab').length,text:terminalText().slice(0,120),status:$('pane').dataset.status,active:$('workspace-tabs').querySelector('.workspace-tab.active')?.dataset.workspace,toast:$('toast').textContent,errors:window.__e2eErrors})}); }
+  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({workspaces:workspaceItems().length,text:terminalText().slice(0,120),status:status(),active:activeWorkspace(),dock:$('dock').textContent,errors:window.__e2eErrors})}); }
   const report={phase:PHASE,pass:results.every(result=>result.pass),results,userAgent:navigator.userAgent};
   sessionStorage.removeItem('browserE2eResults');
   const bytes=new TextEncoder().encode(JSON.stringify(report));
@@ -405,7 +429,7 @@ async function phase(name,copied) {
   const command='"'+copied.fixture+'" --'+name;
   const environment={};
   for (const key of ['SystemRoot','WINDIR','PATH','PATHEXT','TEMP','TMP']) if (process.env[key]) environment[key]=process.env[key];
-  const child=spawn(copied.webterminal,['--port',String(backendPort),'--cwd',cwd,'--shell',command],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  const child=spawn(copied.webterminal,['--port',String(backendPort),'--cwd',cwd,'--shell',command,'--config',resolve(runRoot,name+'-settings.json')],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   let serverOutput='';
   child.stdout.on('data',chunk=>{serverOutput+=chunk;});
   child.stderr.on('data',chunk=>{serverOutput+=chunk;});

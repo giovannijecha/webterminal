@@ -1,17 +1,17 @@
 # Development and verification
 
-Webterminal is one Cargo package with no external crates. The runtime is Rust plus
-embedded HTML, CSS, and JavaScript; there is no frontend build step. Windows
-ConPTY and process ownership are implemented through the documented Kernel32
-boundary in [`native.rs`](../src/native.rs) and its submodules. The terminal
-parser and session registry are independent of browser rendering.
+Webterminal is one Cargo package with no external crates. Rust owns the
+terminal, sessions and server; embedded HTML, CSS and JavaScript provide the
+browser interface without a frontend build step. The product contract is in
+[SPEC.md](../SPEC.md), and supported terminal behavior is in
+[TERMINAL.md](TERMINAL.md).
 
-## Prerequisites and checks
+## Build and checks
 
-From the repository root in PowerShell, use Rust 1.95.0 for
-`x86_64-pc-windows-gnullvm` and LLVM-MinGW (`clang` on `PATH`).
-`rust-toolchain.toml` pins the toolchain; `.cargo/config.toml` selects static
-CRT linkage. The core checks are:
+From the repository root in PowerShell, install Rust 1.95.0 for
+`x86_64-pc-windows-gnullvm` and LLVM-MinGW with `clang` on `PATH`.
+`rust-toolchain.toml` pins Rust, and `.cargo/config.toml` selects static CRT
+linkage. Run:
 
 ```powershell
 cargo build --locked --offline
@@ -21,25 +21,17 @@ cargo test --locked --offline
 cargo run --locked --offline -- --help
 ```
 
-The `--help` invocation exits after printing the options. A successful build
-produces `target/debug/webterminal.exe`. These checks require an installed pinned
-toolchain and linker; `--offline` does not install either one.
+The build creates `target/debug/webterminal.exe`; `--help` prints the options
+and exits. `--offline` does not install the toolchain or linker. See
+[README.md](../README.md) to start the server and open a terminal.
 
-The Windows PowerShell acceptance test allows 45 seconds for the first `ls`
-with PSReadLine loaded. A cold `ls` took about 28 seconds on the Windows 2025
-CI runner; other PowerShell command waits retain their eight-second limit.
-The fixture supplies PowerShell's built-in module path (PowerShell may add
-AllUsers) and resolves `pwd` before comparison to handle 8.3 path aliases.
-The 1 MiB ConPTY flood fixture has a separate 30-second completion limit; it
-still checks a clean exit, the final output marker, and a bounded late snapshot
-while another viewer stops reading.
-
-Node 24 and Chrome are optional test tools. With a built executable, the
-browser and module suites can be run from the repository root:
+The browser checks use Node.js 24 and an installed Google Chrome. With
+the executable and its fixture binaries built, run these from the repository
+root in PowerShell:
 
 ```powershell
 $env:WEBTERMINAL_TEST_BIN_DIR = "$PWD\target\debug"
-node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
+node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs tests/workbench-flows.mjs
 node tests/browser-runtime.mjs
 node tests/browser-e2e.mjs
 node tests/workbench-browser.mjs
@@ -48,105 +40,79 @@ node tests/shells-browser.mjs
 node tests/workspace-browser.mjs
 ```
 
-The browser probes create disposable profiles and fixtures under ignored
-`target/` or `.tmp/`; they use local processes and do not contact model providers.
-`WEBTERMINAL_TEST_BIN_DIR` points at a directory containing matching Webterminal and
-fixture executables, which also permits testing an alternate build without
-replacing a running server. The optional performance harness is
-`tests/performance-browser.mjs`; it measures owned fixtures rather than a
-production CLI session.
+Each command reports success or exits with an error. The browser probes start
+their own server and use disposable Chrome profiles and local fixtures. They
+write temporary files under ignored `target/` or `.tmp/`. Set
+`WEBTERMINAL_TEST_BIN_DIR` to another directory of matching executables when
+testing an isolated build. `WEBTERMINAL_TEST_REDUCED_MOTION=1` makes
+`browser-runtime.mjs` also check its reduced-motion cursor behavior.
+`node tests/performance-browser.mjs` is an optional local fixture measurement,
+not a production CLI benchmark.
 
-Optional CLI probes need installed executables. Set `WEBTERMINAL_JECODE_EXE` to
-the Jecode executable for `node tests/cli-browser.mjs` and
-`node tests/drop-browser.mjs`; the latter drops a file through Chrome DevTools
-and presses Alt+V, which makes Jecode read the clipboard without changing it.
-Set both
-`WEBTERMINAL_CODEX_EXE` and `WEBTERMINAL_CLAUDE_EXE` for
-`node tests/cli-api-browser.mjs`, or pass `codex` or `claude` to probe only
-one. These probes use disposable profiles. Codex and Claude receive fixed
-responses from an owned loopback API; Jecode uses local drafts and commands.
-They do not establish compatibility with authenticated provider sessions.
-Do not run them against personal credentials or live providers as an acceptance
-shortcut.
-Set `WEBTERMINAL_DROP_FILE_ONLY=1` for the drop probe to verify its file path
-without sending Alt+V or reading the clipboard. Set
-`WEBTERMINAL_DROP_POWERSHELL=1` to run Jecode inside PowerShell and exercise
-PowerShell path quoting end to end.
+Rust tests exercise terminal parsing, rendering state, sessions, ConPTY
+ownership, transport, settings, file staging and program-bridge rules. The
+JavaScript and Chrome checks exercise browser input and rendering, workspaces,
+the launcher, reader, settings, file views and narrow layouts. These checks use
+owned fixtures; they do not prove authenticated CLI use.
 
-On 2026-10-09 the drop probe passed with headless Chrome and an isolated debug
-Jecode: a 70,000-byte binary from outside the working directory was staged with
-identical bytes, pasted as its path and attached by Jecode, and Alt+V reached
-Jecode. Rust fixtures cover the upload fence (Origin, view, epoch, session),
-size limits, short and stalled transfers with terminal I/O continuing, and
-staging cleanup on terminal close, shutdown and at the next server startup
-after a crash. A PowerShell round-trip fixture covers literal spaces,
-apostrophes, dollar signs, backticks, metacharacters and Unicode in paths. A
-file-only Chrome drop with those characters passed through both direct Jecode
-and Jecode launched inside PowerShell, including the staged and pooled bytes.
-A drag from the Windows desktop with a physical mouse has not been exercised.
+## Optional installed-CLI probes
 
-## What has been exercised
+The CLI probes require the corresponding installed executables and use
+disposable profiles. `tests/cli-api-browser.mjs` gives Codex and Claude Code
+fixed responses from an owned loopback API. Jecode probes use local drafts and
+commands. Set the executable paths in PowerShell before running a probe:
 
-The 2026-10-09 publication checks passed the Cargo gates and JavaScript module
-tests, including regressions for Reader reads canceled by a Follow change or
-focus loss, and workspace close confirmations invalidated by another view.
-Chrome checks cover shared workspaces with up to four simultaneous panes,
-independent input, pane limits, rename/reorder/move, reconnection, the folder
-picker, Reader Markdown rendering and mobile layouts. These use owned fixtures;
-they do not establish authenticated CLI compatibility.
+```powershell
+$env:WEBTERMINAL_JECODE_EXE = 'C:\path\to\jecode.exe'
+node tests/cli-browser.mjs
+node tests/drop-browser.mjs
 
-Earlier Windows checks recorded in the project exercised the Cargo gates,
-Rust parser and transport fixtures, native ConPTY lifecycle, PowerShell and
-`cmd.exe` sessions, browser rendering and input, and isolated Jecode, Codex,
-and Claude interfaces. They used Windows build 10.0.26300, Rust 1.95.0,
-Chrome 154.0.8037.93, and Node 24.18.0. Those versions describe the recorded
-environment, not a minimum browser or Node requirement for the runtime.
+$env:WEBTERMINAL_CODEX_EXE = 'C:\path\to\codex.exe'
+$env:WEBTERMINAL_CLAUDE_EXE = 'C:\path\to\claude.exe'
+node tests/cli-api-browser.mjs
+```
 
-Rust fixtures cover parsing across chunk boundaries, malformed input,
-Unicode/graphemes, screen modes, reflow, bounded history, snapshot/update
-equivalence, WebSocket framing, session ownership, reconnect and control
-transfer, port collisions, and Host/Origin rejection. Native checks cover
-ConPTY output, input, resize, modified keys, a large output flood, process
-exit, owned descendant cleanup, and an unrelated process left alive.
-Earlier Chrome probes exercised the embedded UI with real ConPTY sessions, the
-folder picker, the previous two-group layout, selection and copy, search,
-clipboard dialogs, menus, reconnect, and mobile-width layouts. Clipboard
-permission outcomes in those UI checks were stubbed; synthetic composition
-events do not prove hardware IME behavior.
+Replace the sample paths with actual installed executables. Pass `codex` or
+`claude` to `cli-api-browser.mjs` to probe just one. For the drop probe, set
+`WEBTERMINAL_DROP_FILE_ONLY=1` to check the staged path without sending Alt+V,
+or `WEBTERMINAL_DROP_POWERSHELL=1` to launch Jecode inside PowerShell and check
+path quoting. These probes do not cover authentication, live provider replies,
+tool execution or long conversations.
 
-Isolated Jecode, Codex, and Claude checks opened their main text interfaces
-and exercised editing, modified keys, multiline drafts, resize, reload, and
-normal exit. Codex and Claude also received fixed local streamed replies.
-Authenticated use, real provider streaming and tool execution, cancellation
-during a provider response, and long conversations remain unverified. One
-optional Jecode browser startup failed before its composer and passed on a
-diagnostic rerun; its cause remains unknown. Edge/Firefox, physical IME,
-browser clipboard permission prompts, and browser-reserved shortcuts have not
-been manually validated.
+## Native and local boundaries
 
-## Performance evidence
+The Windows boundary in [native.rs](../src/native.rs) and its submodules uses
+ConPTY and Kernel32 for the console and process lifecycle, plus ntdll's
+`NtQueryInformationProcess` for parent IDs in process snapshots. Unsafe Rust
+stays in that boundary. A child joins a private Windows Job Object before it
+resumes; closing its terminal or the server tears down only owned descendants.
+Output draining continues without browser viewers. The Processes view reads
+only each session's Job Object, with a bounded snapshot of at most 64 process
+IDs; it does not enumerate or terminate arbitrary system processes.
 
-One isolated debug-build Chrome/ConPTY probe measured 100 acknowledged inputs
-while an owned child redrew 24 TUI rows every 16 ms. After the earlier
-PowerShell-only workspace update, median/p95 end-to-end latency was 54.4/73.3 ms,
-with 2.7 ms median render work. This is a single-machine fixture measurement, not a
-guarantee for multiple live panes or authenticated CLIs. The harness and generated
-raw reports live under ignored `target/` when run locally.
+The server binds to numeric loopback `127.0.0.1` and serves its embedded assets
+and API on one origin. It validates Host and Origin on control requests and
+does not serve working-directory files. Session screens and history live in
+memory. Shared settings are saved atomically in
+`~/.webterminal/settings.json`; the persistent lock serializes revisions
+between server processes. An invalid settings file is preserved as
+`settings.invalid.json` when a valid replacement is saved.
 
-## Local boundary
+Dropped files are copied to per-session staging under the system temporary
+directory. Uploads require the controlling view and its current control epoch;
+closing a session removes its copies. Startup cleanup removes only staging
+directories marked and owned by Webterminal. Originals are never modified.
 
-The server binds to numeric loopback `127.0.0.1`, sharing one HTTP/WebSocket
-origin. It checks Host and WebSocket Origin, rejects cross-site requests, and
-serves only embedded assets with a self-only Content Security Policy. The
-directory picker lists directory names but does not serve their files. The
-native boundary starts each child suspended, assigns it to a private Windows
-Job Object, and resumes it; closing a session or server tears down owned
-descendants. Terminal transcripts and server configuration are not persisted.
-Dropped files are staged through a same-origin upload fenced like terminal
-input and removed with their session. A later server removes crashed staging
-only when its inactive lock and directory both carry Webterminal's marker;
-unknown temporary directories and locks, including staging from older unmarked
-builds, are left alone. See [`SPEC.md`](../SPEC.md).
+Claude Code receives per-invocation hook settings in a temporary file; Codex
+receives a per-invocation `notify` override. The helper posts events through
+the token-protected loopback `/api/bridge` endpoint. These adapters do not read
+CLI credentials or change either program's own configuration.
 
-The design requirements are in [`SPEC.md`](../SPEC.md), and supported terminal
-behavior and bounds are in [`TERMINAL.md`](TERMINAL.md).
+The Windows checks recorded on 2026-10-18 used Rust 1.95.0, Node 24.18.0 and
+headless Chrome 155. Cargo checks, JavaScript module tests and the listed
+browser suites passed with local fixtures, including the reduced-motion run.
+Earlier isolated Jecode, Codex and Claude Code probes opened their text
+interfaces; authenticated provider sessions remain unverified. Edge, Firefox,
+physical IME input and browser clipboard permission prompts have not been
+manually validated. Known ConPTY and Codex paste limits are in
+[TERMINAL.md](TERMINAL.md).

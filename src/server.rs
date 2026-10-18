@@ -1,9 +1,13 @@
 //! Loopback-only HTTP/WebSocket service with bounded connections and messages.
+mod api;
+mod commands;
+mod hooks;
 mod http;
 mod upload;
 use crate::{
     json, native,
-    session::{self, Registry, WorkspaceClose},
+    session::{self, Launch, Registry, unix_ms},
+    settings::Store,
     terminal::SnapshotBaseline,
     uploads::Uploads,
     websocket::{self, Decoder, Message},
@@ -20,26 +24,43 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
+const SLOW_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct Config {
     pub port: u16,
     pub cwd: PathBuf,
     pub shell: String,
+    /// The user's settings file; tests pass a disposable path.
+    pub settings: PathBuf,
+    /// Executable that program adapters run to reach this server; without it
+    /// programs start without activity reporting.
+    pub helper: Option<PathBuf>,
+}
+/// What every connection of one server shares.
+pub(crate) struct Context {
+    pub registry: Registry,
+    pub settings: Store,
+    pub port: u16,
+    /// Unix milliseconds when the server started.
+    pub started: u64,
+    pub stop: Arc<AtomicBool>,
+}
+impl Context {
+    /// The folder new terminals open in: the saved start folder while it
+    /// exists, otherwise the server's `--cwd`.
+    fn start_folder(&self) -> PathBuf {
+        self.settings
+            .start_folder()
+            .unwrap_or_else(|| self.registry.cwd.clone())
+    }
 }
 pub struct Server {
     listener: TcpListener,
-    registry: Arc<Registry>,
-    stop: Arc<AtomicBool>,
+    context: Arc<Context>,
     pub port: u16,
 }
 impl Server {
     pub fn bind(config: Config) -> io::Result<Self> {
-        if [4173, 4174].contains(&config.port) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Ports 4173 and 4174 are reserved by this build",
-            ));
-        }
         let listener = TcpListener::bind(("127.0.0.1", config.port)).map_err(|e| {
             io::Error::new(
                 e.kind(),
@@ -51,23 +72,35 @@ impl Server {
         })?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
+        let owner = format!("{}-{port}", std::process::id());
+        let mut registry =
+            Registry::new(config.cwd, config.shell, Uploads::temporary(owner.clone()));
+        if let Some(helper) = config.helper {
+            registry = registry.with_launch(Launch {
+                port,
+                helper,
+                directory: std::env::temp_dir().join("webterminal-bridge").join(owner),
+            });
+        }
         Ok(Self {
             listener,
-            registry: Arc::new(Registry::new(
-                config.cwd,
-                config.shell,
-                Uploads::temporary(format!("{}-{port}", std::process::id())),
-            )),
-            stop: Arc::new(AtomicBool::new(false)),
+            context: Arc::new(Context {
+                registry,
+                settings: Store::open(config.settings),
+                port,
+                started: unix_ms(),
+                stop: Arc::new(AtomicBool::new(false)),
+            }),
             port,
         })
     }
     pub fn shutdown_signal(&self) -> Arc<AtomicBool> {
-        self.stop.clone()
+        self.context.stop.clone()
     }
     pub fn run(self) -> io::Result<()> {
         let active = Arc::new(AtomicUsize::new(0));
-        while !self.stop.load(Ordering::Relaxed) && !native::shutdown_requested() {
+        let stop = &self.context.stop;
+        while !stop.load(Ordering::Relaxed) && !native::shutdown_requested() {
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     if active.fetch_add(1, Ordering::Relaxed) >= 64 {
@@ -75,29 +108,24 @@ impl Server {
                         drop(stream);
                         continue;
                     }
-                    let (registry, stop, count, port) = (
-                        self.registry.clone(),
-                        self.stop.clone(),
-                        active.clone(),
-                        self.port,
-                    );
+                    let (context, count) = (self.context.clone(), active.clone());
                     thread::spawn(move || {
                         let _guard = ConnectionCount(count);
-                        let _ = connection(stream, port, registry, stop);
+                        let _ = connection(stream, context);
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(10))
                 }
                 Err(e) => {
-                    self.stop.store(true, Ordering::Relaxed);
-                    self.registry.shutdown();
+                    stop.store(true, Ordering::Relaxed);
+                    self.context.registry.shutdown();
                     return Err(e);
                 }
             }
         }
-        self.stop.store(true, Ordering::Relaxed);
-        self.registry.shutdown();
+        stop.store(true, Ordering::Relaxed);
+        self.context.registry.shutdown();
         Ok(())
     }
 }
@@ -108,7 +136,7 @@ impl Drop for ConnectionCount {
     }
 }
 struct ViewGuard {
-    registry: Arc<Registry>,
+    context: Arc<Context>,
     view: String,
 }
 struct Attachment {
@@ -127,16 +155,11 @@ impl Attachment {
 }
 impl Drop for ViewGuard {
     fn drop(&mut self) {
-        self.registry.detach_view(&self.view);
+        self.context.registry.detach_view(&self.view);
     }
 }
 
-fn connection(
-    mut stream: TcpStream,
-    port: u16,
-    registry: Arc<Registry>,
-    stop: Arc<AtomicBool>,
-) -> io::Result<()> {
+fn connection(mut stream: TcpStream, context: Arc<Context>) -> io::Result<()> {
     // Windows accepted sockets inherit the nonblocking listener's mode.
     // Request and frame readers use bounded blocking I/O on their own thread.
     stream.set_nonblocking(false)?;
@@ -153,14 +176,20 @@ fn connection(
             );
         }
     };
-    let host = format!("127.0.0.1:{port}");
+    let host = format!("127.0.0.1:{}", context.port);
     let origin = format!("http://{host}");
+    // Opening the public entry page from a bookmark or another application
+    // is navigation, not terminal control. API calls and embedding stay fenced.
+    let entry_navigation = matches!(&req.route, http::Route::Get)
+        && matches!(req.path.as_str(), "/" | "/index.html")
+        && req.headers.get("sec-fetch-mode").map(String::as_str) == Some("navigate")
+        && req.headers.get("sec-fetch-dest").map(String::as_str) == Some("document");
     if req.headers.get("host") != Some(&host)
         || req.headers.get("origin").is_some_and(|v| v != &origin)
         || req
             .headers
             .get("sec-fetch-site")
-            .is_some_and(|v| v == "cross-site")
+            .is_some_and(|v| v == "cross-site" && !entry_navigation)
     {
         return http::response(
             &mut stream,
@@ -169,71 +198,134 @@ fn connection(
             "Foreign Host or Origin rejected",
         );
     }
-    if req.path == "/ws" {
-        let valid = req
-            .headers
-            .get("upgrade")
-            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
-            && req.headers.get("connection").is_some_and(|v| {
-                v.split(',')
-                    .any(|p| p.trim().eq_ignore_ascii_case("upgrade"))
-            });
-        let key = req
-            .headers
-            .get("sec-websocket-key")
-            .and_then(|v| websocket::accept_key(v));
-        if !valid
-            || req.headers.get("sec-websocket-version").map(String::as_str) != Some("13")
-            || req.headers.get("origin") != Some(&origin)
-            || key.is_none()
-        {
-            return http::response(
-                &mut stream,
-                "403 Forbidden",
-                "text/plain; charset=utf-8",
-                "Valid same-origin WebSocket handshake required",
-            );
+    match req.route {
+        http::Route::Upload => upload::handle(&mut stream, &req, &context.registry, &origin),
+        http::Route::Hook => hooks::handle(&mut stream, &req, &context.registry),
+        http::Route::Get if req.path == "/ws" => {
+            let valid = req
+                .headers
+                .get("upgrade")
+                .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+                && req.headers.get("connection").is_some_and(|v| {
+                    v.split(',')
+                        .any(|p| p.trim().eq_ignore_ascii_case("upgrade"))
+                });
+            let key = req
+                .headers
+                .get("sec-websocket-key")
+                .and_then(|v| websocket::accept_key(v));
+            if !valid
+                || req.headers.get("sec-websocket-version").map(String::as_str) != Some("13")
+                || req.headers.get("origin") != Some(&origin)
+                || key.is_none()
+            {
+                return http::response(
+                    &mut stream,
+                    "403 Forbidden",
+                    "text/plain; charset=utf-8",
+                    "Valid same-origin WebSocket handshake required",
+                );
+            }
+            write!(
+                stream,
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+                key.unwrap()
+            )?;
+            socket_loop(stream, context.clone(), &req.extra)
         }
-        write!(
-            stream,
-            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
-            key.unwrap()
-        )?;
-        socket_loop(stream, registry, stop, &req.extra)
-    } else if req.upload {
-        upload::handle(&mut stream, &req, &registry, &origin)
-    } else {
-        http::serve(&mut stream, &req.path, &registry)
+        http::Route::Get => http::serve(&mut stream, &req.path, &context),
     }
 }
-fn socket_loop(
-    mut stream: TcpStream,
-    registry: Arc<Registry>,
-    stop: Arc<AtomicBool>,
-    initial: &[u8],
-) -> io::Result<()> {
+
+/// What one socket has already sent of the server-wide state.
+#[derive(Default)]
+struct Published {
+    list: String,
+    settings: Option<u64>,
+    agents: Option<u64>,
+    replies: u64,
+    files: Option<u64>,
+    slow: Option<Instant>,
+}
+impl Published {
+    fn send(&mut self, stream: &mut TcpStream, context: &Context) -> io::Result<()> {
+        let registry = &context.registry;
+        let list = registry.list_json();
+        if list != self.list {
+            websocket::send_text(stream, &list)?;
+            self.list = list;
+        }
+        let agents = registry.bridge.revision();
+        if self.agents != Some(agents) {
+            websocket::send_text(stream, &registry.bridge.json())?;
+            self.agents = Some(agents);
+        }
+        // Replies already present at connect are marked so views can list
+        // them without notifying again.
+        let replayed = self.slow.is_none();
+        for reply in registry.bridge.replies_after(self.replies) {
+            websocket::send_text(
+                stream,
+                &format!(
+                    "{{\"type\":\"reply\",\"seq\":{},\"id\":{},\"program\":{},\"label\":{},\"text\":{},\"at\":{},\"replayed\":{replayed}}}",
+                    reply.seq,
+                    json::quote(&reply.session),
+                    json::quote(reply.program.id()),
+                    json::quote(reply.program.label()),
+                    json::quote(&reply.text),
+                    reply.at
+                ),
+            )?;
+            self.replies = reply.seq;
+        }
+        if self.slow.is_some_and(|at| at.elapsed() < SLOW_INTERVAL) {
+            return Ok(());
+        }
+        self.slow = Some(Instant::now());
+        let settings = context.settings.revision();
+        if self.settings != Some(settings) {
+            websocket::send_text(stream, &context.settings.json())?;
+            self.settings = Some(settings);
+        }
+        let files = registry.uploads.changes();
+        if self.files != Some(files) {
+            websocket::send_text(stream, &registry.uploads.copies_json())?;
+            self.files = Some(files);
+        }
+        Ok(())
+    }
+}
+
+fn socket_loop(mut stream: TcpStream, context: Arc<Context>, initial: &[u8]) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_millis(8)))?;
     let view = session::new_view();
     let _guard = ViewGuard {
-        registry: registry.clone(),
+        context: context.clone(),
         view: view.clone(),
     };
+    let registry = &context.registry;
     websocket::send_text(
         &mut stream,
         &format!(
-            "{{\"type\":\"hello\",\"view\":{},\"cwd\":{},\"shell\":{}}}",
+            "{{\"type\":\"hello\",\"view\":{},\"cwd\":{},\"serverCwd\":{},\"shell\":{},\"pid\":{},\"port\":{},\"started\":{},\"version\":{}}}",
             json::quote(&view),
+            json::quote(&context.start_folder().to_string_lossy()),
             json::quote(&registry.cwd.to_string_lossy()),
-            json::quote(&registry.shell)
+            json::quote(&registry.shell),
+            std::process::id(),
+            context.port,
+            context.started,
+            json::quote(env!("CARGO_PKG_VERSION"))
         ),
     )?;
     let mut decoder = Decoder::default();
     decoder.push(initial)?;
     let mut attached: BTreeMap<String, Attachment> = BTreeMap::new();
-    let mut last_list = String::new();
+    let mut published = Published::default();
     let mut last_frame = Instant::now();
     let mut last_ping = Instant::now();
     let mut last_publish = Instant::now() - PUBLISH_INTERVAL;
+    let stop = &context.stop;
     while !stop.load(Ordering::Relaxed) {
         let mut buffer = [0; 16384];
         match stream.read(&mut buffer) {
@@ -266,27 +358,36 @@ fn socket_loop(
                     return Ok(());
                 }
                 Message::Ping(data) => websocket::write_frame(&mut stream, 10, &data)?,
-                Message::Text(text) => match json::parse(&text) {
-                    Ok(command) => {
-                        match command_action(&command, &registry, &view, &mut attached) {
-                            Ok(Some(reply)) => websocket::send_text(&mut stream, &reply)?,
-                            Ok(None) => {}
-                            Err(error) => websocket::send_text(
-                                &mut stream,
-                                &command_error(&error, Some(&command)),
-                            )?,
+                Message::Text(text) => {
+                    let reply = match json::parse(&text) {
+                        Ok(command) => {
+                            match commands::action(&command, &context, &view, &mut attached) {
+                                Ok(reply) => reply,
+                                Err(error) => Some(commands::error(&error, Some(&command))),
+                            }
                         }
+                        Err(error) => Some(commands::error(&error, None)),
+                    };
+                    if let Some(reply) = reply {
+                        if reply == "{\"type\":\"server-stopping\"}" {
+                            let sent = websocket::send_text(&mut stream, &reply);
+                            let closed = if sent.is_ok() {
+                                websocket::write_frame(&mut stream, 8, &1001u16.to_be_bytes())
+                            } else {
+                                Ok(())
+                            };
+                            // A broken client does not cancel the requested stop.
+                            stop.store(true, Ordering::Relaxed);
+                            sent?;
+                            return closed;
+                        }
+                        websocket::send_text(&mut stream, &reply)?;
                     }
-                    Err(error) => websocket::send_text(&mut stream, &command_error(&error, None))?,
-                },
+                }
             }
         }
         if last_publish.elapsed() >= PUBLISH_INTERVAL {
-            let list = registry.list_json();
-            if list != last_list {
-                websocket::send_text(&mut stream, &list)?;
-                last_list = list;
-            }
+            published.send(&mut stream, &context)?;
             attached.retain(|id, _| registry.get(id).is_ok());
             for (id, attachment) in &mut attached {
                 if let Ok(session) = registry.get(id) {
@@ -318,280 +419,47 @@ fn socket_loop(
             break;
         }
     }
+    if stop.load(Ordering::Relaxed) {
+        // An expected stop closes cleanly, so views can tell it from a drop.
+        let _ = websocket::write_frame(&mut stream, 8, &1001u16.to_be_bytes());
+    }
     Ok(())
-}
-fn command_action(
-    command: &json::Value,
-    registry: &Registry,
-    view: &str,
-    attached: &mut BTreeMap<String, Attachment>,
-) -> Result<Option<String>, String> {
-    let op = command.field("op")?;
-    match op {
-        "list" => return Ok(Some(registry.list_json())),
-        "create" => {
-            let request = create_request(command)?;
-            let updates = wants_updates(command)?;
-            let size = session::geometry(command)?;
-            if command.get("profile").is_some() {
-                return Err("Per-terminal shell selection is not supported".into());
-            }
-            let workspace = match command.get("workspace") {
-                None => None,
-                Some(value) => Some(value.string().ok_or("Workspace must be a workspace ID")?),
-            };
-            let (session, workspace) = registry.create(
-                &PathBuf::from(command.field("cwd")?),
-                size.0,
-                size.1,
-                view,
-                workspace,
-            )?;
-            attached.insert(session.id.clone(), Attachment::new(updates, 0));
-            return Ok(Some(format!(
-                "{{\"type\":\"created\",\"id\":{},\"workspace\":{}{}}}",
-                json::quote(&session.id),
-                json::quote(&workspace),
-                request_field(request),
-            )));
-        }
-        "create-workspace" => {
-            let request = create_request(command)?;
-            let id = registry.create_workspace()?;
-            return Ok(Some(format!(
-                "{{\"type\":\"workspace-created\",\"id\":{}{}}}",
-                json::quote(&id),
-                request_field(request),
-            )));
-        }
-        "rename-workspace" => {
-            registry.rename_workspace(command.field("id")?, command.field("name")?)?;
-            return Ok(None);
-        }
-        "close-workspace" => {
-            let id = command.field("id")?;
-            let confirmed = confirmed_targets(command)?;
-            match registry.close_workspace(id, confirmed.as_deref())? {
-                WorkspaceClose::Busy { sessions, targets } => {
-                    return Ok(Some(format!(
-                        "{{\"type\":\"busy\",\"op\":\"close-workspace\",\"id\":{},\"sessions\":{},\"targets\":{}}}",
-                        json::quote(id),
-                        json_ids(&sessions),
-                        json_ids(&targets)
-                    )));
-                }
-                WorkspaceClose::Closed => {}
-            }
-            attached.retain(|id, _| registry.get(id).is_ok());
-            return Ok(None);
-        }
-        "order-workspaces" => {
-            let Some(json::Value::Array(values)) = command.get("ids") else {
-                return Err("Order must be an array of workspace IDs".into());
-            };
-            let ids = values
-                .iter()
-                .map(|value| {
-                    value
-                        .string()
-                        .map(str::to_owned)
-                        .ok_or("Order must be an array of workspace IDs".into())
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            registry.order_workspaces(&ids)?;
-            return Ok(None);
-        }
-        "move" => {
-            let position = command.integer("position")?;
-            if position < 0 {
-                return Err("Position must not be negative".into());
-            }
-            registry.move_session(
-                command.field("id")?,
-                command.field("workspace")?,
-                position as usize,
-            )?;
-            return Ok(None);
-        }
-        _ => {}
-    }
-    let id = command.field("id")?;
-    let session = registry.get(id)?;
-    match op {
-        "rename" => registry.rename(id, command.field("name")?)?,
-        "attach" => {
-            let updates = wants_updates(command)?;
-            let request = if command.get("request").is_some() {
-                let number = command.integer("request")?;
-                if number <= 0 {
-                    return Err("Attachment request must be positive".into());
-                }
-                Some(number)
-            } else {
-                None
-            };
-            session.attach(view, session::geometry(command)?)?;
-            let event_seq = attached
-                .get(id)
-                .map_or_else(|| session.latest_event(), |old| old.event_seq);
-            attached.insert(id.into(), Attachment::new(updates, event_seq));
-            if let Some(request) = request {
-                return Ok(Some(format!(
-                    "{{\"type\":\"attached\",\"id\":{},\"request\":{request}}}",
-                    json::quote(id)
-                )));
-            }
-        }
-        "detach" => {
-            session.detach(view);
-            attached.remove(id);
-        }
-        "claim" => session.claim(view, session::geometry(command)?)?,
-        "release" => session.release(view)?,
-        "close" => {
-            let busy = session.busy().then(|| id.to_owned()).into_iter().collect();
-            if let Some(reply) = busy_reply(command, op, id, busy) {
-                return Ok(Some(reply));
-            }
-            registry.close(id)?;
-            attached.remove(id);
-        }
-        "input" => session.send_input(
-            view,
-            command.integer("epoch")?,
-            command.integer("seq")?,
-            command.field("data")?,
-        )?,
-        "resize" => session.resize(view, command.integer("epoch")?, session::geometry(command)?)?,
-        _ => return Err("Unknown terminal operation".into()),
-    }
-    Ok(None)
-}
-
-/// Closing a running program needs the client to confirm and resend with
-/// `force`; terminals idle at their shell close at once.
-fn busy_reply(command: &json::Value, op: &str, id: &str, busy: Vec<String>) -> Option<String> {
-    if busy.is_empty() || matches!(command.get("force"), Some(json::Value::Bool(true))) {
-        return None;
-    }
-    Some(format!(
-        "{{\"type\":\"busy\",\"op\":{},\"id\":{},\"sessions\":{}}}",
-        json::quote(op),
-        json::quote(id),
-        json_ids(&busy)
-    ))
-}
-
-fn json_ids(ids: &[String]) -> String {
-    format!(
-        "[{}]",
-        ids.iter()
-            .map(|id| json::quote(id))
-            .collect::<Vec<_>>()
-            .join(",")
-    )
-}
-
-fn confirmed_targets(command: &json::Value) -> Result<Option<Vec<String>>, String> {
-    let forced = match command.get("force") {
-        None | Some(json::Value::Bool(false)) => false,
-        Some(json::Value::Bool(true)) => true,
-        _ => return Err("Workspace force must be a boolean".into()),
-    };
-    if !forced {
-        if command.get("confirmed").is_some() {
-            return Err("Workspace confirmation requires force".into());
-        }
-        return Ok(None);
-    }
-    let Some(json::Value::Array(values)) = command.get("confirmed") else {
-        return Err("Workspace force requires confirmed session IDs".into());
-    };
-    if values.len() > 4 {
-        return Err("Workspace confirmation has too many session IDs".into());
-    }
-    let mut confirmed = Vec::with_capacity(values.len());
-    for value in values {
-        let id = value
-            .string()
-            .ok_or("Workspace confirmation must contain session IDs")?;
-        if confirmed.iter().any(|existing| existing == id) {
-            return Err("Workspace confirmation contains duplicate session IDs".into());
-        }
-        confirmed.push(id.to_owned());
-    }
-    Ok(Some(confirmed))
-}
-
-const MAX_SAFE_REQUEST: i64 = 9_007_199_254_740_991;
-
-fn valid_request(command: &json::Value) -> Option<i64> {
-    command
-        .get("request")
-        .and_then(json::Value::number)
-        .filter(|value| (1..=MAX_SAFE_REQUEST).contains(value))
-}
-
-fn create_request(command: &json::Value) -> Result<Option<i64>, String> {
-    if command.get("request").is_none() {
-        return Ok(None);
-    }
-    valid_request(command)
-        .map(Some)
-        .ok_or_else(|| "Create request must be a positive safe integer".into())
-}
-
-fn request_field(request: Option<i64>) -> String {
-    request.map_or_else(String::new, |value| format!(",\"request\":{value}"))
-}
-
-fn command_error(error: &str, command: Option<&json::Value>) -> String {
-    let mut reply = format!("{{\"type\":\"error\",\"message\":{}", json::quote(error));
-    if let Some(command) = command {
-        if let Some(op) = command.get("op").and_then(json::Value::string) {
-            reply.push_str(&format!(",\"op\":{}", json::quote(op)));
-        }
-        if let Some(request) = valid_request(command) {
-            reply.push_str(&format!(",\"request\":{request}"));
-        }
-    }
-    reply.push('}');
-    reply
-}
-
-fn wants_updates(command: &json::Value) -> Result<bool, String> {
-    match command.get("updates") {
-        Some(json::Value::Bool(value)) => Ok(*value),
-        None => Ok(false),
-        _ => Err("Updates must be a boolean".into()),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn reserved_and_occupied_ports_never_replace_an_owner() {
-        for port in [4173, 4174] {
-            assert!(
-                Server::bind(Config {
-                    port,
-                    cwd: PathBuf::from("."),
-                    shell: "cmd.exe /d /q".into()
-                })
-                .is_err()
-            );
-        }
+    fn occupied_ports_never_replace_an_owner() {
         let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = occupied.local_addr().unwrap().port();
         assert!(
             Server::bind(Config {
                 port,
                 cwd: PathBuf::from("."),
-                shell: "cmd.exe /d /q".into()
+                shell: "cmd.exe /d /q".into(),
+                settings: std::env::temp_dir().join("webterminal-unused-settings.json"),
+                helper: None,
             })
             .is_err()
         );
         assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+    }
+
+    #[test]
+    fn stop_command_does_not_signal_shutdown_before_its_reply() {
+        let server = Server::bind(Config {
+            port: 0,
+            cwd: PathBuf::from("."),
+            shell: "powershell.exe -NoLogo -NoProfile".into(),
+            settings: std::env::temp_dir().join("webterminal-unused-stop-settings.json"),
+            helper: None,
+        })
+        .unwrap();
+        let command = json::parse(r#"{"op":"stop-server","confirmed":true}"#).unwrap();
+        let response =
+            commands::action(&command, &server.context, "v1", &mut BTreeMap::new()).unwrap();
+        assert_eq!(response.as_deref(), Some(r#"{"type":"server-stopping"}"#));
+        assert!(!server.context.stop.load(Ordering::Relaxed));
     }
 }

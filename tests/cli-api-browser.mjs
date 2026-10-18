@@ -9,6 +9,7 @@ import {chromeProbe, findChrome, freePort, proxyFor, quote, ready, stopChild, st
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const target=resolve(root,'target');
+const scratch=resolve(root,'.tmp');
 const chrome=await findChrome();
 const binDirectory=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR||resolve(target,'debug'));
 const binaries={webterminal:resolve(binDirectory,'webterminal.exe'),isolated:resolve(binDirectory,'isolated_cli.exe'),fixture:resolve(binDirectory,'api_fixture.exe')};
@@ -134,7 +135,7 @@ async function main(){
       const peer=await observer(id);
       check(peer.snapshot.controller!==peer.hello.view,'second browser view observes');
       const colors=new Set(peer.snapshot.terminal.screen.flatMap(line=>line.cells)
-        .filter(cell=>cell[1]>0&&cell[0].trim()&&cell[2]!=='#d4d4d4').map(cell=>cell[2]));
+        .filter(cell=>cell[1]>0&&cell[0].trim()&&cell[2]!=='#cccccc').map(cell=>cell[2]));
       const rendered=new Set([...$('terminal-lines').querySelectorAll('.term-cell')]
         .filter(node=>node.textContent.trim()).map(node=>getComputedStyle(node).color));
       check([...colors].some(hex=>rendered.has('rgb('+[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)).join(', ')+')')),
@@ -160,6 +161,11 @@ async function main(){
       await until(()=>text().includes('second line'),'bracketed multiline draft');
       await pause(300);
       check((await counts()).prompts===0,'multiline paste did not submit to API');
+      const draftRows=liveText().split('\n');
+      const firstDraftRow=draftRows.findIndex(row=>row.includes('draft caf\u00e9 X'));
+      const secondDraftRow=draftRows.findIndex(row=>row.includes('second line'));
+      if(firstDraftRow>=0&&secondDraftRow>firstDraftRow)check(true,'multiline paste keeps separate composer rows');
+      else results.push({fail:'multiline paste lost its line break',draftRows:draftRows.filter(row=>row.includes('draft caf\u00e9 X')||row.includes('second line')).map(row=>row.trimEnd())});
       check((await sessions())[0].alive,'CLI remained in composer before Enter');
       const enterBefore={...window.__enterRecords};
       key('Enter','Enter',{},13);
@@ -239,8 +245,8 @@ function command(kind,copied,profile,exe,origin){
   return parts.map(quote).join(' ');
 }
 async function phase(kind){
-  const runRoot=resolve(target,`cli-api-browser-${kind}-${process.pid}-${Date.now()}`);
-  assert.ok(runRoot.startsWith(target+sep));
+  const runRoot=resolve(scratch,`cli-api-browser-${kind}-${process.pid}-${Date.now()}`);
+  assert.ok(runRoot.startsWith(scratch+sep));
   await mkdir(runRoot,{recursive:true});
   let api,webterminal,proxy;
   try{
@@ -251,7 +257,7 @@ async function phase(kind){
     await mkdir(cwd,{recursive:true});await mkdir(profile,{recursive:true});
     api=await fixture(copied.fixture);
     const backendPort=await freePort();
-    webterminal=spawn(copied.webterminal,['--port',String(backendPort),'--cwd',cwd,'--shell',command(kind,copied,profile,executables[kind],api.origin)],{cwd,env:environment(),windowsHide:true,stdio:['ignore','pipe','pipe']});
+    webterminal=spawn(copied.webterminal,['--port',String(backendPort),'--cwd',cwd,'--shell',command(kind,copied,profile,executables[kind],api.origin),'--config',resolve(runRoot,'settings.json')],{cwd,env:environment(),windowsHide:true,stdio:['ignore','pipe','pipe']});
     let serverOutput='';webterminal.stdout.on('data',part=>{serverOutput+=part;});webterminal.stderr.on('data',part=>{serverOutput+=part;});
     await ready(backendPort,webterminal);
     proxy=await proxyFor(backendPort,harness.replace('__KIND__',JSON.stringify(kind)).replace('__CWD__',JSON.stringify(cwd)),{counts:api.counts});

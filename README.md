@@ -23,10 +23,9 @@ PowerShell as you would in another terminal.
 Webterminal has no Cargo dependencies, npm packages, or frontend build step.
 
 GitHub Actions runs the required `Commit attribution` and `Windows checks`
-jobs on the maintainer's native Windows runner. Rust, JavaScript and headless
-Chrome acceptance checks are unchanged. Each job uses a fresh checkout and
-one-job credentials; the host policy rejects fork code before workflow steps.
-Checks queue while the maintainer's PC is offline.
+jobs on the maintainer's native Windows runner. Each job uses a fresh checkout;
+checks queue while the maintainer's PC is offline. The commands are documented
+in [development and verification](docs/DEVELOPMENT.md).
 
 ## Build and run
 
@@ -38,68 +37,86 @@ cargo run --locked --offline
 ```
 
 The server prints `Webterminal listening at http://127.0.0.1:4183/` when ready.
-Open that address, choose **Terminal** or **Open terminal**, select a directory, and
-choose **Open terminal**. New terminals run `powershell.exe -NoLogo -NoProfile`;
-PowerShell profiles are skipped. For example, type `pwd` to see the selected
-directory. Press Ctrl+C in the server console to stop the server and its
-sessions.
+Open that address and choose **New terminal** (or press N). The launcher asks
+for a folder, starting from your configured start folder: type a full path,
+pick a recent folder, or choose **Browse** to navigate. It also offers the
+workspace and, when installed, Claude Code, Codex or Jecode to start inside
+the new PowerShell. Select **Open terminal**, then type `pwd` to check the
+working directory. New terminals run `powershell.exe -NoLogo -NoProfile`;
+PowerShell profiles are skipped. Press Ctrl+C in the server console to stop
+the server and its sessions, or use **Stop server** in the sidebar's server
+options menu.
 
-To choose a different port or starting directory:
+To choose a different port, starting directory or settings file:
 
 ```powershell
-cargo run --locked --offline -- --port 4185 --cwd .
+cargo run --locked --offline -- --port 4185 --cwd . --config C:\temp\settings.json
 ```
 
-`--cwd` must name an existing directory. The server binds only to `127.0.0.1`;
-ports 4173 and 4174 are reserved by this build. An occupied port
-produces an error without stopping its owner. `--help` lists all options.
+`--cwd` must name an existing directory. The server binds only to `127.0.0.1`.
+An occupied port produces an error without stopping its owner. `--help` lists
+all options.
 
-## Using workspaces
+## Using Webterminal
 
-- Workspaces appear as tabs above the terminals. **Workspace** in the left
-  rail adds an empty one, named `Workspace N` until you rename it with a
-  double-click or F2. A workspace takes its first terminal's folder name when
-  it has no custom name.
-- **Terminal** opens a terminal in the selected workspace after you pick a
-  folder; once a terminal is open it becomes **Split**, and its icon previews
-  the next layout: one pane, two side by side, one large plus two stacked, or a
-  grid of four. Drag a pane header to reorder panes, or onto another tab to
-  move the terminal. Narrow screens show one pane with a switcher.
+The sidebar lists the views and, below them, each workspace with its
+terminals; on narrow screens it becomes a drawer. Ctrl+K or / opens search and
+commands, and ? lists the keyboard shortcuts.
+
+- **Terminals** shows the selected workspace: one pane, two side by side, one
+  large plus two stacked, or a grid of four. Maximize a pane from its header,
+  or drag a header to reorder panes or onto a workspace in the sidebar to move
+  the terminal. Narrow screens show one pane with a switcher. **New workspace**
+  adds an empty one; rename workspaces and terminals from their menus, or a
+  terminal by clicking its title.
 - Each terminal has its own process, directory, screen, and scrollback.
   Closing a browser tab leaves sessions running while the server remains
   open; closing a terminal ends it and its child processes, and closing a
   workspace closes all of its terminals. Terminals idle at their shell close
-  at once; Webterminal asks first only while a program still runs in one. The
-  pane dot pulses while an agent reports activity in its title. Names and
-  order are shared across browser views while the server runs.
+  at once; Webterminal asks first only while a program still runs in one.
+  Names and order are shared across browser views while the server runs.
 - A second browser view can observe a session. **Take control** transfers its
   keyboard input and terminal size from the current controller. Reconnecting
   restores a screen and history snapshot before input is enabled.
+- **Overview** lists every terminal with search, filters, sorting and a
+  confirmed bulk close.
+- **Needs you** collects permission requests and questions reported by Claude
+  Code started from the launcher, unread replies, and failed terminals. Codex
+  reports completed turns and replies, but not permission requests; check its
+  terminal for prompts. Answer Claude Code from the controlling view or in its
+  terminal. Ctrl+Shift+A jumps to the next item.
+- **Reader** renders Markdown: text you paste, terminal clipboard writes that
+  look like prose, and replies reported by Claude Code and Codex. With
+  **Follow clipboard** on, it checks the system clipboard about once a second
+  while the window has focus, skipping short single-line copies and text
+  Webterminal copied itself. Each document has an outline, search and
+  per-block copy. Documents stay in the browser tab's memory until reload.
+- **Processes** shows the processes running inside each terminal, with
+  Interrupt and Close terminal; Webterminal never kills a single process.
 - Drag to select text. Use **Find** or Ctrl+Shift+F to search retained history,
   and Ctrl+Shift+C to copy. Paste uses the browser clipboard; supported
-  terminal clipboard writes ask for confirmation.
+  terminal clipboard writes ask for confirmation. Alt shortcuts such as Alt+V
+  reach the program, while Ctrl+V stays the browser paste.
 - Drop files from the desktop onto a terminal you control to paste their
   paths, as native terminals do. Each file is first uploaded to a staging
   folder owned by that terminal under `%TEMP%\webterminal-uploads\`, at most 64
-  files of 1 GiB each per drop. Staged copies are removed when the terminal
-  closes or the server stops; a later server removes those left by a crash.
-  Alt shortcuts such as Alt+V reach the program, while Ctrl+V stays the
-  browser paste.
-- **Reader** opens a side panel that renders Markdown, for example an agent
-  reply copied with `/copy`. Paste with the panel button or Ctrl+V; terminal
-  clipboard writes that look like prose are added automatically. With
-  **Follow clipboard** on, the Reader checks the system clipboard about once
-  a second while the window has focus and opens beside the terminal, without
-  taking keyboard focus, when a reply arrives; it skips short single-line
-  copies and text Webterminal copied itself. Each document has an
-  outline, search and per-block copy. Documents stay in the browser tab's
-  memory, at most 20, until reload.
+  files of 1 GiB each per drop. **Dropped files** lists the staged copies with
+  progress, Retry, Cancel and Remove. Staged copies are removed when the
+  terminal closes or the server stops; a later server removes those left by a
+  crash.
+- **Settings** holds the start folder, terminal font size, terminal colors and
+  notification choices, shared by every view and saved in
+  `~/.webterminal/settings.json`; **Themes & Appearance** previews them.
+  Notices stay in the Dock until dismissed; browser notifications are
+  requested only when you turn them on.
 
 The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
-they disappear when the server stops. Dropped files are the only session data
-written to disk, in the staging folder above. Browser storage holds font size, the
-selected workspace and the Follow clipboard choice.
+they disappear when the server stops. Dropped-file copies and temporary
+per-session Claude Code bridge settings are written under `%TEMP%` and removed
+when their session ends. The browser keeps recent folders in local storage,
+and the selected workspace, collapsed sidebar groups, the Settings tab and
+muted terminals only for the tab's session.
 
 ## Compatibility and limits
 
@@ -120,4 +137,5 @@ design contract.
 ## License
 
 Project code is licensed under MIT; see [LICENSE](LICENSE). Unicode property
-data is covered by Unicode License v3; see [third-party notices](THIRD_PARTY_NOTICES.md).
+data is covered by Unicode License v3 and the Nunito font by the SIL Open Font
+License 1.1; see [third-party notices](THIRD_PARTY_NOTICES.md).

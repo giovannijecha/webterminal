@@ -8,10 +8,11 @@ import {chromeProbe,findChrome,freePort,proxyFor,ready,stopChild,stopProxy,quote
 
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const target=resolve(root,'target');
+const scratch=resolve(root,'.tmp');
 const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(target,'debug'));
-const runRoot=resolve(target,`performance-${process.pid}-${Date.now()}`);
-assert.ok(runRoot.startsWith(target+sep));
-const reports=resolve(target,'performance');
+const runRoot=resolve(scratch,`performance-${process.pid}-${Date.now()}`);
+assert.ok(runRoot.startsWith(scratch+sep));
+const reports=resolve(scratch,'browser-reports','performance');
 const label=process.argv[2] || 'current';
 const flowOnly=process.argv[3]==='flow';
 assert.match(label,/^[a-z0-9-]+$/);
@@ -56,7 +57,11 @@ async function workload(name,command,marker,sequence){
   report.workloads.push({name,latencyMs:summary(samples),renderMs:summary(renderSamples),parseMs:summary(parseSamples),receiveMs:summary(receivedSamples),payloadBytes:summary(payloads),historyRows:last.terminal.history.length,domNodes:$('terminal-lines').querySelectorAll('*').length,raw:{latencyMs:samples,renderMs:renderSamples,parseMs:parseSamples,receiveMs:receivedSamples,payloadBytes:payloads}});
 }
 async function main(){
-  await until(()=>$('connection-status').textContent==='Connected','connection');$('new').click();await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'directory');$('directory-create').click();await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PERF_READY'),'fixture');
+  await until(()=>$('connection-status').textContent==='Connected','connection');$('new').click();
+  // The workbench launcher creates a terminal; the earlier UI used the folder dialog, kept for before/after baselines.
+  if($('navigation-projects')){await until(()=>document.querySelector('dialog.launcher[open]'),'launcher');document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();}
+  else{await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'directory');$('directory-create').click();}
+  await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PERF_READY'),'fixture');
   if(FLOW_ONLY){send('history\r');await until(()=>$('terminal-lines').textContent.includes('HISTORY_READY'),'flow history');await workload('active-tui-output','stream','STREAM_READY',3000);report.frameGapMs=summary(frameGaps);report.rawFrameGapMs=frameGaps;}
   else{await workload('shell-empty','', '',0);await workload('shell-history-600','history','HISTORY_READY',1000);await workload('alternate-tui','tui','TUI_READY',2000);}
   report.errors=window.__probeErrors;report.pass=!report.errors.length;
@@ -71,7 +76,7 @@ for(const key of ['SystemRoot','WINDIR','PATH','PATHEXT','TEMP','TMP'])if(proces
 let child,proxy;
 try{
   const port=await freePort();
-  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',runRoot,'--shell',quote(resolve(runRoot,'perf_fixture.exe'))],{cwd:runRoot,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',runRoot,'--shell',quote(resolve(runRoot,'perf_fixture.exe')),'--config',resolve(runRoot,'settings.json')],{cwd:runRoot,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   await ready(port,child);proxy=await proxyFor(port,harness.replace('__FLOW_ONLY__',JSON.stringify(flowOnly)));
   let stage='',profileStarted=false,profile;
   const counters=[];

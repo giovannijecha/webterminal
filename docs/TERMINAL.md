@@ -24,27 +24,32 @@ snapshot.
 Rust owns workspace membership, workspace and pane order, and custom names.
 Each workspace shows up to four panes; narrow screens show one at a time with
 a pane switcher. Workspace selection is stored per browser tab in
-`sessionStorage`; font size and the Reader's Follow clipboard choice use
-Webterminal-specific `localStorage` keys. Server state, including workspaces,
-custom names and history, does not survive a server restart.
+`sessionStorage`, and recent launcher folders in a Webterminal-specific
+`localStorage` key. Font size and terminal colors are server settings in
+`~/.webterminal/settings.json`. Server state, including workspaces, custom
+names and history, does not survive a server restart.
 
 Closing a terminal or workspace asks for confirmation only while a program runs
 beyond its shell. Workspace confirmation is checked against the sessions that
 were present when the dialog opened; membership changes from another view cannot
 silently add new targets to a confirmed close.
 
-The Reader renders copied Markdown through DOM nodes, keeping at most 20
-documents of 512 KiB each in browser memory. Terminal clipboard writes that look
-like prose become Reader documents automatically; replacing the system clipboard
-still requires confirmation. Follow clipboard reads only while enabled and the
-view is focused, and skips short single-line copies and text copied by
-Webterminal itself. Reader documents disappear on reload.
+The Reader renders copied Markdown through DOM nodes, keeping at most 20 local
+documents of 512 KiB each, plus up to 200 program replies, in browser memory.
+After confirmation and a successful clipboard write, terminal text that looks
+like prose also becomes a Reader document.
+Follow clipboard reads only while enabled and the view is focused, and skips
+short single-line copies and text copied by Webterminal itself. Reader
+documents and the Follow choice disappear on reload.
 
 ## Text-terminal coverage
 
 - Incremental UTF-8 and bounded ESC/CSI/OSC/DCS parsing, malformed-input
   recovery, cursor and scrolling operations, tabs, wrapping, primary and
-  alternate screens, and shell-history reflow on resize.
+  alternate screens, and shell-history reflow on resize. Reflow treats a row's
+  trailing blanks of one visible paint as fill: background bands and blank
+  colored rows span the new width without adding rows, while default padding
+  is dropped.
 - Standard, 256-color, and RGB appearance; text attributes, cursor visibility
   and shape, DEC special graphics, terminal titles, safe OSC 8 hyperlinks,
   status/cursor/mode/size replies, and selected DECRQSS replies.
@@ -95,6 +100,10 @@ terminated rather than blocking its output reader indefinitely.
 
 ## Known limits
 
+Starting a process in a working directory beyond Windows' `MAX_PATH` limit can
+fail even when the folder picker can list that directory. Keep the selected
+path within the [process current-directory limit](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setcurrentdirectory).
+
 Classic X10 mouse reports are limited to coordinates 1–95 because higher raw
 bytes are corrupted by ConPTY's UTF-8 input; SGR mouse reports cover the full
 supported geometry. Raw 8-bit C1 controls, graphics/SIXEL, arbitrary DCS
@@ -102,6 +111,25 @@ extensions, bidirectional layout and contextual shaping, and OSC 52 clipboard
 reads are unsupported. Some browser or operating-system shortcuts may escape
 capture even in fullscreen mode. Keyboard Lock depends on browser support and
 permission.
+
+In an isolated Windows 11 probe using inbox conhost 10.0.26100.1, OSC 10/11
+default-color and OSC 4 palette queries produced no child-input reply and did
+not appear in Webterminal's raw ConPTY output. Webterminal can answer these
+queries when they reach its parser, but that path was not exercised by this
+ConPTY probe. The same probe under Windows Terminal 1.24.12741.0 received
+color replies. An isolated Codex 0.163.0 run in Webterminal lacked gray
+user-message and composer bands; whether unanswered color queries caused
+that difference remains unverified.
+
+In the same environment, Codex 0.163.0 drops a leading newline pasted into an
+existing draft. ConPTY consumes the bracketed-paste delimiters and delivers LF
+as Ctrl+Enter input records; the Codex composer then joins the lines. The
+optional Codex browser probe checks for this loss and reports a failure while
+continuing its other checks. Replacing LF with CR can submit a prompt during
+paste, so that substitution is not used.
+The observed key-event behavior is consistent with
+[Windows Terminal's event synthesis](https://github.com/microsoft/terminal/blob/v1.24.12741.0/src/interactivity/base/EventSynthesis.cpp)
+and [the Windows input parser pinned by Codex](https://github.com/openai-oss-forks/crossterm/blob/ed1cdab335221515706178d68495bba2aed1924f/src/event/sys/windows/parse.rs).
 
 The browser asks for incremental updates. A missing or invalid update base
 disables input until a fresh attachment restores the projection. Legacy views

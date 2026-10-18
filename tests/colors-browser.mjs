@@ -52,12 +52,57 @@ function verifyColors(label){
   check(Boolean(inverse[4]&32)&&inverse[2]==='#cd3131',label+' inverse Rust state');
   check(getComputedStyle(element('INVERSE_RED')).backgroundColor==='rgb(205, 49, 49)',label+' inverse browser state');
   check(cell('UNICODE_')[2]==='#0dbc79',label+' Unicode foreground');
-  check(cell('DEFAULT_TEXT')[2]==='#d4d4d4'&&cell('DEFAULT_TEXT')[3]==='#121314',label+' default reset');
+  check(cell('DEFAULT_TEXT')[2]==='#cccccc'&&cell('DEFAULT_TEXT')[3]==='#1e1e1e',label+' default reset');
+  verifyAttributes(label);verifyBands(label);
+}
+function verifyAttributes(label){
+  const attrs=['STYLE_BOLD','STYLE_FAINT','STYLE_INVERSE','STYLE_RESET'].map(marker=>cell(marker)[4]);
+  check(attrs.join()==='1,2,32,0',label+' Rust bold, faint, inverse and resets');
+  const [bold,faint,inverse,reset]=['STYLE_BOLD','STYLE_FAINT','STYLE_INVERSE','STYLE_RESET'].map(marker=>getComputedStyle(element(marker)));
+  check(Number(bold.fontWeight)>=700&&Number(reset.fontWeight)<700,label+' browser bold and reset weight');
+  check(faint.color!==reset.color&&faint.backgroundColor==='rgb(30, 30, 30)',label+' faint dims glyphs only');
+  check(inverse.color==='rgb(30, 30, 30)'&&inverse.backgroundColor==='rgb(204, 204, 204)',label+' inverse swaps default colors');
+  check(reset.color==='rgb(204, 204, 204)'&&reset.backgroundColor==='rgb(30, 30, 30)',label+' attributes reset to defaults');
+}
+// Every painted band, including rows reflowed in history, keeps its extent.
+function verifyBands(label,limit=Infinity){
+  const all=rows(),lines=$('terminal-lines').children,cols=current().terminal.cols;
+  const unit=parseFloat($('terminal-lines').style.getPropertyValue('--cell-width'));
+  const gray=cells=>cells.every(c=>c[3]==='#303030');
+  let bands=0;
+  for(let index=0;index<Math.min(all.length,limit);index++){
+    if(!all[index].cells.map(c=>c[0]).join('').startsWith('BAND_TEXT'))continue;
+    bands++;const where=label+' band row '+index;const spaces=all[index+2].cells;
+    check(gray(all[index].cells)&&gray(all[index+1].cells),where+' Rust text and blank bands reach the edge');
+    check(gray(spaces.slice(0,17))&&spaces.slice(17).every(c=>c[3]==='#1e1e1e'),where+' Rust explicit spaces keep their extent');
+    for(const row of [index,index+1]){
+      const nodes=[...lines[row].querySelectorAll('.term-cell')];const width=nodes.reduce((sum,node)=>sum+node.getBoundingClientRect().width,0);
+      check(nodes.length&&nodes.every(node=>getComputedStyle(node).backgroundColor==='rgb(48, 48, 48)')&&Math.abs(width-cols*unit)<1,where+' browser row '+row+' is gray to the edge');
+    }
+  }
+  check(bands>0,label+' bands present');
+}
+async function shot(name,row){
+  const scroll=$('terminal-scroll');if(row!==undefined)$('terminal-lines').children[row].scrollIntoView({block:'center'});
+  document.body.dataset.shot=name;await until(()=>document.body.dataset.shotDone===name,'screenshot '+name);scroll.scrollTop=scroll.scrollHeight;
+}
+// Two steps through Settings, saved like a user would, then back to the terminal.
+async function resizeFont(label){
+  const cols=current().terminal.cols,page=name=>document.querySelector('.navigation-item[data-page="'+name+'"]').click();
+  page('settings');await until(()=>$('settings-tab-terminal'),'settings');$('settings-tab-terminal').click();
+  const step=document.querySelector('#settings-panel-terminal [aria-label="'+label+' terminal text"]');step.click();step.click();
+  const footer=document.querySelector('#page-settings .prefs-footer');await until(()=>!footer.hidden,'unsaved settings');
+  [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();await until(()=>footer.hidden,'settings saved');
+  page('workspace');await until(()=>current().terminal.cols!==cols,'native resize');await pause(150);
 }
 function rgb(hex){return 'rgb('+[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)).join(', ')+')';}
+function completed(){
+  const text=rows().map(row=>row.cells.filter(cell=>cell[1]!==0).map(cell=>cell[0]).join('')).join('\n');
+  return Math.max(-1,...[...text.matchAll(/COLOR_DONE:(\d+)/g)].map(match=>Number(match[1])));
+}
 async function paintAndWait(command){
-  const sequence=current().seq;send(command+'\r');
-  await until(()=>current().seq>sequence&&$('terminal-lines').textContent.includes('PAINT_END'),'paint '+command);await pause(100);
+  const before=completed();send(command+'\r');
+  await until(()=>completed()>before&&$('terminal-lines').textContent.includes('COLOR_DONE:'+completed()),'completed '+command);
 }
 async function main(){
   await until(()=>$('connection-status').textContent==='Connected','connection');
@@ -71,15 +116,17 @@ async function main(){
     const report={pass:true,checks,userAgent:navigator.userAgent,session:current().id,seq:current().seq,errors:window.__probeErrors};
     document.body.dataset.probeResult=btoa(JSON.stringify(report));return;
   }
-  $('new').click();await until(()=>!$('directory-create').disabled,'directory');$('directory-create').click();
+  await until(()=>$('new').getAttribute('aria-disabled')==='false','workspace ready for launcher');
+  $('new').click();await until(()=>document.querySelector('dialog.launcher[open]'),'launcher');document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();
   await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
   check($('terminal-lines').textContent.includes('COLOR_ENABLED=true'),'CLI-style color detection ignores the redirected host');
   verifyColors('initial');await paintAndWait('scroll');verifyColors('scrollback update');
   check(current().terminal.history.length>0,'colored output remains in bounded history');
-  const cols=current().terminal.cols;$('settings').click();$('larger').click();$('preferences-close').click();
-  await until(()=>current().terminal.cols!==cols,'native resize');await paintAndWait('paint');verifyColors('resized');
+  await resizeFont('Larger');verifyBands('narrowed history',current().terminal.history.length-2);await paintAndWait('paint');verifyColors('resized');
+  await resizeFont('Smaller');await resizeFont('Smaller');verifyBands('widened history',current().terminal.history.length-2);await paintAndWait('paint');verifyColors('widened');
+  await shot('widened-history',rows().findIndex(row=>row.cells.map(c=>c[0]).join('').startsWith('BAND_TEXT')));await shot('widened-screen');
   await paintAndWait('alternate');check(current().terminal.alternate,'alternate buffer entered');verifyColors('alternate');
-  send('primary\r');await until(()=>!current().terminal.alternate,'primary restored');verifyColors('primary restored');
+  await paintAndWait('primary');check(!current().terminal.alternate,'primary restored');verifyColors('primary restored');
   sessionStorage.setItem('colorSession',current().id);sessionStorage.setItem('colorStage','reconnect');
   sessionStorage.setItem('colorChecks',JSON.stringify(checks));location.reload();
 }
@@ -90,17 +137,20 @@ main().catch(error=>{document.body.dataset.probeResult=btoa(JSON.stringify({pass
 const environment={};
 for(const key of ['SystemRoot','WINDIR','PATH','PATHEXT','TEMP','TMP'])if(process.env[key])environment[key]=process.env[key];
 Object.assign(environment,{TERM:'dumb',NO_COLOR:'1',CLICOLOR:'0',CLICOLOR_FORCE:'0',FORCE_COLOR:'0',TERM_PROGRAM:'fixture-host'});
-let child,proxy,screenshot;
+let child,proxy,screenshot;const shots={};
 try{
   const port=await freePort();
-  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',runRoot,'--shell',quote(resolve(runRoot,'color_fixture.exe'))+' --interactive'],{cwd:runRoot,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',runRoot,'--shell',quote(resolve(runRoot,'color_fixture.exe'))+' --interactive','--config',resolve(runRoot,'settings.json')],{cwd:runRoot,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   await ready(port,child);proxy=await proxyFor(port,harness);
   const report=await chromeProbe(await findChrome(),'http://127.0.0.1:'+proxy.port+'/',resolve(runRoot,'chrome'),'colorStage',async({protocol,evaluate})=>{
     if(!screenshot&&await evaluate('document.getElementById("terminal-lines")?.textContent.includes("RGB_TEXT")'))screenshot=(await protocol('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data;
+    const name=await evaluate('document.body?.dataset.shot||""');
+    if(name&&!shots[name]){shots[name]=(await protocol('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data;await evaluate('document.body.dataset.shotDone='+JSON.stringify(name));}
   });
   report.proxy=proxy.stats;report.buildDirectory=binaries;
   await writeFile(resolve(reports,label+'.json'),JSON.stringify(report,null,2));
   if(screenshot)await writeFile(resolve(reports,label+'.png'),Buffer.from(screenshot,'base64'));
+  for(const [name,data] of Object.entries(shots))await writeFile(resolve(reports,label+'-'+name+'.png'),Buffer.from(data,'base64'));
   assert.equal(report.pass,true,JSON.stringify(report));assert.equal(proxy.stats.upstreamErrors,0,'Upstream failures');
   console.log(JSON.stringify({pass:report.pass,checks:report.checks.length,report:resolve(reports,label+'.json')}));
 }finally{await stopProxy(proxy);await stopChild(child);await rm(runRoot,{recursive:true,force:true,maxRetries:10,retryDelay:100});}

@@ -41,6 +41,13 @@ rendering details from measured behavior; do not add a framework or bundler.
 - New terminals start Windows PowerShell with `-NoLogo -NoProfile` directly.
   Do not present per-terminal shell choices. A trusted server-wide program
   override can support owned development fixtures.
+- The launcher offers that PowerShell, or one optional program started inside
+  it: Claude Code, Codex or Jecode. A program is offered only when the base
+  shell is Windows PowerShell and `<program>.exe` is found in an absolute
+  `PATH` directory; lookup never runs the program or reads its configuration.
+  Arguments are passed as quoted PowerShell literals. Plain PowerShell works
+  with no program installed, and a program that exits leaves its PowerShell
+  session open.
 - Sessions are organized in workspaces. A workspace has an ID, an optional
   user-assigned name and an ordered list of at most four sessions; every
   session belongs to exactly one workspace. Rust owns workspaces, their order,
@@ -52,58 +59,117 @@ rendering details from measured behavior; do not add a framework or bundler.
   default label (workspaces).
 - A view is a browser attachment to one session. Browser tab closure,
   connection loss or refresh detaches the view without terminating the session.
-- The UI shows workspaces as tabs and every session of the selected workspace
-  at once, in a layout derived from its count: one full pane, two side by
-  side, three as one large and two stacked, four as a grid. Narrow screens show
-  one pane at a time with a pane switcher. The selected workspace and focused
-  pane are view-local; each visible attachment keeps its own control and
-  geometry fencing.
-- The UI provides a new-workspace action, a new-terminal action for the
+- The UI is a workbench: a sidebar lists the views (Overview, Terminals, Needs
+  you, Reader, Processes, Dropped files, Settings, Themes & Appearance) and the
+  workspaces as a tree of their terminals; narrow screens use a drawer. The
+  Terminals view shows every session of the selected workspace at once, in a
+  layout derived from its count: one full pane, two side by side, three as one
+  large and two stacked, four as a grid. A pane can be maximized and restored.
+  Narrow screens show one pane at a time with a pane switcher. The selected
+  view, workspace and focused pane are view-local; each visible attachment
+  keeps its own control and geometry fencing, and reading metadata never takes
+  control.
+- Limits are four sessions per workspace, 16 workspaces and 32 sessions.
+- The UI provides a new-workspace action, a new-terminal launcher for the
   selected workspace, a working-directory selector and explicit close actions
-  for sessions and workspaces. Closing a session ends it and its owned process
-  tree; closing a workspace closes all of its sessions. Confirmation is
-  required only while a session runs a program beyond its shell. A workspace
-  confirmation applies to the sessions present when it was requested; changes
-  from another view must be checked before closing any session.
+  for sessions and workspaces. Overview lists every session with filters,
+  search and sorting; a bulk close targets exactly the confirmed session IDs.
+  Closing a session ends it and its owned process tree; closing a workspace
+  closes all of its sessions. Confirmation is required only while a session
+  runs a program beyond its shell. A workspace or selection confirmation
+  applies to the sessions present when it was requested; changes from another
+  view must be checked before closing any session.
   Closing the browser leaves sessions available while the server remains alive.
 - A workspace name is optional; new workspaces open with their default label.
-- The Reader is a view-local side panel that renders Markdown copied from
-  terminals: pasted text, terminal clipboard writes that look like prose, and,
-  when the user enables it, the browser clipboard polled while the view has
-  focus. It keeps a bounded set of documents in browser memory only, never on the
-  server, and renders text through DOM nodes rather than HTML parsing.
+- A command palette, scoped menus and a shortcut list expose the same actions.
+  None of them intercepts terminal keys while closed.
+- The Reader keeps Markdown copied from terminals and program replies, each
+  with its exact source: pasted text, terminal clipboard writes that look like
+  prose, replies reported by a program bridge, and, when the user enables it,
+  the browser clipboard polled while the view has focus. It keeps a bounded
+  set of documents in browser memory only, never on the server, and renders
+  text through DOM nodes rather than HTML parsing.
+- Processes lists only processes in Webterminal-owned session jobs, from a
+  bounded snapshot. Its actions are Interrupt terminal, sent through the
+  controlling view's input path, and Close terminal; there is no per-PID kill.
 - At most one view controls input and geometry for a session. Other attached
   views observe; control transfer must not allow competing input or resize.
+  The server rechecks control when an action runs. Input, interrupt, resize,
+  dropped-file staging and removal, and answers to program requests belong to
+  the controlling view. Creating, renaming, moving, reordering and closing
+  terminals or workspaces, saving settings and stopping the server are shared
+  by all views and need confirmation of their exact targets where they
+  destroy work.
 - On attachment or reconnection, deliver a consistent screen, mode and
   history snapshot followed by ordered updates. A slow viewer must not grow
   queues without bound or block console draining.
 - Keep browser selection, search and viewport position separate from session
   state. Shell scrollback and application-controlled alternate-screen scrolling
   have distinct behavior.
-- Stopping the server tears down only resources and processes it owns.
+- Stopping the server tears down only resources and processes it owns. A view
+  can stop it only after an explicit confirmation.
   Surviving a server restart is not an initial guarantee.
 
 ## Network and data boundaries
 
 Use `127.0.0.1:4183` by default, with HTTP and WebSocket on the same port.
-Make the port configurable, reserve ports `4173` and `4174` for local
-coexistence, and fail clearly if the requested port is occupied. The actual
-bind is the final availability check.
+Make the port configurable and fail clearly if the requested port is occupied.
+The actual bind is the final availability check.
 
 Validate Host and Origin for terminal control. Do not expose arbitrary working
 directory content on the terminal origin. Configuration, when needed, belongs
 under `~/.webterminal/`; sessions and bounded history initially remain in memory.
 Never inspect CLI credentials or change another application's files or processes.
 
-Dropped files use a same-origin `POST /api/upload`, the only request with a
-body. It requires the page's Origin, the controlling view and its current
-control epoch, and a Content-Length of at most 1 GiB. The body streams on its
+Dropped files use a same-origin `POST /api/upload`. It requires the page's
+Origin, the controlling view and its current control epoch, and a Content-Length
+of at most 1 GiB. The body streams on its
 own connection into a session-owned folder under the system temporary
 directory, so terminal I/O continues. Incomplete transfers, and transfers idle
 for 30 seconds, leave nothing behind; staging is removed with its session, at
 shutdown, or by the next server after a crash. The browser then pastes the
 staged paths as quoted, space-separated text. Webterminal does not interpret
 the files or depend on the program that receives them.
+
+Staged copies form a bounded registry with server-owned IDs, listed by
+`GET /api/files` and removed one copy at a time by ID; originals are never
+touched and file bytes are never served. A copy whose control changed during
+the transfer is discarded, and a cancelled or late upload never pastes. The
+browser shows real progress, Retry for files it still holds and Cancel.
+
+Settings are shared by all views and stored atomically at
+`~/.webterminal/settings.json`: start folder for new terminals, terminal font
+size, terminal light/dark defaults and notification preferences. A save names
+the revision it edits; a save based on an older revision is refused so no
+view silently overwrites another. A malformed file falls back to defaults
+with a visible problem, and the next save keeps it as `settings.invalid.json`.
+A save that cannot be written fails without changing the stored settings.
+
+Browser notifications are requested only after an explicit user action and
+come only from new, deduplicated events; reconnecting does not replay them.
+
+## Program bridge
+
+Optional adapters report source-attributed events for programs started by the
+launcher. Claude Code hooks report activity, replies, permission requests and
+questions; Codex `notify` reports completed turns and replies. Webterminal
+never edits a program's own configuration: Claude Code receives per-invocation
+hooks through `--settings`, and Codex a per-invocation `notify` override. The
+hooks run the Webterminal executable as a helper that posts one event to
+`/api/bridge` with a per-session secret token; requests carrying an Origin or
+a wrong token are refused. Jecode, or a program without an adapter, shows
+lifecycle only and its activity as unknown.
+
+Claude Code permission requests and questions wait for an answer from the
+controlling view for at most ten minutes and are delivered at most once. They
+expire when the helper stops waiting, the program session changes or ends, the
+terminal closes, the turn ends, or an unambiguously identified tool call runs after a
+local answer in the terminal. Identical parallel calls without a shared
+request identifier remain pending until a turn boundary, timeout or session
+change; the program's own prompt remains the fallback. A grant "for this
+session" is narrowed to the current program session and offered only when
+its complete validated scope is visible. Webterminal never reads
+program credentials, and screen text is never parsed as a request.
 
 ## Terminal compatibility
 

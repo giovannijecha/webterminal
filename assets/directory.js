@@ -195,7 +195,7 @@ export class DirectoryPicker {
     const crumbs = [{label:'This PC', path:THIS_PC}, ...(this.data.path ? pathCrumbs(this.data.path) : [])];
     const fragment = document.createDocumentFragment();
     crumbs.forEach((crumb, index) => {
-      if (index) fragment.append(icon('chevron'));
+      if (index) fragment.append(icon('chevron-right'));
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = crumb.label;

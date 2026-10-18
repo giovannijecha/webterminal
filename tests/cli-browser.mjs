@@ -310,7 +310,7 @@ try {
   const command=[copied.isolated,profile,jecode].map(quote).join(' ');
   const environment={};
   for(const key of ['SystemRoot','SystemDrive','WINDIR','PATH','PATHEXT','ComSpec','ProgramFiles','ProgramFiles(x86)','ProgramW6432','TEMP','TMP']) if(process.env[key]) environment[key]=process.env[key];
-  child=spawn(copied.webterminal,['--port',String(port),'--cwd',cwd,'--shell',command],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  child=spawn(copied.webterminal,['--port',String(port),'--cwd',cwd,'--shell',command,'--config',resolve(runRoot,'settings.json')],{cwd,env:environment,windowsHide:true,stdio:['ignore','pipe','pipe']});
   let serverOutput='';child.stdout.on('data',part=>{serverOutput+=part;});child.stderr.on('data',part=>{serverOutput+=part;});
   await ready(port,child);
   proxy=await proxyFor(port,harness.replace('__CWD__',JSON.stringify(cwd)));

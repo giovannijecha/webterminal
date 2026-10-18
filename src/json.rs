@@ -40,6 +40,54 @@ impl Value {
             .and_then(Self::number)
             .ok_or_else(|| format!("Missing integer field: {key}"))
     }
+    pub fn boolean(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+    pub fn array(&self) -> Option<&[Value]> {
+        match self {
+            Self::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+    /// Serializes the value; object keys keep their sorted order.
+    pub fn to_json(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out);
+        out
+    }
+    fn write(&self, out: &mut String) {
+        match self {
+            Self::Null => out.push_str("null"),
+            Self::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Self::Number(n) => out.push_str(&n.to_string()),
+            Self::String(s) => out.push_str(&quote(s)),
+            Self::Array(values) => {
+                out.push('[');
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    value.write(out);
+                }
+                out.push(']');
+            }
+            Self::Object(object) => {
+                out.push('{');
+                for (i, (key, value)) in object.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&quote(key));
+                    out.push(':');
+                    value.write(out);
+                }
+                out.push('}');
+            }
+        }
+    }
 }
 
 pub fn quote(s: &str) -> String {
@@ -64,7 +112,12 @@ pub fn quote(s: &str) -> String {
 }
 
 pub fn parse(s: &str) -> Result<Value, String> {
-    if s.len() > 131_072 {
+    parse_limited(s, 131_072)
+}
+
+/// Parses a document of at most `limit` bytes with the protocol's other bounds.
+pub fn parse_limited(s: &str, limit: usize) -> Result<Value, String> {
+    if s.len() > limit {
         return Err("JSON message too large".into());
     }
     let mut parser = Parser {
@@ -287,5 +340,11 @@ mod tests {
             assert!(parse(input).is_err(), "{input}");
         }
         assert!(parse(&format!("{}0{}", "[".repeat(18), "]".repeat(18))).is_err());
+    }
+    #[test]
+    fn serializes_parsed_values() {
+        let source = r#"{"a":[1,-2,true,null],"b":{"c":"x\"\n"}}"#;
+        assert_eq!(parse(source).unwrap().to_json(), source);
+        assert!(parse_limited("[1,2]", 4).is_err());
     }
 }

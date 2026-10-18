@@ -1,8 +1,8 @@
 //! Terminal cells and immutable identities for ordered rendering updates.
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const FG: &str = "#d4d4d4";
-pub const BG: &str = "#121314";
+pub const FG: &str = "#cccccc";
+pub const BG: &str = "#1e1e1e";
 static NEXT_LINE: AtomicU64 = AtomicU64::new(1);
 
 pub struct PutOptions {
@@ -59,6 +59,32 @@ impl Cell {
     }
     pub fn empty() -> Self {
         Self::blank(&Style::default())
+    }
+    /// What a blank cell paints and where it links, or `None` for other cells.
+    pub fn blank_paint(&self) -> Option<(&str, u16, &str, &str)> {
+        if self.text != " " || self.width != 1 {
+            return None;
+        }
+        let style = &self.style;
+        let (fg, bg) = if style.attrs & 32 != 0 {
+            (&style.bg, &style.fg)
+        } else {
+            (&style.fg, &style.bg)
+        };
+        let marks = style.attrs & (8 | 16 | 128);
+        let decoration = marks & (8 | 128) != 0;
+        let paint_attrs = marks
+            | if decoration {
+                style.attrs & (2 | 64)
+            } else {
+                0
+            };
+        Some((
+            bg,
+            paint_attrs,
+            if decoration { fg } else { "" },
+            &style.link,
+        ))
     }
 }
 

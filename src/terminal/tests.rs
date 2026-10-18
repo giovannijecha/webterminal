@@ -227,7 +227,7 @@ fn colon_sgr_charset_queries_and_soft_reset() {
     assert_eq!(t.feed(b"\x1bP$qm\x1b\\\x1bP$qr\x1b\\\x1bP$q q\x1b\\\x1bP$qz\x1b\\"),
         b"\x1bP1$r0;4;38;2;1;2;3;48;2;255;0;0m\x1b\\\x1bP1$r2;3r\x1b\\\x1bP1$r4 q\x1b\\\x1bP0$r\x1b\\");
     assert_eq!(t.feed(b"\x1b[19t\x1b[21t\x1b]10;?\x07\x1b]4;1;?\x07"),
-        b"\x1b[9;3;12t\x1b]lDemo\x1b\\\x1b]10;rgb:d4d4/d4d4/d4d4\x1b\\\x1b]4;1;rgb:cdcd/3131/3131\x1b\\");
+        b"\x1b[9;3;12t\x1b]lDemo\x1b\\\x1b]10;rgb:cccc/cccc/cccc\x1b\\\x1b]4;1;rgb:cdcd/3131/3131\x1b\\");
     t.feed(b"\x1b[!p");
     assert_eq!(
         (

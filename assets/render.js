@@ -1,5 +1,10 @@
-const DEFAULT_FG = '#d4d4d4';
-const DEFAULT_BG = '#121314';
+// Rust sends its default colors explicitly. The view maps exactly those values
+// to the terminal theme, so a light theme never recolors program colors.
+const DEFAULT_FG = '#cccccc';
+const DEFAULT_BG = '#1e1e1e';
+const THEME_FG = 'var(--terminal-fg)';
+const THEME_BG = 'var(--terminal-bg)';
+function themed(color, fallback, theme) { return !color || color.toLowerCase() === fallback ? theme : color; }
 
 function safeLink(value) {
   if (typeof value !== 'string' || !value || value.length > 2048) return null;
@@ -178,8 +183,9 @@ export class TerminalRenderer {
         span.style.width = `calc(${columns} * var(--cell-width))`;
         if (width === 2) span.classList.add('wide');
         const inverse = Boolean(attr & 32);
-        const foreground = inverse ? (cell[3] || DEFAULT_BG) : (cell[2] || DEFAULT_FG);
-        const background = inverse ? (cell[2] || DEFAULT_FG) : (cell[3] || DEFAULT_BG);
+        const fg = themed(cell[2], DEFAULT_FG, THEME_FG), bg = themed(cell[3], DEFAULT_BG, THEME_BG);
+        const foreground = inverse ? bg : fg;
+        const background = inverse ? fg : bg;
         // Faint text dims its glyphs toward the background, never the cell itself.
         span.style.color = attr & 2 ? `color-mix(in srgb, ${foreground} 58%, ${background})` : foreground;
         span.style.backgroundColor = background;
@@ -194,6 +200,8 @@ export class TerminalRenderer {
         if (hit >= 0) span.classList.add('match');
         if (cursorHere) {
           span.classList.add('cursor', cursor[3] || 'block');
+          span.style.setProperty('--cursor-cell-fg', span.style.color);
+          span.style.setProperty('--cursor-cell-bg', background);
         }
         const href = safeLink(cell[5]);
         if (href) {

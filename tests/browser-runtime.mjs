@@ -6,9 +6,10 @@ import {resolve, join, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const target = resolve(root, 'target');
-const profile = resolve(target, 'browser-runtime-' + process.pid + '-' + Date.now());
-if (!profile.startsWith(target + sep)) throw new Error('Profile path escaped target');
+const forceReducedMotion = process.env.WEBTERMINAL_TEST_REDUCED_MOTION === '1';
+const scratch = resolve(root, '.tmp');
+const profile = resolve(scratch, 'browser-runtime-' + process.pid + '-' + Date.now());
+if (!profile.startsWith(scratch + sep)) throw new Error('Profile path escaped .tmp');
 const chromeCandidates = [
   join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
   join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -19,7 +20,7 @@ for (const candidate of chromeCandidates) {
 }
 if (!chrome) throw new Error('System Chrome was not found');
 
-const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><title>Browser fixture</title></head><body><div id="scroll" class="terminal-scroll" style="position:relative;inset:auto;width:800px;height:400px;padding:14px 18px;overflow:auto"><div id="lines" class="terminal-lines"></div></div><textarea id="keyboard"></textarea><script type="module" src="/harness.js"></script></body></html>';
+const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/terminal.css"><title>Browser fixture</title></head><body><div id="scroll" class="terminal-scroll" style="position:relative;inset:auto;width:800px;height:400px;padding:14px 18px;overflow:auto"><div id="lines" class="terminal-lines"></div></div><textarea id="keyboard"></textarea><script type="module" src="/harness.js"></script></body></html>';
 const harness = String.raw`
 import {TerminalRenderer} from '/render.js';
 import {TerminalInput} from '/input.js';
@@ -29,6 +30,7 @@ const scroll = document.getElementById('scroll');
 const lines = document.getElementById('lines');
 const keyboard = document.getElementById('keyboard');
 const renderer = new TerminalRenderer(scroll, lines);
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const results = [];
 function check(name, run) {
   try { run(); results.push({name, pass:true}); }
@@ -39,6 +41,10 @@ function equal(actual, expected, message) { if (actual !== expected) throw new E
 function cell(text, width, fg='#dce4ed', bg='#10151c', attrs=0, link='') { return [text,width,fg,bg,attrs,link]; }
 function line(text, wrapped=false) { return {wrapped,cells:[...text].map(character => cell(character,1))}; }
 function shot(history, screen, options={}) { return {id:'fixture',seq:options.seq || 1,epoch:1,controller:'view',alive:true,terminal:{cols:80,rows:screen.length,cursor:[0,0,false,'block'],title:'fixture',alternate:false,modes:{},history,screen}}; }
+
+if (${forceReducedMotion}) check('reduced motion is enabled in the browser', () => {
+  expect(reducedMotion,'the browser honors the reduced-motion test flag');
+});
 
 check('DOM width, style, safe link, Unicode cells', () => {
   const first = {wrapped:true,cells:[cell('e\u0301',1,'#ff0000','#10151c',1),cell('🙂',2),cell('',0),cell('Z',1,'#dce4ed','#10151c',0,'javascript:alert(1)')]};
@@ -71,6 +77,72 @@ check('cursor on wide continuation highlights its glyph', () => {
   next.terminal.cursor=[2,0,true,'block'];
   renderer.render(next);
   equal(lines.querySelector('.cursor')?.textContent,'Z','cursor moves off wide glyph');
+});
+
+check('blank colored bands and style-only updates paint whole cells', () => {
+  const band = text => ({wrapped:false,cells:[...text.padEnd(8)].map(character => cell(character,1,'#cccccc','#303030'))});
+  const styled = attrs => ({wrapped:false,cells:[cell('F',1,'#cccccc','#1e1e1e',attrs),cell(' ',1,'#cccccc','#303030')]});
+  const first = shot([band('')],[band('> msg'),styled(2)],{seq:7});
+  first.terminal.cursor=[6,0,true,'block'];
+  renderer.render(first);
+  for (const row of [0,1]) {
+    const nodes = [...lines.children[row].children];
+    const width = nodes.reduce((sum,node) => sum + node.getBoundingClientRect().width,0);
+    expect(nodes.every(node => node.classList.contains('cursor') || getComputedStyle(node).backgroundColor === 'rgb(48, 48, 48)'),'band background on row '+row);
+    expect(Math.abs(width - 8 * renderer.cellWidth) < 1,'band spans every column on row '+row);
+  }
+  const faint = getComputedStyle(lines.children[2].children[0]);
+  equal(faint.backgroundColor,'rgb(30, 30, 30)','faint keeps its cell background');
+  expect(faint.color !== 'rgb(204, 204, 204)','faint dims the glyph');
+  equal(lines.querySelector('.cursor.block')?.textContent,' ','block cursor inside a band');
+  const kept = lines.children[1];
+  const next = shot([band('')],[band('> msg'),styled(32)],{seq:8});
+  next.terminal.cursor=first.terminal.cursor;
+  renderer.render(next);
+  equal(lines.children[1],kept,'unchanged band row stays attached');
+  equal(getComputedStyle(lines.children[2].children[0]).backgroundColor,'rgb(204, 204, 204)','style-only inverse update repaints');
+});
+
+check('blinking text preserves its cell background', () => {
+  renderer.clear();
+  renderer.render(shot([], [{wrapped:false,cells:[cell('B',1,'#112233','#304050',16)]}]));
+  const node=lines.querySelector('.term-cell');
+  const animation=node.getAnimations().find(item=>item.animationName==='text-blink');
+  expect(Boolean(animation)!==reducedMotion,'text animation follows the motion preference');
+  if(animation){animation.pause();animation.currentTime=750;}
+  const style=getComputedStyle(node);
+  equal(style.opacity,'1','blink never attenuates the cell background');
+  equal(style.backgroundColor,'rgb(48, 64, 80)','blink retains the background color');
+  equal(style.color,reducedMotion?'rgb(17, 34, 51)':'rgba(0, 0, 0, 0)','glyph visibility follows the motion preference');
+});
+
+check('block cursor blinks back to the original cell colors', () => {
+  renderer.clear();
+  const snapshot=shot([], [{wrapped:false,cells:[cell('C',1,'#112233','#304050')]}]);
+  snapshot.terminal.cursor=[0,0,true,'block'];
+  renderer.render(snapshot);
+  const node=lines.querySelector('.cursor.block');
+  const animation=node.getAnimations().find(item=>item.animationName==='cursor-blink');
+  if(reducedMotion){
+    expect(!animation,'reduced motion disables cursor animation');
+    equal(getComputedStyle(node).backgroundColor,'rgb(204, 204, 204)','static cursor keeps its rectangular highlight');
+    equal(getComputedStyle(node).color,'rgb(30, 30, 30)','static cursor keeps its contrasting glyph');
+    return;
+  }
+  expect(animation,'block cursor has an animation');
+  animation.pause();animation.currentTime=0;
+  equal(getComputedStyle(node).backgroundColor,'rgb(204, 204, 204)','cursor keeps its rectangular highlight');
+  animation.currentTime=750;
+  const style=getComputedStyle(node);
+  equal(style.backgroundColor,'rgb(48, 64, 80)','cursor blink restores the original background');
+  equal(style.color,'rgb(17, 34, 51)','cursor blink restores the original foreground');
+});
+
+check('underline and strikethrough remain visible together', () => {
+  renderer.clear();
+  renderer.render(shot([], [{wrapped:false,cells:[cell('U',1,'#112233','#304050',8|128)]}]));
+  const decoration=getComputedStyle(lines.querySelector('.term-cell')).textDecorationLine;
+  expect(decoration.includes('underline')&&decoration.includes('line-through'),'both text decorations are drawn');
 });
 
 check('history search and frozen viewport', () => {
@@ -223,7 +295,7 @@ const server = createServer(async (request, response) => {
   try {
     if (path === '/') { response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); response.end(html); return; }
     if (path === '/harness.js') { response.writeHead(200, {'Content-Type':'text/javascript; charset=utf-8'}); response.end(harness); return; }
-    const names = {'/input.js':'input.js','/render.js':'render.js','/style.css':'style.css'};
+    const names = {'/input.js':'input.js','/render.js':'render.js','/style.css':'style.css','/terminal.css':'terminal.css'};
     if (!names[path]) { response.writeHead(404); response.end(); return; }
     const content = await readFile(resolve(root, 'assets', names[path]));
     response.writeHead(200, {'Content-Type':path.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8'});
@@ -236,7 +308,7 @@ let output = '';
 let errors = '';
 let exitCode;
 try {
-  const child = spawn(chrome, ['--headless=new','--dump-dom','--virtual-time-budget=5000','--window-size=1200,900','--user-data-dir=' + profile,url], {windowsHide:true});
+  const child = spawn(chrome, ['--headless=new',...(forceReducedMotion?['--force-prefers-reduced-motion']:[]),'--dump-dom','--virtual-time-budget=5000','--window-size=1200,900','--user-data-dir=' + profile,url], {windowsHide:true});
   const timeout = setTimeout(() => child.kill(), 30000);
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { output += chunk; });

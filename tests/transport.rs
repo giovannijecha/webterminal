@@ -141,6 +141,41 @@ fn same_origin_and_owned_assets_are_enforced() {
 }
 
 #[test]
+fn cross_site_navigation_opens_only_the_application_entry() {
+    let app = Harness::new(shell("--hold", None));
+    let navigation =
+        "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n";
+    for path in ["/", "/index.html"] {
+        let response = app.request(path, navigation);
+        assert!(response.starts_with("HTTP/1.1 200"), "{path}: {response}");
+    }
+    for path in [
+        "/api/sessions",
+        "/api/settings",
+        "/api/files",
+        "/ws",
+        "/app.js",
+    ] {
+        assert!(
+            app.request(path, navigation).starts_with("HTTP/1.1 403"),
+            "{path}"
+        );
+    }
+    for headers in [
+        "Sec-Fetch-Site: cross-site\r\n",
+        "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: iframe\r\n",
+        "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Dest: document\r\n",
+    ] {
+        assert!(app.request("/", headers).starts_with("HTTP/1.1 403"));
+    }
+    let foreign_origin = format!("{navigation}Origin: http://evil.example\r\n");
+    assert!(
+        app.request("/", &foreign_origin)
+            .starts_with("HTTP/1.1 403")
+    );
+}
+
+#[test]
 fn independent_sessions_and_control_transfer() {
     let app = Harness::new(shell("--hold", None));
     let mut owner = app.socket();

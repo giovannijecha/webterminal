@@ -346,12 +346,19 @@ impl Screen {
             if line_index == top_line {
                 top = rebuilt.len();
             }
-            let used = line
-                .cells
-                .iter()
-                .rposition(|c| c.text != " " && c.width != 0)
-                .map_or(0, |i| i + 1);
-            let used = if line.wrapped { old_cols } else { used };
+            // A row's trailing blanks of one visible paint are fill, not
+            // content: a background band spans the remainder of the new row
+            // without wrapping, while default padding is simply dropped.
+            let last = line.cells.last().filter(|_| !line.wrapped);
+            let paint = last.and_then(Cell::blank_paint);
+            let used = match paint {
+                Some(paint) => line
+                    .cells
+                    .iter()
+                    .rposition(|c| c.blank_paint() != Some(paint))
+                    .map_or(0, |i| i + 1),
+                None => old_cols,
+            };
             let mut i = 0;
             while i < used {
                 if line_index == cursor_line && i >= cursor_x && mapped_cursor.is_none() {
@@ -391,6 +398,11 @@ impl Screen {
                 ));
             }
             if !line.wrapped {
+                if let Some(last) = last
+                    && paint.is_some_and(|paint| paint != (BG, 0, "", ""))
+                {
+                    current.cells[x..].fill(last.clone());
+                }
                 rebuilt.push(current);
                 current = Line::new(cols);
                 x = 0;

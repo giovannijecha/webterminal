@@ -1,28 +1,35 @@
 use std::{env, path::PathBuf, process::ExitCode};
 use webterminal::{
-    native,
+    bridge, native,
     server::{Config, Server},
+    settings,
 };
 
 const HELP: &str = "Webterminal - a local browser terminal for Windows
 
-Usage: webterminal [--port PORT] [--cwd DIRECTORY] [--shell COMMAND]
+Usage: webterminal [--port PORT] [--cwd DIRECTORY] [--shell COMMAND] [--config FILE]
 
 Options:
   --port PORT        Loopback HTTP/WebSocket port (default 4183)
   --cwd DIRECTORY    Initial working directory (default current directory)
   --shell COMMAND    Server-wide program override for development checks
+  --config FILE      Settings file (default ~/.webterminal/settings.json)
   -h, --help         Show this help
   -V, --version      Show the package version
 
-Open http://127.0.0.1:4183/ in a browser. Ports 4173 and 4174 are
-reserved by this build. Ctrl+C stops owned sessions and the server.
+Open http://127.0.0.1:4183/ in a browser.
+Ctrl+C stops owned sessions and the server.
 Browser closure disconnects views; Close terminal ends a session.
 Requires Windows 10 version 1809 or later and ConPTY.
 New terminals run Windows PowerShell with -NoLogo -NoProfile.
 ";
 
 fn main() -> ExitCode {
+    // Program adapters run `webterminal bridge ...` to report one event.
+    if env::args_os().nth(1).is_some_and(|arg| arg == "bridge") {
+        bridge::helper::run(env::args_os().skip(2));
+        return ExitCode::SUCCESS;
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -37,7 +44,10 @@ fn run() -> Result<(), String> {
         port: 4183,
         cwd: env::current_dir().map_err(|e| e.to_string())?,
         shell: "powershell.exe -NoLogo -NoProfile".into(),
+        settings: PathBuf::new(),
+        helper: env::current_exe().ok(),
     };
+    let mut settings = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
@@ -66,9 +76,17 @@ fn run() -> Result<(), String> {
                     .into_string()
                     .map_err(|_| "--shell must be Unicode")?
             }
+            Some("--config") => {
+                settings = Some(PathBuf::from(
+                    args.next().ok_or("--config requires a file")?,
+                ))
+            }
             _ => return Err("Unsupported arguments. Run webterminal --help.".into()),
         }
     }
+    config.settings = settings
+        .or_else(settings::default_path)
+        .ok_or("Cannot locate the user profile; pass --config FILE")?;
     config.cwd = config
         .cwd
         .canonicalize()

@@ -63,9 +63,42 @@ fn post(app: &Harness, path: &str, origin: bool, declared: usize, body: &[u8]) -
     let _ = stream.read_to_end(&mut response);
     String::from_utf8_lossy(&response).into_owned()
 }
+fn reply(response: &str) -> Value {
+    json::parse(response.split("\r\n\r\n").nth(1).unwrap()).unwrap()
+}
 fn staged(response: &str) -> PathBuf {
-    let body = response.split("\r\n\r\n").nth(1).unwrap();
-    PathBuf::from(json::parse(body).unwrap().field("path").unwrap())
+    PathBuf::from(reply(response).field("path").unwrap())
+}
+/// Opens an upload that has sent only `sent` of its `declared` body bytes.
+fn start_upload(app: &Harness, path: &str, declared: usize, sent: usize) -> TcpStream {
+    let mut upload = TcpStream::connect(("127.0.0.1", app.port)).unwrap();
+    upload
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    write!(
+        upload,
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Length: {declared}\r\n\r\n",
+        port = app.port
+    )
+    .unwrap();
+    upload.write_all(&vec![7; sent]).unwrap();
+    upload
+}
+fn wait_started(folder: &Path) {
+    let until = Instant::now() + Duration::from_secs(8);
+    while entries(folder) == 0 {
+        assert!(Instant::now() < until, "upload did not start");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+fn finish(mut upload: TcpStream, rest: usize) -> String {
+    upload.write_all(&vec![7; rest]).unwrap();
+    let mut response = Vec::new();
+    let _ = upload.read_to_end(&mut response);
+    String::from_utf8_lossy(&response).into_owned()
+}
+fn entries(folder: &Path) -> usize {
+    std::fs::read_dir(folder).map_or(0, |entries| entries.count())
 }
 fn root(app: &Harness) -> PathBuf {
     std::env::temp_dir()
@@ -95,6 +128,10 @@ fn the_controlling_view_stages_exact_bytes_until_its_session_closes() {
         &bytes,
     );
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let copy = reply(&response);
+    assert_eq!(copy.field("id"), Ok("f1"));
+    assert_eq!(copy.field("name"), Ok("report 日本.pdf"));
+    assert_eq!(copy.integer("size"), Ok(bytes.len() as i64));
     let path = staged(&response);
     assert_eq!(path.file_name().unwrap(), "report 日本.pdf");
     assert!(path.starts_with(root(&app).join(&id)), "{}", path.display());
@@ -160,23 +197,10 @@ fn a_stalled_transfer_does_not_block_input_and_leaves_no_partial_file() {
     let app = Harness::new(shell("--echo", None));
     let mut socket = app.socket();
     let (id, epoch) = session(&app, &mut socket);
-    let mut upload = TcpStream::connect(("127.0.0.1", app.port)).unwrap();
-    write!(
-        upload,
-        "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Length: 1000000\r\n\r\n",
-        target(&id, &socket.view, epoch, "partial.bin"),
-        port = app.port
-    )
-    .unwrap();
-    upload.write_all(&[7; 4096]).unwrap();
+    let path = target(&id, &socket.view, epoch, "partial.bin");
+    let upload = start_upload(&app, &path, 1_000_000, 4096);
     let folder = root(&app).join(&id);
-    let until = Instant::now() + Duration::from_secs(8);
-    while std::fs::read_dir(&folder).is_ok_and(|mut entries| entries.next().is_none())
-        || !folder.exists()
-    {
-        assert!(Instant::now() < until, "upload did not start");
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_started(&folder);
     // Terminal input and output keep flowing while the transfer is open.
     socket.send(&format!(
         "{{\"op\":\"input\",\"id\":{},\"epoch\":{epoch},\"seq\":1,\"data\":\"AFTER\\r\"}}",
@@ -188,10 +212,84 @@ fn a_stalled_transfer_does_not_block_input_and_leaves_no_partial_file() {
     // The browser went away mid-transfer: the partial file is removed.
     drop(upload);
     let until = Instant::now() + Duration::from_secs(8);
-    while std::fs::read_dir(&folder).is_ok_and(|mut entries| entries.next().is_some()) {
+    while entries(&folder) > 0 {
         assert!(Instant::now() < until, "partial upload remained");
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn control_changing_mid_transfer_discards_the_copy() {
+    let app = Harness::new(shell("--echo", None));
+    let mut owner = app.socket();
+    let (id, epoch) = session(&app, &mut owner);
+    let mut other = app.socket();
+    other.send(&format!(
+        "{{\"op\":\"attach\",\"id\":{},\"cols\":80,\"rows\":24}}",
+        json::quote(&id)
+    ));
+    let folder = root(&app).join(&id);
+    let upload = start_upload(
+        &app,
+        &target(&id, &owner.view, epoch, "late.bin"),
+        10_000,
+        4096,
+    );
+    wait_started(&folder);
+
+    other.send(&format!(
+        "{{\"op\":\"claim\",\"id\":{},\"cols\":80,\"rows\":24}}",
+        json::quote(&id)
+    ));
+    let claimed = format!("\"controller\":{}", json::quote(&other.view));
+    let snapshot = other.recv_matching(|text| {
+        text.starts_with("{\"type\":\"snapshot\"") && text.contains(&claimed)
+    });
+    let response = finish(upload, 10_000 - 4096);
+    assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+    assert_eq!(
+        reply(&response).field("error"),
+        Ok("Control changed during upload; the copy was discarded")
+    );
+    assert_eq!(entries(&folder), 0, "a discarded copy must leave no file");
+
+    // The new controller stages normally; the discarded ID is not reused.
+    let epoch = json::parse(&snapshot).unwrap().integer("epoch").unwrap();
+    let response = post(
+        &app,
+        &target(&id, &other.view, epoch, "late.bin"),
+        true,
+        2,
+        b"ok",
+    );
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(reply(&response).field("id"), Ok("f2"));
+    assert_eq!(entries(&folder), 1);
+}
+
+#[test]
+fn a_session_closed_mid_transfer_keeps_no_copy() {
+    let app = Harness::new(shell("--echo", None));
+    let mut socket = app.socket();
+    let (id, epoch) = session(&app, &mut socket);
+    let folder = root(&app).join(&id);
+    let upload = start_upload(
+        &app,
+        &target(&id, &socket.view, epoch, "gone.bin"),
+        10_000,
+        4096,
+    );
+    wait_started(&folder);
+
+    socket.send(&format!("{{\"op\":\"close\",\"id\":{}}}", json::quote(&id)));
+    let until = Instant::now() + Duration::from_secs(8);
+    while app.request("/api/sessions", "").contains(&json::quote(&id)) {
+        assert!(Instant::now() < until, "session did not close");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let response = finish(upload, 10_000 - 4096);
+    assert!(response.starts_with("HTTP/1.1 410"), "{response}");
+    wait_gone(&folder);
 }
 
 fn screen(value: &Value) -> String {
