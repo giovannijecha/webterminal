@@ -196,10 +196,14 @@ async function main(){
   check(noSideScroll(),'four panes share the desktop and keep following output');
   await capture('terminal-wide',1440);
   const {problem,toasts}=await import('/ui.js');
-  await capture('toast-base-320',320,false,480);
-  await pause(100);
   const terminalHeight=()=>focused().querySelector('[id$="terminal-scroll"]').clientHeight;
-  const base320=terminalHeight();
+  async function toastBaseline(width,height){
+    await capture('toast-base-'+width,width,false,height);
+    // A pending native resize can still remove a horizontal scrollbar.
+    await until(()=>{const scroll=focused().querySelector('[id$="terminal-scroll"]');return scroll.scrollWidth<=scroll.clientWidth+1;},'terminal refits before '+width+'px toast baseline');
+    return terminalHeight();
+  }
+  const base320=await toastBaseline(320,480);
   for(let index=0;index<3;index++)problem('Long error '+index,'A detailed local error with a long path: '+('C:\\nested\\folder\\'.repeat(180)));
   await Promise.all([...$('toasts').querySelectorAll('.toast')].flatMap(card=>card.getAnimations()).map(animation=>animation.finished.catch(()=>{})));
   const toastCheck=(label,baseline)=>{
@@ -212,8 +216,7 @@ async function main(){
     check(terminalHeight()===baseline,label+' leaves terminal geometry unchanged');
   };
   await capture('toast-three-long-320',320,true,480);toastCheck('320x480',base320);
-  await capture('toast-base-390',390,false,520);await pause(100);
-  const base390=terminalHeight();
+  const base390=await toastBaseline(390,520);
   await capture('toast-three-long-390',390,true,520);toastCheck('390x520',base390);
   for(const card of [...$('toasts').querySelectorAll('.toast')])toasts.hide(card);
   await capture('toast-restored',1440,false);
