@@ -28,12 +28,6 @@
 .prefs-folder .field{font-size:12px}
 .prefs-folder :is(.help,.error){margin:0;overflow-wrap:anywhere}
 .prefs-folder-actions{display:flex;flex-wrap:wrap;gap:8px}
-.prefs-programs{display:grid;gap:8px;min-width:0;list-style:none}
-.prefs-program{display:flex;align-items:flex-start;gap:12px;min-width:0;padding:12px;border-radius:10px;background:var(--well)}
-.prefs-program>div{display:grid;gap:2px;min-width:0}
-.prefs-program b{color:var(--panel-text);font-size:14px;line-height:21px;font-weight:600}
-.prefs-program .muted{font-size:12px;line-height:18px}
-.prefs-program .mono{color:var(--muted-2);overflow-wrap:anywhere}
 .prefs-problem{display:flex;gap:12px;padding:16px;border:1px solid #6b5a33;border-radius:12px;background:var(--amber-fill)}
 .prefs-problem>.icon{width:20px;height:20px;margin-top:1px;color:var(--warning)}
 .prefs-problem>div{display:grid;justify-items:start;gap:4px;min-width:0}

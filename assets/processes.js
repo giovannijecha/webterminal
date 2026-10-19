@@ -2,7 +2,7 @@
 // server only while this page is visible; details open on explicit selection,
 // and every action targets the owning terminal, never a process ID.
 import {$, avatar, badge, clock, ago, el, icon, patch, pathText, plural} from './dom.js';
-import {control, orderedSessions, programLabel, showTerminal, state, subscribe, terminalName, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {control, orderedSessions, sessionShell, showTerminal, state, subscribe, terminalName, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {dialogs, menu} from './ui.js';
 import {closeTerminals, interrupt} from './actions.js';
 import {openLauncher} from './launcher.js';
@@ -66,7 +66,7 @@ function model() {
     const session = state.sessions.get(entry.id), workspace = workspaceOf(entry.id);
     const processes = (entry.processes || []).map(process => ({...process, key:keyOf(entry.id, process)}));
     const group = {id:entry.id, name:terminalName(entry.id), workspace:workspaceLabel(workspace), family:workspace ? workspaceIndex(workspace) : 0,
-      program:programLabel(session), access:control(entry.id), total:entry.total, truncated:entry.truncated, problem:entry.problem, processes};
+      program:sessionShell(session), access:control(entry.id), total:entry.total, truncated:entry.truncated, problem:entry.problem, processes};
     group.visible = !query || has(group.name) || has(group.workspace) || has(group.program) ? processes : processes.filter(process => has(process.name) || has(process.pid) || has(process.path));
     return group;
   });
@@ -93,7 +93,7 @@ function items(group, process) {
     {label:'Open terminal', icon:'open', action:() => showTerminal(group.id)},
     {separator:true},
     {label:'Interrupt terminal', icon:'stop', hint:access.can ? 'Ctrl+C' : access.label, disabled:!access.can, title:access.can ? 'Sends Ctrl+C to the terminal' : REASONS[access.label], action:() => interrupt(group.id)},
-    {label:'Close terminal…', icon:'square-x', danger:true, action:() => closeTerminals([group.id])},
+    {label:'Close terminal', icon:'square-x', danger:true, action:() => closeTerminals([group.id])},
   ];
 }
 
@@ -162,7 +162,7 @@ function actions(group, run = task => task()) {
     el('button', {class:'btn', type:'button', disabled:!open, dataset:{focus:'detail-open'}, onclick:event => run(() => showTerminal(group.id), event)}, icon('open'), el('span', {text:'Open terminal'})),
     el('button', {class:'btn', type:'button', 'aria-disabled':String(!open || !access.can), 'aria-describedby':reason ? 'process-interrupt-reason' : null, dataset:{focus:'detail-interrupt'},
       onclick:event => { if (open && control(group.id).can) run(() => interrupt(group.id), event); }}, icon('stop'), el('span', {text:'Interrupt terminal'})),
-    el('button', {class:'btn danger', type:'button', disabled:!open, dataset:{focus:'detail-close'}, onclick:event => run(() => closeTerminals([group.id]), event)}, icon('square-x'), el('span', {text:'Close terminal…'})),
+    el('button', {class:'btn danger', type:'button', disabled:!open, dataset:{focus:'detail-close'}, onclick:event => run(() => closeTerminals([group.id]), event)}, icon('square-x'), el('span', {text:'Close terminal'})),
     reason ? el('p', {class:'help', id:'process-interrupt-reason', text:reason}) : null);
 }
 

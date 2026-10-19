@@ -1,8 +1,9 @@
 // Opening terminals: the Open terminal dialog, the Split menu, recent
-// folders and the folder picker. Program availability comes from the server.
+// folders and the folder picker. Every terminal starts the server's shell;
+// programs are started by typing their command in it.
 import {ask} from './connection.js';
-import {PANE_LIMIT, SESSION_LIMIT, WORKSPACE_LIMIT, changed, currentWorkspace, focusedId, shellLabel, state, workspaceById, workspaceLabel} from './model.js';
-import {el, icon, programTile, storage} from './dom.js';
+import {PANE_LIMIT, SESSION_LIMIT, WORKSPACE_LIMIT, currentWorkspace, focusedId, shellLabel, state, workspaceById, workspaceLabel} from './model.js';
+import {el, icon, storage} from './dom.js';
 import {displayPath} from './common.js';
 import {DirectoryPicker} from './directory.js';
 import {Dialogs, choice} from './overlays.js';
@@ -24,34 +25,8 @@ export function startFolder() { return state.settings?.settings?.startFolder || 
 export function splitFolder() { return state.sessions.get(focusedId())?.cwd || startFolder(); }
 const absolute = path => /^[a-z]:[\\/]/i.test(path) || /^\\\\[^\\]/.test(path);
 
-let programLoad = null;
-export function loadPrograms() {
-  if (programLoad) return programLoad;
-  programLoad = (async () => {
-    try {
-      const response = await fetch('/api/programs', {cache:'no-store'});
-      if (!response.ok) throw new Error();
-      state.programs = await response.json();
-    } catch {
-      state.programs = {...(state.programs || {hosted:false, programs:[]}), error:'Could not check installed programs.'};
-    }
-    changed('programs');
-    return state.programs;
-  })();
-  void programLoad.finally(() => { programLoad = null; });
-  return programLoad;
-}
-// PowerShell first, then each optional program with its real availability.
-function choices() {
-  const hosted = Boolean(state.programs?.hosted);
-  return [{id:'', label:shellLabel(state.hello?.shell), available:true}, ...(state.programs?.programs || []).map(program => ({
-    id:program.id, label:program.label, available:hosted && program.available,
-    reason:!hosted ? 'Needs Windows PowerShell as the shell' : program.available ? '' : 'Not found on PATH',
-  }))];
-}
-
 // Returns '' on success or the problem to show.
-export async function launch({cwd, program = '', workspace = state.selected}) {
+export async function launch({cwd, workspace = state.selected}) {
   if (state.sessions.size >= SESSION_LIMIT) return `Webterminal runs up to ${SESSION_LIMIT} terminals. Close one to open another.`;
   let target = workspace && workspace !== 'new' ? workspaceById(workspace) : null;
   if (target && target.sessions.length >= PANE_LIMIT) return `${workspaceLabel(target)} already holds ${PANE_LIMIT} terminals.`;
@@ -61,12 +36,10 @@ export async function launch({cwd, program = '', workspace = state.selected}) {
     target = workspaceById(created);
   }
   try {
-    const command = {op:'create', cwd, workspace:target.id, updates:true, ...hooks.estimate(target.sessions.length + 1)};
-    if (program) command.program = program;
-    const reply = await ask(command);
+    const reply = await ask({op:'create', cwd, workspace:target.id, updates:true, ...hooks.estimate(target.sessions.length + 1)});
     if (!reply) return 'Connection is unavailable. Reconnecting…';
     remember(cwd);
-    hooks.created(reply, {cwd, program:program || null});
+    hooks.created(reply, {cwd});
     return '';
   } catch (error) { return error.message; }
 }
@@ -81,59 +54,16 @@ const picker = new DirectoryPicker({startDirectory:() => from(), create:path => 
 // The picker only hands the chosen path to `handle`; it never opens a terminal itself.
 export function chooseFolder(handle, start = splitFolder) { pick = handle; from = start; picker.open(); }
 
-function programCards(selected) {
-  const group = el('div', {class:'overlay-programs', role:'radiogroup', 'aria-labelledby':'launch-programs-label'});
-  const cards = choices().map(item => el('button', {
-    type:'button', class:'overlay-program', role:'radio', 'aria-checked':String(item.id === selected), 'aria-disabled':item.available ? null : 'true',
-    tabindex:item.id === selected ? '0' : '-1', title:item.reason || null, dataset:{program:item.id},
-  }, programTile(), el('span', {text:item.label}), item.available ? null : el('span', {class:'muted', text:'Unavailable'})));
-  const enabled = () => cards.filter(card => card.getAttribute('aria-disabled') !== 'true');
-  const select = card => {
-    for (const other of cards) { other.setAttribute('aria-checked', String(other === card)); other.tabIndex = other === card ? 0 : -1; }
-    card.focus();
-  };
-  for (const card of cards) {
-    card.addEventListener('click', () => { if (card.getAttribute('aria-disabled') !== 'true') select(card); });
-    card.addEventListener('keydown', event => {
-      const list = enabled(), index = list.indexOf(card);
-      const step = {ArrowRight:1, ArrowDown:1, ArrowLeft:-1, ArrowUp:-1}[event.key];
-      if (!step || index < 0) return;
-      event.preventDefault();
-      select(list[(index + step + list.length) % list.length]);
-    });
+// The Open terminal dialog: folder and destination workspace.
+let launcherPending = null, launcherFolder = null;
+export function openLauncher({workspace = state.selected, cwd = splitFolder()} = {}) {
+  if (launcherPending) {
+    const dialog = launcherFolder?.closest?.('dialog');
+    if (dialog && !dialog.open) { launcherPending = null; launcherFolder = null; }
+    else { if (dialog?.open) launcherFolder.focus(); return launcherPending; }
   }
-  group.append(...cards);
-  return {group, value:() => cards.find(card => card.getAttribute('aria-checked') === 'true')?.dataset.program || ''};
-}
-
-// The Open terminal dialog: program, folder and destination workspace.
-let launcherPending = null;
-export function openLauncher({workspace = state.selected, program = '', cwd = splitFolder()} = {}) {
-  if (launcherPending) { document.querySelector('dialog.launcher[open] .overlay-program[aria-checked="true"]')?.focus(); return launcherPending; }
   if (!state.connected) { problem('Connection is unavailable', 'Reconnecting to the local server…'); return; }
   if (state.sessions.size >= SESSION_LIMIT) { problem('Limit reached', `Webterminal runs up to ${SESSION_LIMIT} terminals. Close one to open another.`); return; }
-  let programs = programCards(choices().some(item => item.id === program && item.available) ? program : '');
-  const programArea = el('div', {}, programs.group);
-  const programStatus = el('p', {class:'help', role:'status'});
-  const retryPrograms = el('button', {class:'btn ghost sm', type:'button', text:'Retry program check'});
-  const updateProgramStatus = loading => {
-    programStatus.textContent = loading ? 'Checking installed programs…' : state.programs?.error || '';
-    retryPrograms.hidden = loading || !state.programs?.error;
-  };
-  let live = true;
-  const refreshPrograms = async () => {
-    updateProgramStatus(true);
-    await loadPrograms();
-    if (!live) return;
-    const selected = programs.value();
-    const focused = programArea.contains(document.activeElement);
-    programs = programCards(choices().some(item => item.id === selected && item.available) ? selected : '');
-    programArea.replaceChildren(programs.group);
-    updateProgramStatus(false);
-    if (focused) programs.group.querySelector('[aria-checked="true"]')?.focus();
-  };
-  retryPrograms.addEventListener('click', refreshPrograms);
-  updateProgramStatus(!state.programs);
   const folder = el('input', {class:'field mono', id:'launch-folder', value:displayPath(cwd), autocomplete:'off', spellcheck:'false'});
   const recent = el('button', {type:'button', class:'btn ghost', 'aria-haspopup':'menu'}, el('span', {text:'Recent folders'}), icon('chevron-down', 'sm'));
   const browse = el('button', {type:'button', class:'btn ghost'}, icon('folder-open'), el('span', {text:'Browse…'}));
@@ -152,11 +82,10 @@ export function openLauncher({workspace = state.selected, program = '', cwd = sp
   select.addEventListener('change', describe);
   describe();
   const combobox = choice(select, 'Workspace');
-  launcherPending = dialogs.show({
-    title:'Open terminal', description:'Start PowerShell, or an agent inside it.', action:'Open terminal', className:'launcher',
-    initial:'.overlay-program[aria-checked=true]',
+  const pending = dialogs.show({
+    title:'Open terminal', description:`Start ${shellLabel(state.hello?.shell)} in a folder, then run any program by typing its command.`, action:'Open terminal', className:'launcher',
+    initial:folder,
     body:[
-      el('div', {}, el('span', {class:'lbl', id:'launch-programs-label', text:'Start with'}), programArea, programStatus, retryPrograms),
       el('div', {}, el('label', {class:'lbl', for:'launch-folder', text:'Folder'}), el('div', {class:'folder-row'}, folder, recent, browse), el('p', {class:'help', text:'Choose a recent folder or enter a full Windows path.'})),
       el('div', {}, el('span', {class:'lbl', id:'launch-workspace-label', text:'Workspace'}), combobox.root, destination),
     ],
@@ -165,29 +94,25 @@ export function openLauncher({workspace = state.selected, program = '', cwd = sp
       Dialogs.invalid(folder, '');
       if (!path) { Dialogs.invalid(folder, 'Enter a folder path.'); return false; }
       if (!absolute(path)) { Dialogs.invalid(folder, 'Enter a full path, for example C:\\dev\\webterminal.'); return false; }
-      return await launch({cwd:path, program:programs.value(), workspace:select.value}) || undefined;
+      return await launch({cwd:path, workspace:select.value}) || undefined;
     },
-  }).finally(() => { live = false; launcherPending = null; });
-  void refreshPrograms();
-  return launcherPending;
+  }).finally(() => { if (launcherPending === pending) { launcherPending = null; launcherFolder = null; } });
+  launcherPending = pending;
+  launcherFolder = folder;
+  return pending;
 }
 
 // Split: a new terminal next to the focused one, in its folder.
 export function splitMenu() {
   const workspace = currentWorkspace(), folder = splitFolder();
   const full = !workspace || workspace.sessions.length >= PANE_LIMIT;
-  const start = program => () => createTerminal({cwd:folder, program, workspace:workspace?.id});
   return [
     {head:`Opens in ${displayPath(folder)}`},
-    ...choices().map(item => ({
-      label:item.id ? `${choices()[0].label} with ${item.label}` : item.label, icon:item.id ? 'sparkles' : 'square-terminal',
-      disabled:full || !item.available, hint:item.available ? '' : 'Unavailable', title:item.reason, action:start(item.id),
-    })),
+    {label:shellLabel(state.hello?.shell), icon:'square-terminal', disabled:full, action:() => createTerminal({cwd:folder, workspace:workspace?.id})},
     {separator:true},
     {label:'Choose folder…', icon:'folder-open', disabled:full, action:() => chooseFolder(path => createTerminal({cwd:path, workspace:workspace?.id}))},
   ];
 }
 export function showSplitMenu(anchor) {
-  loadPrograms();
   menu.toggle(anchor, splitMenu, {label:'Split'});
 }

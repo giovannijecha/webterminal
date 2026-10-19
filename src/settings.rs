@@ -20,6 +20,10 @@
 //! reported through `problem`; the first successful save then keeps that file
 //! as `<stem>.invalid.json` (replacing an older copy) before writing, and
 //! reports it once through the save result's `notice`.
+//!
+//! Files written by earlier versions may still hold the retired
+//! `notifications` preferences. Loading accepts and drops exactly that legacy
+//! shape, so the other saved values stay in effect; new writes omit it.
 mod fields;
 mod file;
 
@@ -55,12 +59,6 @@ pub struct Settings {
     /// Terminal font size in CSS pixels, within [`FONT_SIZES`].
     pub font_size: u8,
     pub terminal_theme: TerminalTheme,
-    /// Notify when a terminal needs input or approval.
-    pub notify_input: bool,
-    /// Notify when an agent reply is ready.
-    pub notify_reply: bool,
-    /// Notify when a terminal or its program failed.
-    pub notify_failure: bool,
 }
 
 impl Default for Settings {
@@ -69,9 +67,6 @@ impl Default for Settings {
             start_folder: None,
             font_size: 13,
             terminal_theme: TerminalTheme::Dark,
-            notify_input: true,
-            notify_reply: true,
-            notify_failure: true,
         }
     }
 }
@@ -162,7 +157,8 @@ impl Store {
         if base_revision != state.revision {
             return Err(SaveError::Conflict(render(&self.path, &state, None)));
         }
-        let next = fields::merge(&state.settings, settings, true).map_err(SaveError::Invalid)?;
+        let next = fields::merge(&state.settings, settings, fields::Source::Save)
+            .map_err(SaveError::Invalid)?;
         let revision = state
             .revision
             .checked_add(1)

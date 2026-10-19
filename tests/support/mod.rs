@@ -47,7 +47,6 @@ impl Harness {
             cwd: cwd.clone(),
             shell,
             settings: cwd.join("settings.json"),
-            helper: None,
         })
         .unwrap();
         let port = server.port;

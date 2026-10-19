@@ -9,7 +9,7 @@ function moduleUnderTest(name, bindings, exports) {
   const source = readFileSync(new URL(`../assets/${name}.js`, import.meta.url), 'utf8')
     .replace(/^import .*;\r?\n/gm, '')
     .replace(/^export /gm, '');
-  const context = vm.createContext({...bindings, TextDecoder, Uint8Array, atob, setTimeout, clearTimeout});
+  const context = vm.createContext({TextDecoder, Uint8Array, atob, setTimeout, clearTimeout, ...bindings});
   vm.runInContext(`${source}\nglobalThis.probed = {${exports.join(',')}};`, context, {filename:name});
   return context.probed;
 }
@@ -35,7 +35,7 @@ test('OSC 52 records terminal provenance only after an approved clipboard write'
   const pane = {id:'s1'};
   const api = moduleUnderTest('workspace', {
     $:() => ({addEventListener() {}}), avatar() {}, el:node, plural:(count, word) => `${count} ${word}s`, storage:() => ({set() {}}),
-    displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed() {}, currentWorkspace() {}, focusedId() {}, go() {}, latestReply() {}, requestsFor() { return []; },
+    displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed() {}, currentWorkspace() {}, focusedId() {}, go() {},
     state:{socket:sockets}, terminalName:() => 'Terminal 1', workspaceIndex() {}, workspaceLabel() {}, createPanes:() => [pane], discardInput() {}, nextRequest() {}, queueInput() {}, send() {}, mergeUpdate() {},
     dialogs:{show:async () => approved}, menu:{}, notify() {}, problem() {}, configureActions() {}, moveTerminal() {}, renameTerminal() {}, renameWorkspace() {}, showTerminalMenu() {}, takeControl() {}, workspaceMenu() {},
     configureLauncher() {}, openLauncher() {}, showSplitMenu() {}, stageDrop() {}, matchMedia:() => ({addEventListener() {}}),
@@ -64,7 +64,7 @@ test('joining and leaving observers refreshes workspace chrome without repaintin
   const state = {view:'v1', sessions:new Map([['s1', session]]), snapshots:new Map([['s1', first]]), attachments:new Map()};
   const api = moduleUnderTest('workspace', {
     $:() => ({addEventListener() {}}), avatar() {}, el:node, plural() {}, storage:() => ({set() {}}),
-    displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed:topic => changes.push(topic), currentWorkspace() {}, focusedId() {}, go() {}, latestReply() {}, requestsFor() { return []; },
+    displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed:topic => changes.push(topic), currentWorkspace() {}, focusedId() {}, go() {},
     state, terminalName() {}, workspaceIndex() {}, workspaceLabel() {}, createPanes:() => [], discardInput() {}, nextRequest() {}, queueInput() {}, send() {}, mergeUpdate() {},
     dialogs:{}, menu:{}, notify() {}, problem() {}, configureActions() {}, moveTerminal() {}, renameTerminal() {}, renameWorkspace() {}, showTerminalMenu() {}, takeControl() {}, workspaceMenu() {},
     configureLauncher() {}, openLauncher() {}, showSplitMenu() {}, stageDrop() {}, matchMedia:() => ({addEventListener() {}}), requestAnimationFrame:() => 1,
@@ -79,63 +79,264 @@ test('joining and leaving observers refreshes workspace chrome without repaintin
   assert.deepEqual(changes, ['focus'], 'observer departure removes the badge');
 });
 
-test('an open launcher includes programs from the first pending discovery', async () => {
-  let complete;
+test('the launcher asks only for a folder and a workspace, then starts the shell there', async () => {
+  const asks = [];
   let shown, showCount = 0;
-  const programs = {hosted:true, programs:[{id:'codex', label:'Codex', available:true}]};
-  const state = {connected:true, sessions:new Map(), workspaces:[{id:'w1', sessions:[], name:null}], selected:'w1', programs:null, hello:{shell:'powershell.exe', cwd:'C:\\work'}};
-  const fakeSelect = () => ({options:[], append(option) { this.options.push(option); }, addEventListener() {}, value:''});
-  const el = (tag, props = {}, ...children) => tag === 'select' ? fakeSelect() : node(tag, props, ...children);
-  const api = moduleUnderTest('launcher', {
-    ask() {}, PANE_LIMIT:4, SESSION_LIMIT:32, WORKSPACE_LIMIT:16, changed() {}, currentWorkspace:() => state.workspaces[0], focusedId:() => null,
-    shellLabel:() => 'PowerShell', state, workspaceById:id => state.workspaces.find(item => item.id === id), workspaceLabel:() => 'Workspace 1',
-    el, icon:() => node('svg'), programTile:() => node('tile'), storage:() => ({get() { return null; }, set() {}}), displayPath:value => value,
-    DirectoryPicker:class {}, Dialogs:class {}, choice:() => ({root:node('choice')}), dialogs:{show:options => { shown = options; showCount++; return new Promise(() => {}); }}, menu:{}, problem() {}, createWorkspace() {},
-    fetch:() => new Promise(resolve => { complete = () => resolve({ok:true, json:async () => programs}); }),
-    document:{activeElement:null, querySelector:() => null},
-  }, ['openLauncher']);
-  api.openLauncher();
-  api.openLauncher();
-  assert.equal(showCount, 1, 'two clicks during discovery use one dialog');
-  complete();
-  await new Promise(resolve => setImmediate(resolve));
-  const nodes = [];
-  const visit = value => { if (Array.isArray(value)) { value.forEach(visit); return; } if (!value || typeof value !== 'object') return; nodes.push(value); for (const child of value.children || []) visit(child); };
-  visit(shown?.body);
-  assert.ok(nodes.some(item => item.dataset?.program === 'codex'), 'Codex is offered without reopening the dialog');
-});
-
-test('launcher reports a failed program check and retries inside the same dialog', async () => {
-  let attempts = 0, shown, showCount = 0;
-  const state = {connected:true, sessions:new Map(), workspaces:[{id:'w1', sessions:[], name:null}], selected:'w1', programs:null, hello:{shell:'powershell.exe', cwd:'C:\\work'}};
+  const state = {connected:true, sessions:new Map(), workspaces:[{id:'w1', sessions:[], name:null}], selected:'w1', hello:{shell:'powershell.exe', cwd:'C:\\work'}};
   const select = () => ({options:[], append(option) { this.options.push(option); }, addEventListener() {}, value:''});
   const api = moduleUnderTest('launcher', {
-    ask() {}, PANE_LIMIT:4, SESSION_LIMIT:32, WORKSPACE_LIMIT:16, changed() {}, currentWorkspace:() => state.workspaces[0], focusedId:() => null,
+    ask:async command => { asks.push(JSON.parse(JSON.stringify(command))); return {id:'s1'}; },
+    PANE_LIMIT:4, SESSION_LIMIT:32, WORKSPACE_LIMIT:16, currentWorkspace:() => state.workspaces[0], focusedId:() => null,
     shellLabel:() => 'PowerShell', state, workspaceById:id => state.workspaces.find(item => item.id === id), workspaceLabel:() => 'Workspace 1',
-    el:(tag, props = {}, ...children) => tag === 'select' ? select() : node(tag, props, ...children), icon:() => node('svg'), programTile:() => node('tile'),
-    storage:() => ({get() { return null; }, set() {}}), displayPath:value => value, DirectoryPicker:class {}, Dialogs:class {}, choice:() => ({root:node('choice')}),
+    el:(tag, props = {}, ...children) => tag === 'select' ? select() : node(tag, props, ...children), icon:() => node('svg'),
+    storage:() => ({get() { return null; }, set() {}}), displayPath:value => value, DirectoryPicker:class {}, Dialogs:class { static invalid() {} }, choice:() => ({root:node('choice')}),
     dialogs:{show:options => { shown = options; showCount++; return new Promise(() => {}); }}, menu:{}, problem() {}, createWorkspace() {},
-    fetch:async () => { if (++attempts === 1) throw new Error('offline'); return {ok:true, json:async () => ({hosted:true, programs:[{id:'codex', label:'Codex', available:true}]})}; },
     document:{activeElement:null, querySelector:() => null},
   }, ['openLauncher']);
   api.openLauncher();
-  await new Promise(resolve => setImmediate(resolve));
+  api.openLauncher();
+  assert.equal(showCount, 1, 'a second click reuses the open dialog');
+  assert.match(shown.description, /^Start PowerShell in a folder/);
   const nodes = [];
   const visit = value => { if (Array.isArray(value)) { value.forEach(visit); return; } if (!value || typeof value !== 'object') return; nodes.push(value); (value.children || []).forEach(visit); };
   visit(shown.body);
-  const status = nodes.find(item => item.props.role === 'status');
-  const retry = nodes.find(item => item.props.text === 'Retry program check');
-  assert.match(status.textContent, /Could not check installed programs/);
-  assert.equal(retry.hidden, false);
-  await retry.events.click();
-  assert.equal(showCount, 1);
-  const latest = [];
-  const collect = value => { if (Array.isArray(value)) { value.forEach(collect); return; } if (!value || typeof value !== 'object') return; latest.push(value); (value.children || []).forEach(collect); };
-  collect(shown.body);
-  assert.equal(attempts, 2);
-  assert.equal(status.textContent, '');
-  assert.equal(retry.hidden, true);
-  assert.ok(latest.some(item => item.dataset?.program === 'codex'));
+  assert.ok(nodes.some(item => item.props?.id === 'launch-folder'), 'folder field');
+  assert.ok(nodes.some(item => item.props?.id === 'launch-workspace-label'), 'workspace choice');
+  assert.ok(nodes.every(item => !item.dataset?.program && !/program/i.test(item.props?.id || '')), 'no program choice');
+  shown.initial.value = 'relative\\folder';
+  assert.equal(await shown.onSubmit(), false, 'a relative folder stays in the form');
+  assert.equal(asks.length, 0);
+  shown.initial.value = 'C:\\work\\app';
+  assert.equal(await shown.onSubmit(), undefined);
+  assert.deepEqual(asks, [{op:'create', cwd:'C:\\work\\app', workspace:'w1', updates:true, cols:120, rows:30}], 'only the shell starts, in the chosen folder');
+});
+
+// The close flow with the server's replies scripted: `replies` answers each
+// request in order, `answers` each confirmation.
+function closeFlow({sessions = ['s1'], workspaces = [{id:'w1', name:null, sessions:[...sessions]}], replies = [], answers = [], during = () => {}} = {}) {
+  const log = {asks:[], confirms:[], notices:[], problems:[]};
+  const state = {sessions:new Map(sessions.map(id => [id, {id, alive:true}])), workspaces, snapshots:new Map()};
+  const words = item => typeof item === 'string' ? item : [item?.props?.text || '', ...(item?.children || []).flatMap(words)].join(' ').trim();
+  const api = moduleUnderTest('actions', {
+    ask:async command => { log.asks.push(JSON.parse(JSON.stringify(command))); const reply = replies.shift(); if (reply instanceof Error) throw reply; return reply; },
+    queueInput() {}, send:() => true, PANE_LIMIT:4, WORKSPACE_LIMIT:16, changed() {}, control:() => ({can:true}), go() {}, showTerminal() {}, state,
+    terminalName:id => `Terminal ${id}`, terminalPlace:() => 'PowerShell in C:\\work', workspaceById:id => state.workspaces.find(item => item.id === id),
+    workspaceLabel:() => 'Workspace 1', workspaceOf:() => state.workspaces[0], el:node, plural:(count, word) => `${count} ${word}${count === 1 ? '' : 's'}`,
+    dialogs:{confirm:async options => { log.confirms.push({title:options.title, description:options.description, action:options.action, targets:options.body.children.map(words)}); during(state, log.confirms.length); return answers.shift(); }},
+    menu:{}, notify:title => log.notices.push(title), problem:title => log.problems.push(title),
+  }, ['closeTerminals', 'closeWorkspace']);
+  return {api, log, state};
+}
+
+test('an idle terminal closes at once, without a confirmation', async () => {
+  const {api, log} = closeFlow({replies:[{type:'closed', ids:['s1']}]});
+  assert.equal(await api.closeTerminals(['s1']), true);
+  assert.deepEqual(log.asks, [{op:'close-sessions', ids:['s1'], force:false}]);
+  assert.deepEqual(log.confirms, []);
+  assert.deepEqual(log.notices, ['Terminal closed']);
+});
+
+test('a busy terminal is confirmed first and Cancel keeps it running', async () => {
+  const kept = closeFlow({replies:[{type:'busy', sessions:['s1'], targets:['s1']}], answers:[false]});
+  assert.equal(await kept.api.closeTerminals(['s1']), false);
+  assert.deepEqual(kept.log.asks, [{op:'close-sessions', ids:['s1'], force:false}], 'Cancel sends nothing more');
+  assert.equal(kept.log.confirms[0].title, 'Close terminal?');
+  assert.match(kept.log.confirms[0].targets[0], /^Terminal s1 Running a program · /);
+  assert.deepEqual(kept.log.notices, []);
+
+  const closed = closeFlow({replies:[{type:'busy', sessions:['s1'], targets:['s1']}, {type:'closed', ids:['s1']}], answers:[true]});
+  assert.equal(await closed.api.closeTerminals(['s1']), true);
+  assert.deepEqual(closed.log.asks.map(command => command.force), [false, true]);
+  assert.deepEqual(closed.log.notices, ['Terminal closed']);
+});
+
+test('terminals closed elsewhere during a confirmation drop out and the rest are confirmed again', async () => {
+  const {api, log} = closeFlow({
+    sessions:['s1', 's2', 's3'], replies:[{type:'busy', sessions:['s2'], targets:['s1', 's2', 's3']}, {type:'closed', ids:['s2', 's3']}], answers:[true, true],
+    during:(state, round) => { if (round === 1) state.sessions.delete('s1'); },
+  });
+  assert.equal(await api.closeTerminals(['s1', 's2', 's3']), true);
+  assert.deepEqual(log.confirms.map(confirm => confirm.title), ['Close 3 terminals?', 'Close 2 terminals?']);
+  assert.equal(log.confirms[1].targets.length, 2, 'the second confirmation names only the remaining terminals');
+  assert.deepEqual(log.asks.at(-1), {op:'close-sessions', ids:['s2', 's3'], force:true}, 'only confirmed terminals are forced');
+});
+
+test('a bulk selection is always confirmed before it closes', async () => {
+  const {api, log} = closeFlow({sessions:['s1', 's2'], replies:[{type:'closed', ids:['s1', 's2']}], answers:[true]});
+  assert.equal(await api.closeTerminals(['s1', 's2'], {confirm:true}), true);
+  assert.equal(log.confirms.length, 1);
+  assert.deepEqual(log.asks, [{op:'close-sessions', ids:['s1', 's2'], force:true}]);
+  assert.deepEqual(log.notices, ['2 terminals closed']);
+});
+
+test('an empty or idle workspace closes at once; a busy one confirms its exact terminals', async () => {
+  const idle = closeFlow({replies:[{type:'sessions', workspaces:[]}]});
+  assert.equal(await idle.api.closeWorkspace('w1'), true);
+  assert.deepEqual(idle.log.asks, [{op:'close-workspace', id:'w1', targets:['s1']}]);
+  assert.deepEqual(idle.log.confirms, []);
+
+  const busy = closeFlow({sessions:['s1', 's2'], replies:[{type:'busy', op:'close-workspace', id:'w1', sessions:['s2'], targets:['s1', 's2']}, {type:'sessions', workspaces:[]}], answers:[true]});
+  assert.equal(await busy.api.closeWorkspace('w1'), true);
+  assert.equal(busy.log.confirms[0].targets.length, 2);
+  assert.deepEqual(busy.log.asks[0], {op:'close-workspace', id:'w1', targets:['s1', 's2']});
+  assert.deepEqual(busy.log.asks.at(-1), {op:'close-workspace', id:'w1', targets:['s1', 's2'], force:true});
+  assert.deepEqual(busy.log.notices, ['Workspace closed']);
+
+  const kept = closeFlow({sessions:['s1'], replies:[{type:'busy', op:'close-workspace', id:'w1', sessions:['s1'], targets:['s1']}], answers:[false]});
+  assert.equal(await kept.api.closeWorkspace('w1'), false);
+  assert.equal(kept.log.asks.length, 1, 'Cancel leaves the workspace running');
+});
+
+test('an empty workspace that gained an idle terminal asks before closing it', async () => {
+  const added = closeFlow({sessions:[], workspaces:[{id:'w1', name:null, sessions:[]}],
+    replies:[{type:'busy', op:'close-workspace', id:'w1', sessions:[], targets:['s1']}], answers:[false],
+    during:state => { state.sessions.set('s1', {id:'s1', alive:true}); state.workspaces[0].sessions.push('s1'); }});
+  assert.equal(await added.api.closeWorkspace('w1'), false);
+  assert.deepEqual(added.log.asks, [{op:'close-workspace', id:'w1', targets:[]}]);
+  assert.equal(added.log.confirms[0].title, 'Workspace changed');
+  assert.match(added.log.confirms[0].description, /Its terminals changed/);
+  assert.doesNotMatch(added.log.confirms[0].description, /still running/);
+});
+
+test('a workspace that gains terminals during its confirmation is never closed silently', async () => {
+  const local = closeFlow({
+    sessions:['s1'], replies:[{type:'busy', op:'close-workspace', id:'w1', sessions:['s1'], targets:['s1']}], answers:[true],
+    during:state => state.workspaces[0].sessions.push('s9'),
+  });
+  assert.equal(await local.api.closeWorkspace('w1'), false);
+  assert.equal(local.log.asks.length, 1, 'a changed workspace sends no forced close');
+  assert.deepEqual(local.log.problems, ['Workspace changed']);
+
+  const remote = closeFlow({
+    sessions:['s1'], answers:[true, false],
+    replies:[{type:'busy', op:'close-workspace', id:'w1', sessions:['s1'], targets:['s1']}, {type:'busy', op:'close-workspace', id:'w1', sessions:['s1'], targets:['s1', 's9']}],
+  });
+  assert.equal(await remote.api.closeWorkspace('w1'), false);
+  assert.deepEqual(remote.log.confirms.map(confirm => confirm.title), ['Close workspace?', 'Workspace changed']);
+  assert.equal(remote.log.confirms[1].targets.length, 2, 'the server-reported set is confirmed again');
+});
+
+// Toasts over a minimal DOM and a manual clock.
+function toastBench() {
+  const doc = {activeElement:null};
+  class FakeNode {
+    constructor(tag, props = {}) { Object.assign(this, {tag, props, children:[], parent:null, events:{}, isConnected:true, hidden:false, textContent:props.text || ''}); }
+    append(...items) { for (const item of items.flat(Infinity)) if (item) { item.parent = this; this.children.push(item); } }
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter(item => item !== this); this.parent = null; }
+    contains(target) { for (let item = target; item; item = item.parent) if (item === this) return true; return false; }
+    addEventListener(name, run) { (this.events[name] ||= []).push(run); }
+    fire(name, event = {}) { for (const run of this.events[name] || []) run({preventDefault() {}, stopPropagation() {}, ...event}); }
+    focus() { doc.activeElement = this; }
+    find(test) { if (test(this)) return this; for (const child of this.children) { const found = child.find?.(test); if (found) return found; } return null; }
+  }
+  let now = 0, next = 0;
+  const timers = new Map();
+  const clock = {
+    setTimeout:(run, ms) => { timers.set(++next, {at:now + ms, run}); return next; },
+    clearTimeout:id => timers.delete(id),
+    advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        const due = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        now = due[1].at;
+        due[1].run();
+      }
+      now = end;
+    },
+  };
+  const el = (tag, props = {}, ...children) => { const item = new FakeNode(tag, props); item.append(...children); return item; };
+  const {Toasts} = moduleUnderTest('toasts', {el, icon:() => el('svg'), Node:FakeNode, document:doc, setTimeout:clock.setTimeout, clearTimeout:clock.clearTimeout}, ['Toasts']);
+  const root = el('div'), live = el('div'), home = el('h1');
+  const toasts = new Toasts(root, live, {home:() => home});
+  const titles = () => root.children.map(item => item.props['aria-label']);
+  return {toasts, root, live, home, doc, el, clock, titles};
+}
+
+test('successful toasts expire after about four seconds; errors stay until dismissed', () => {
+  const {toasts, clock, titles, live, root} = toastBench();
+  toasts.show({title:'Saved'});
+  toasts.show({title:'Could not save', kind:'error'});
+  toasts.show({title:'Moved', action:{label:'Undo', run() {}}});
+  clock.advance(30);
+  assert.equal(live.textContent, 'Moved', 'the newest toast is announced');
+  clock.advance(3990);
+  assert.deepEqual(titles(), ['Could not save', 'Moved']);
+  clock.advance(4000);
+  assert.deepEqual(titles(), ['Could not save'], 'a toast with an action lingers longer');
+  clock.advance(60000);
+  assert.deepEqual(titles(), ['Could not save']);
+  root.children[0].children[1].fire('click');
+  assert.deepEqual(titles(), []);
+  assert.equal(root.hidden, true, 'an empty region is hidden');
+});
+
+test('pointer or focus on a toast holds it; leaving starts a full delay again', () => {
+  const {toasts, clock, titles, root} = toastBench();
+  const node = toasts.show({title:'Saved'});
+  clock.advance(3000);
+  node.fire('pointerenter');
+  clock.advance(10000);
+  assert.deepEqual(titles(), ['Saved'], 'hover pauses expiry');
+  node.fire('focusin', {relatedTarget:null});
+  node.fire('pointerleave');
+  clock.advance(10000);
+  assert.deepEqual(titles(), ['Saved'], 'focus still holds it');
+  node.fire('focusout', {relatedTarget:null});
+  clock.advance(3999);
+  assert.deepEqual(titles(), ['Saved']);
+  clock.advance(1);
+  assert.equal(root.children.length, 0);
+});
+
+test('a replaced toast cannot dismiss its successor with a stale timer', () => {
+  const {toasts, clock, titles} = toastBench();
+  toasts.show({title:'Saved once', key:'settings'});
+  clock.advance(3000);
+  toasts.show({title:'Saved twice', key:'settings'});
+  assert.deepEqual(titles(), ['Saved twice'], 'the same key replaces the older toast');
+  clock.advance(1500);
+  assert.deepEqual(titles(), ['Saved twice'], 'the first timer is gone');
+  clock.advance(2500);
+  assert.deepEqual(titles(), []);
+});
+
+test('at most three toasts show, and errors are evicted last', () => {
+  const {toasts, titles} = toastBench();
+  toasts.show({title:'Error', kind:'error'});
+  toasts.show({title:'One'});
+  toasts.show({title:'Two'});
+  toasts.show({title:'Three'});
+  assert.deepEqual(titles(), ['Error', 'Two', 'Three']);
+});
+
+test('dismissing a focused toast returns focus without stealing it on show', () => {
+  const {toasts, doc, el, home} = toastBench();
+  const terminal = el('textarea');
+  terminal.focus();
+  const node = toasts.show({title:'Interrupt sent'});
+  assert.equal(doc.activeElement, terminal, 'showing a toast keeps focus where it was');
+  const dismiss = node.children[1];
+  node.fire('focusin', {relatedTarget:terminal});
+  dismiss.focus();
+  node.fire('keydown', {key:'Escape'});
+  assert.equal(doc.activeElement, terminal, 'Escape returns focus to the previous control');
+  const second = toasts.show({title:'Saved'});
+  second.fire('focusin', {relatedTarget:terminal});
+  second.children[1].focus();
+  terminal.isConnected = false;
+  second.children[1].fire('click');
+  assert.equal(doc.activeElement, home, 'without a previous control focus goes to the page heading');
+});
+
+test('a toast action runs once and closes its toast', () => {
+  const {toasts, titles} = toastBench();
+  let runs = 0;
+  const node = toasts.show({title:'Moved', action:{label:'Undo', run:() => runs++}});
+  node.find(item => item.props.text === 'Undo').fire('click');
+  assert.equal(runs, 1);
+  assert.deepEqual(titles(), []);
 });
 
 test('mobile file details track upload failure and successful retry', () => {

@@ -1,10 +1,9 @@
-//! Read-only JSON routes for views: server identity, optional programs,
-//! owned processes, staged copies, settings and agent activity.
+//! Read-only JSON routes for views: server identity, owned processes,
+//! staged copies and settings.
 use super::Context;
 use crate::{
     json,
     native::{PROCESS_LIMIT, ProcessInfo},
-    programs::{self, PROGRAMS, Program},
     session::unix_ms,
     terminal::HISTORY_LIMIT,
 };
@@ -16,11 +15,9 @@ pub(super) fn get(path: &str, context: &Context) -> Option<String> {
         "/api/sessions" => registry.list_json(),
         "/api/places" => places(context),
         "/api/info" => info(context),
-        "/api/programs" => available_programs(&registry.shell),
         "/api/processes" => processes(context),
         "/api/files" => registry.uploads.copies_json(),
         "/api/settings" => context.settings.json(),
-        "/api/agents" => registry.bridge.json(),
         _ => return None,
     })
 }
@@ -39,35 +36,6 @@ fn info(context: &Context) -> String {
         unix_ms().saturating_sub(context.started),
         json::quote(&context.settings.path().to_string_lossy()),
     )
-}
-
-/// Which optional programs can start now. Lookup reads `PATH` only and never
-/// runs a program or reads its configuration.
-fn available_programs(shell: &str) -> String {
-    let hosted = programs::hosts_programs(shell);
-    let path = std::env::var_os("PATH");
-    let entries = PROGRAMS
-        .iter()
-        .map(|&program| {
-            let found = hosted
-                .then(|| programs::locate(program, path.as_deref()))
-                .flatten();
-            format!(
-                "{{\"id\":{},\"label\":{},\"available\":{},\"path\":{},\"bridge\":{}}}",
-                json::quote(program.id()),
-                json::quote(program.label()),
-                found.is_some(),
-                found.map_or_else(|| "null".into(), |p| json::quote(&p.to_string_lossy())),
-                json::quote(match program {
-                    Program::Claude => "requests",
-                    Program::Codex => "replies",
-                    Program::Jecode => "none",
-                })
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{\"type\":\"programs\",\"hosted\":{hosted},\"programs\":[{entries}]}}")
 }
 
 /// Processes inside each terminal's own job. Each list is a bounded snapshot;

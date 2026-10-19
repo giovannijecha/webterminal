@@ -1,57 +1,54 @@
-// Reader: an inbox of agent replies and Markdown pasted or captured from the
-// clipboard, kept in this browser tab's memory only. The list comes first; a
-// reply opens on its own with copy, find, outline and its exact source.
+// Reader: Markdown pasted or captured from the clipboard, kept in this
+// browser tab's memory only. The list comes first; a document opens on its
+// own with copy, find, outline and its exact source.
 import {$, ago, clock, el, icon, plural} from './dom.js';
 import {renderMarkdown} from './markdown.js';
 import {ClipboardFollower, Documents, clipboardSource, filterDocuments, meaningful} from './documents.js';
-import {changed, go, noteCopied, programLabel, showTerminal, state, subscribe, terminalName, workspaceLabel, workspaceOf} from './model.js';
+import {changed, go, noteCopied, sessionShell, showTerminal, state, subscribe, terminalName, workspaceLabel, workspaceOf} from './model.js';
 import {dialogs, menu, notify, problem} from './ui.js';
 
 const MATCH_LIMIT = 2000, FOLLOW_INTERVAL = 1000;
-const TOPICS = ['page', 'replies', 'documents', 'sessions', 'connection'];
+const TOPICS = ['page', 'documents', 'sessions', 'connection'];
 const FILTERS = [['all', 'All'], ['unread', 'Unread']];
 const docs = new Documents();
 const view = {panel:'list', key:null, query:'', filter:'all', target:undefined, nodes:null, rendered:'', listScroll:0};
 const find = {open:false, ranges:[], index:-1};
 let poll = 0;
 
-// Terminal names are recorded while terminals exist, so a reply keeps
+// Terminal names are recorded while terminals exist, so a copy keeps
 // naming its source after that terminal closes.
 function rememberPlaces() {
-  for (const [id, session] of state.sessions) docs.remember(id, {name:terminalName(id), workspace:workspaceLabel(workspaceOf(id)), program:programLabel(session)});
+  for (const [id, session] of state.sessions) docs.remember(id, {name:terminalName(id), workspace:workspaceLabel(workspaceOf(id)), shell:sessionShell(session)});
 }
 subscribe(topics => { if (topics.has('sessions')) rememberPlaces(); });
 rememberPlaces();
 
-const all = () => docs.list(state.replies);
-const current = () => (view.key && docs.find(view.key, state.replies)) || null;
+const all = () => docs.list();
+const current = () => (view.key && docs.find(view.key)) || null;
 
 function origin(doc) {
   if (doc.kind === 'pasted' || doc.kind === 'clipboard') {
     const label = doc.kind === 'pasted' ? 'Pasted' : 'Clipboard';
     return {label, line:label, id:null, live:false};
   }
-  const live = state.sessions.has(doc.id), place = docs.place(doc.id) || (doc.reply?.name ? doc.reply : null);
+  // Only OSC 52 copies name a terminal.
+  const live = state.sessions.has(doc.id), place = docs.place(doc.id);
   const name = live ? terminalName(doc.id) : place?.name;
-  const program = doc.program || place?.program || '';
+  const shell = doc.shell || place?.shell || '';
   const terminal = live ? name : name ? `Closed terminal ${name}` : 'Closed terminal';
   const workspace = live ? workspaceLabel(workspaceOf(doc.id)) : place?.workspace || '';
-  const label = doc.kind === 'copy' ? 'Copied from a terminal' : 'Agent reply';
-  return {label, program, terminal, workspace, id:doc.id, live, line:[doc.kind === 'copy' ? `Copied from ${program || 'a terminal'}` : program, terminal, workspace].filter(Boolean).join(' · ')};
+  return {label:'Copied from a terminal', shell, terminal, workspace, id:doc.id, live, line:[`Copied from ${shell || 'a terminal'}`, terminal, workspace].filter(Boolean).join(' · ')};
 }
 
 function markRead(doc, read) {
-  if (doc.kind === 'reply') {
-    const reply = state.replies.find(item => item.seq === doc.seq);
-    if (reply && reply.read !== read) { reply.read = read; changed('replies'); }
-  } else if (doc.read !== read) changed('documents');
+  if (doc.read !== read) changed('documents');
   doc.read = read;
 }
 
 // Sources
 function addPasted(text) {
-  const {doc, added} = docs.add(text, {kind:'pasted'}, state.replies);
-  if (!doc) { problem('Nothing to add', 'Paste some text before adding a reply.'); return; }
+  const {doc, added} = docs.add(text, {kind:'pasted'});
+  if (!doc) { problem('Nothing to add', 'Paste some text before adding a document.'); return; }
   follower.saw(text);
   open(doc.key);
   if (!added) notify('Already in Reader', 'The same text was already here, so it opened instead.', null, 'reader');
@@ -65,10 +62,10 @@ async function pasteFromClipboard() {
 }
 
 function pasteDialog(reason) {
-  const field = el('textarea', {class:'field reader-paste-input', id:'reader-paste-input', rows:8, placeholder:'# Reply title\n\nPaste Markdown here.', 'aria-describedby':'reader-paste-help'});
-  const body = el('div', {class:'reader-paste-fields'}, el('p', {class:'help', text:reason}), el('label', {}, el('span', {class:'lbl', text:'Reply'}), field), el('p', {class:'help', id:'reader-paste-help', text:'The first heading or line becomes the title.'}));
-  dialogs.show({title:'Paste Markdown', description:'Add a reply to this browser tab.', body, initial:field, action:'Add reply', onSubmit:() => {
-    if (!field.value.trim()) return 'Paste some text before adding a reply.';
+  const field = el('textarea', {class:'field reader-paste-input', id:'reader-paste-input', rows:8, placeholder:'# Document title\n\nPaste Markdown here.', 'aria-describedby':'reader-paste-help'});
+  const body = el('div', {class:'reader-paste-fields'}, el('p', {class:'help', text:reason}), el('label', {}, el('span', {class:'lbl', text:'Document'}), field), el('p', {class:'help', id:'reader-paste-help', text:'The first heading or line becomes the title.'}));
+  dialogs.show({title:'Paste Markdown', description:'Add a document to this browser tab.', body, initial:field, action:'Add document', onSubmit:() => {
+    if (!field.value.trim()) return 'Paste some text before adding a document.';
     addPasted(field.value);
     return true;
   }});
@@ -101,7 +98,7 @@ function capture(text) {
   const source = clipboardSource(text, state.copies);
   if (!source) return;
   const session = source.id && state.sessions.get(source.id);
-  const {doc, added} = docs.add(text, {kind:source.kind, id:source.id, program:session ? programLabel(session) : ''}, state.replies);
+  const {doc, added} = docs.add(text, {kind:source.kind, id:source.id, shell:session ? sessionShell(session) : ''});
   if (!added) return;
   changed('documents');
   if (state.page !== 'reader') notify('Saved to Reader', doc.title, {label:'Read', run:() => go('reader', {doc:doc.key})}, `reader:${doc.key}`);
@@ -149,7 +146,7 @@ function remove(doc) {
   markRead(doc, true);
   if (view.key === doc.key) back(false);
   changed('documents');
-  notify(doc.kind === 'reply' ? 'Reply removed' : 'Document removed', doc.title, {label:'Undo', run:() => {
+  notify('Document removed', doc.title, {label:'Undo', run:() => {
     docs.restore(undo);
     markRead(doc, wasRead);
     changed('documents');
@@ -159,14 +156,14 @@ function remove(doc) {
 function sourceDetails(doc) {
   const source = origin(doc), lines = doc.text.split('\n').length;
   const fact = (label, value) => value ? [el('dt', {text:label}), el('dd', {text:value})] : null;
-  dialogs.show({title:'Reply source', description:doc.title, action:'Done', cancel:false, body:el('dl', {class:'facts'},
-    fact('Source', source.label), fact('Program', source.program), fact('Terminal', source.terminal), fact('Workspace', source.workspace),
-    fact(doc.kind === 'reply' ? 'Received' : 'Added', `${clock(doc.at)} · ${ago(doc.at)}`), fact('Length', `${plural(lines, 'line')} · ${plural(doc.text.length, 'character')}`),
+  dialogs.show({title:'Document source', description:doc.title, action:'Done', cancel:false, body:el('dl', {class:'facts'},
+    fact('Source', source.label), fact('Shell', source.shell), fact('Terminal', source.terminal), fact('Workspace', source.workspace),
+    fact('Added', `${clock(doc.at)} · ${ago(doc.at)}`), fact('Length', `${plural(lines, 'line')} · ${plural(doc.text.length, 'character')}`),
     fact('Kept', 'In this browser tab only, until it reloads.'))});
 }
 
 function open(key, focus = true) {
-  const doc = docs.find(key, state.replies);
+  const doc = docs.find(key);
   if (!doc) return false;
   if (view.panel === 'list' && view.nodes) view.listScroll = view.nodes.scroll.scrollTop;
   view.key = key;
@@ -190,7 +187,7 @@ function back(focus = true) {
 function optionItems() {
   const list = all(), unread = list.filter(doc => !doc.read);
   return [
-    {label:'Search replies', icon:'search', action:() => { if (view.panel !== 'list') back(false); view.nodes.search.focus(); }},
+    {label:'Search documents', icon:'search', action:() => { if (view.panel !== 'list') back(false); view.nodes.search.focus(); }},
     {label:'Mark all as read', icon:'check', disabled:!unread.length, action:() => { unread.forEach(doc => markRead(doc, true)); changed('documents'); }},
     {separator:true},
     {label:'Follow clipboard', icon:'clipboard-paste', checked:follower.enabled, hint:follower.enabled ? 'On' : 'Off', action:toggleFollow},
@@ -200,12 +197,12 @@ function optionItems() {
 function documentItems(doc) {
   const headings = [...view.nodes.prose.querySelectorAll('h1, h2, h3')];
   return [
-    {label:'Find in reply', icon:'text-search', action:openFind},
+    {label:'Find in document', icon:'text-search', action:openFind},
     {label:'On this page', icon:'outline', disabled:!headings.length, hint:headings.length ? undefined : 'No headings', submenu:() => headings.map(heading => ({label:heading.textContent || 'Untitled', action:() => reveal(heading)}))},
     {label:doc.read ? 'Mark as unread' : 'Mark as read', icon:'eye', action:() => { markRead(doc, !doc.read); if (!doc.read) back(); else paint(); }},
     {label:'Source details', icon:'info', action:() => sourceDetails(doc)},
     {separator:true},
-    {label:doc.kind === 'reply' ? 'Remove reply' : 'Remove document', icon:'square-x', danger:true, action:() => remove(doc)},
+    {label:'Remove document', icon:'square-x', danger:true, action:() => remove(doc)},
   ];
 }
 
@@ -215,7 +212,7 @@ function reveal(node) {
   node.focus({preventScroll:true});
 }
 
-// Find in reply, highlighted with the CSS Custom Highlight API so the
+// Find in document, highlighted with the CSS Custom Highlight API so the
 // rendered document is never modified.
 function openFind() {
   find.open = true;
@@ -285,34 +282,34 @@ function build() {
   const following = el('span', {class:'status-badge reader-following', title:'Following clipboard', hidden:true}, el('span', {class:'status-label', text:'Following clipboard'}));
   $('reader-actions').replaceChildren(following, paste, options);
 
-  const search = el('input', {class:'field', type:'search', id:'reader-search', placeholder:'Search replies', autocomplete:'off', 'aria-label':'Search replies', value:view.query});
+  const search = el('input', {class:'field', type:'search', id:'reader-search', placeholder:'Search documents', autocomplete:'off', 'aria-label':'Search documents', value:view.query});
   search.addEventListener('input', () => { view.query = search.value; paint(); });
-  const filters = el('div', {class:'segment reader-filter', role:'group', 'aria-label':'Show replies'},
+  const filters = el('div', {class:'segment reader-filter', role:'group', 'aria-label':'Show documents'},
     FILTERS.map(([key, label]) => el('button', {class:'btn sm', type:'button', dataset:{filter:key}, 'aria-pressed':String(view.filter === key)}, el('span', {text:label}), el('span', {class:'reader-count', dataset:{count:key}}))));
   filters.addEventListener('click', event => {
     const key = event.target.closest('[data-filter]')?.dataset.filter;
     if (key) { view.filter = key; paint(); }
   });
   const summary = el('p', {class:'reader-summary', role:'status'});
-  const list = el('ul', {class:'reader-index', 'aria-label':'Replies'});
+  const list = el('ul', {class:'reader-index', 'aria-label':'Documents'});
   list.addEventListener('click', event => { const key = event.target.closest('[data-key]')?.dataset.key; if (key) open(key); });
   const empty = el('div', {class:'state reader-empty', hidden:true});
   const scroll = el('div', {class:'reader-index-scroll'}, list, empty);
-  const collection = el('section', {class:'reader-collection', 'aria-label':'Replies'},
+  const collection = el('section', {class:'reader-collection', 'aria-label':'Documents'},
     el('div', {class:'reader-collection-tools'}, el('label', {class:'search-field reader-search'}, icon('search'), search), el('div', {class:'reader-tools-row'}, filters, summary)), scroll);
 
-  const backButton = el('button', {class:'btn sm ghost reader-back', type:'button'}, icon('chevron-left'), 'All replies');
+  const backButton = el('button', {class:'btn sm ghost reader-back', type:'button'}, icon('chevron-left'), 'All documents');
   backButton.addEventListener('click', () => back());
   const title = el('h2', {class:'reader-document-title', id:'reader-document-title', tabindex:'-1'});
   const openTerminal = labelled('square-terminal', 'Open terminal', 'Open terminal');
   openTerminal.addEventListener('click', () => { const doc = current(); if (doc?.id && state.sessions.has(doc.id)) showTerminal(doc.id); });
   const copy = labelled('copy', 'Copy Markdown', 'Copy');
   copy.addEventListener('click', () => { const doc = current(); if (doc) copyText(doc.text, 'Copied as Markdown', doc.title); });
-  const more = iconButton('ellipsis', 'Reply actions', {'aria-haspopup':'menu', 'aria-expanded':'false'});
-  more.addEventListener('click', () => { const doc = current(); if (doc) menu.toggle(more, () => documentItems(doc), {label:'Reply actions'}); });
+  const more = iconButton('ellipsis', 'Document actions', {'aria-haspopup':'menu', 'aria-expanded':'false'});
+  more.addEventListener('click', () => { const doc = current(); if (doc) menu.toggle(more, () => documentItems(doc), {label:'Document actions'}); });
   const caption = el('p', {class:'reader-document-caption'});
 
-  const findInput = el('input', {class:'field', type:'search', id:'reader-find', placeholder:'Find in reply', autocomplete:'off', 'aria-label':'Find in reply'});
+  const findInput = el('input', {class:'field', type:'search', id:'reader-find', placeholder:'Find in document', autocomplete:'off', 'aria-label':'Find in document'});
   findInput.addEventListener('input', findMatches);
   findInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
@@ -333,7 +330,7 @@ function build() {
     const block = button.closest('.md-code');
     copyText(block.querySelector('code').textContent, 'Block copied', block.querySelector('.md-code-language')?.textContent || '');
   });
-  const article = el('div', {class:'reader-article', tabindex:'0', 'aria-label':'Reply content'}, prose);
+  const article = el('div', {class:'reader-article', tabindex:'0', 'aria-label':'Document content'}, prose);
   const detail = el('section', {class:'reader-detail', 'aria-labelledby':'reader-document-title'},
     el('div', {class:'reader-detail-header'}, backButton, el('div', {class:'reader-title-row'}, title, el('div', {class:'reader-document-actions'}, openTerminal, copy, more)), caption),
     tools, article);
@@ -353,9 +350,9 @@ function paintActions() {
 
 function rowNode(doc) {
   const source = origin(doc);
-  return el('li', {dataset:{key:doc.key}}, el('button', {class:'reader-reply', type:'button', dataset:{key:doc.key, read:String(doc.read)}},
-    el('span', {class:'reader-reply-top'}, el('b', {text:doc.title}), doc.read ? null : el('span', {class:'reader-read-label', text:'Unread'})),
-    el('span', {class:'reader-reply-source', text:`${source.line} · ${ago(doc.at)}`})));
+  return el('li', {dataset:{key:doc.key}}, el('button', {class:'reader-item', type:'button', dataset:{key:doc.key, read:String(doc.read)}},
+    el('span', {class:'reader-item-top'}, el('b', {text:doc.title}), doc.read ? null : el('span', {class:'reader-read-label', text:'Unread'})),
+    el('span', {class:'reader-item-source', text:`${source.line} · ${ago(doc.at)}`})));
 }
 
 function paintList(list) {
@@ -366,7 +363,7 @@ function paintList(list) {
     button.setAttribute('aria-pressed', String(view.filter === key));
     text(button.querySelector('[data-count]'), String(count));
   }
-  text(summary, visible.length === list.length ? plural(list.length, 'reply', 'replies') : `${visible.length} of ${plural(list.length, 'reply', 'replies')}`);
+  text(summary, visible.length === list.length ? plural(list.length, 'document') : `${visible.length} of ${plural(list.length, 'document')}`);
   const target = view.nodes.list, focus = document.activeElement, focusKey = target.contains(focus) ? focus.dataset.key : null;
   const existing = new Map([...target.children].map(node => [node.dataset.key, node]));
   const wanted = visible.map(doc => {
@@ -393,12 +390,12 @@ function paintEmpty(total) {
   if (!total) {
     const paste = el('button', {class:'btn primary', type:'button', text:'Paste Markdown'});
     paste.addEventListener('click', pasteFromClipboard);
-    empty.replaceChildren(el('h2', {text:'No replies yet'}), el('p', {text:'Agent replies arrive here on their own. Paste a reply to read it here too. Documents stay in this browser tab.'}), paste);
+    empty.replaceChildren(el('h2', {text:'No documents yet'}), el('p', {text:'Paste Markdown to read it here, or follow the clipboard to keep what you copy. Documents stay in this browser tab.'}), paste);
     return;
   }
-  const clear = el('button', {class:'btn', type:'button', text:view.query ? 'Clear search' : 'Show all replies'});
+  const clear = el('button', {class:'btn', type:'button', text:view.query ? 'Clear search' : 'Show all documents'});
   clear.addEventListener('click', () => { view.query = ''; view.filter = 'all'; view.nodes.search.value = ''; paint(); view.nodes.search.focus(); });
-  empty.replaceChildren(el('h2', {text:view.query ? 'No matching replies' : 'No unread replies'}), el('p', {text:view.query ? `Nothing matches “${view.query.trim()}”.` : 'Everything here has been read.'}), clear);
+  empty.replaceChildren(el('h2', {text:view.query ? 'No matching documents' : 'No unread documents'}), el('p', {text:view.query ? `Nothing matches “${view.query.trim()}”.` : 'Everything here has been read.'}), clear);
 }
 
 function paintDocument(doc) {
@@ -431,12 +428,12 @@ function text(node, value) { if (node.textContent !== value) node.textContent = 
 
 function apply(target) {
   view.target = target;
-  const key = target?.reply !== undefined ? `r:${target.reply}` : target?.doc;
+  const key = target?.doc;
   if (!key) return;
   if (open(key, false)) return;
   view.panel = 'list';
   view.key = null;
-  notify('Reply not available', 'It was removed or replaced by newer replies.', null, 'reader');
+  notify('Document not available', 'It was removed or replaced by newer documents.', null, 'reader');
 }
 
 export function show(target) {

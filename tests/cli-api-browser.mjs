@@ -56,14 +56,26 @@ async function sessions(){
 }
 async function counts(){return (await (await fetch('/probe-counts',{cache:'no-store'})).json())}
 async function create(){
+  await until(()=>$('connection-status').textContent==='Connected'&&$('new').getAttribute('aria-disabled')==='false','launcher ready');
   $('new').click();
-  await until(()=>$('directory-dialog').open,'directory dialog');
-  $('directory-address').click();$('directory-path').value=CWD;
-  $('directory-path').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
-  await until(()=>!$('directory-create').disabled,'owned working directory');
-  $('directory-create').click();
+  const launcher=await until(()=>document.querySelector('dialog.launcher[open]'),'launcher dialog');
+  $('launch-folder').value=CWD;
+  launcher.querySelector('.dlg-foot .btn.primary').click();
   await until(async()=>(await sessions()).length===1,'CLI session creation');
   await until(()=>$('pane').dataset.status==='Controlling','CLI control');
+}
+// A saved font size change refits the terminal, so ConPTY resizes natively.
+async function resize(){
+  const size=$('pane-status').title;
+  document.querySelector('.navigation-item[data-page="settings"]').click();
+  (await until(()=>$('settings-tab-terminal'),'settings tabs')).click();
+  $('settings-panel-terminal').querySelector('[aria-label="Larger terminal text"]').click();
+  const footer=await until(()=>{const node=document.querySelector('#page-settings .prefs-footer');return node&&!node.hidden&&node;},'unsaved font size');
+  [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();
+  await until(()=>footer.hidden,'saved font size');
+  document.querySelector('.navigation-item[data-page="workspace"]').click();
+  await until(()=>!$('page-workspace').hidden&&$('pane-status').title!==size,'browser resize');
+  $('keyboard').focus();
 }
 function forbidden(){
   const visible=liveText().toLowerCase();
@@ -152,13 +164,11 @@ async function main(){
       paste('X');
       await until(()=>text().includes('draft caf\u00e9 X'),'Unicode replacement');
       check(true,'Unicode editing survives idle Backspace');
-      const size=$('pane-status').title;
-      $('settings').click();$('larger').click();$('preferences-close').click();
-      await until(()=>$('pane-status').title!==size,'browser resize');
+      await resize();
       await until(()=>text().includes('draft caf\u00e9 X'),'draft redraw after resize');
       check(true,'draft survives native resize');
-      paste('\nsecond line');
-      await until(()=>text().includes('second line'),'bracketed multiline draft');
+      paste('\nsecond line \ud83d\ude42');
+      await until(()=>text().includes('second line \ud83d\ude42'),'bracketed multiline draft');
       await pause(300);
       check((await counts()).prompts===0,'multiline paste did not submit to API');
       const draftRows=liveText().split('\n');
@@ -175,6 +185,9 @@ async function main(){
       await pause(700);
       const afterEnter=(await counts()).prompts;
       check(afterEnter>=1,'only explicit Enter submitted fixture prompt');
+      const transcript=text(),turn=transcript.lastIndexOf('draft caf\u00e9 X'),pasted=transcript.indexOf('second line \ud83d\ude42',turn);
+      check(transcript.split('Webterminal local fixture response.').length===2,'one Enter answered exactly one turn');
+      check(turn>=0&&pasted>turn&&transcript.indexOf('Webterminal local fixture response.',pasted)>pasted,'submitted turn keeps draft and paste order');
       sessionStorage.setItem('apiBrowserResults',JSON.stringify(results));
       sessionStorage.setItem('apiBrowserId',id);
       sessionStorage.setItem('apiBrowserPostCount',String(afterEnter));

@@ -4,9 +4,7 @@ mod state;
 pub use state::Session;
 
 use crate::{
-    bridge::{self, Bridge},
     json, native,
-    programs::{self, Program},
     terminal::Terminal,
     uploads::Uploads,
     workspaces::{self, Workspaces},
@@ -45,20 +43,10 @@ struct Inner {
     workspaces: Workspaces,
 }
 
-/// Where program adapters reach this server: its port, the helper
-/// executable and a server-owned folder for per-session adapter settings.
-pub struct Launch {
-    pub port: u16,
-    pub helper: PathBuf,
-    pub directory: PathBuf,
-}
-
 pub struct Registry {
     inner: Mutex<Inner>,
     next: AtomicU64,
     pub uploads: Uploads,
-    pub bridge: Bridge,
-    launch: Option<Launch>,
     pub cwd: PathBuf,
     pub shell: String,
 }
@@ -84,14 +72,7 @@ impl Registry {
             cwd,
             shell,
             uploads,
-            bridge: Bridge::new(),
-            launch: None,
         }
-    }
-    /// Lets launched programs report through the bridge helper.
-    pub fn with_launch(mut self, launch: Launch) -> Self {
-        self.launch = Some(launch);
-        self
     }
     /// Starts a shell session in `workspace`, or in the first workspace with
     /// room. Returns the session and the workspace that received it.
@@ -102,18 +83,6 @@ impl Registry {
         rows: u16,
         view: &str,
         workspace: Option<&str>,
-    ) -> Result<(Arc<Session>, String), String> {
-        self.create_program(cwd, (cols, rows), view, workspace, None)
-    }
-    /// Like [`Registry::create`], optionally running `program` inside the
-    /// default Windows PowerShell base shell.
-    pub fn create_program(
-        &self,
-        cwd: &Path,
-        (cols, rows): (u16, u16),
-        view: &str,
-        workspace: Option<&str>,
-        program: Option<Program>,
     ) -> Result<(Arc<Session>, String), String> {
         let path = cwd
             .canonicalize()
@@ -127,21 +96,14 @@ impl Registry {
         }
         let placement = inner.workspaces.placement(workspace)?;
         let id = format!("s{}", self.next.fetch_add(1, Ordering::Relaxed));
-        let command = match program {
-            None => self.shell.clone(),
-            Some(program) => self.program_command(program, &id)?,
-        };
-        let spawned = native::spawn(&command, &path, cols, rows).map_err(|e| {
-            self.forget_program(&id);
-            format!("Cannot start terminal: {e}")
-        })?;
+        let spawned = native::spawn(&self.shell, &path, cols, rows)
+            .map_err(|e| format!("Cannot start terminal: {e}"))?;
         self.uploads.open_session(&id);
         let (sender, receiver) = mpsc::sync_channel(32);
         let session = Arc::new(Session {
             id: id.clone(),
             cwd: path,
             shell: self.shell.clone(),
-            program,
             created: unix_ms(),
             pty: spawned.pty,
             input: sender,
@@ -248,35 +210,6 @@ impl Registry {
         });
         Ok((session, workspace))
     }
-    /// The shell command that runs `program`, with its bridge adapter when
-    /// this server can host one. Program availability is checked again here.
-    fn program_command(&self, program: Program, id: &str) -> Result<String, String> {
-        if !programs::hosts_programs(&self.shell) {
-            return Err("Programs need the default Windows PowerShell base shell".into());
-        }
-        let label = program.label();
-        let exe = programs::locate(program, std::env::var_os("PATH").as_deref())
-            .ok_or_else(|| format!("{label} was not found on PATH"))?;
-        let mut args = Vec::new();
-        if let Some(launch) = &self.launch {
-            let token = self.bridge.register(id, program);
-            let endpoint = (launch.port, id, token.as_str());
-            match bridge::adapter_arguments(program, &launch.helper, &launch.directory, endpoint) {
-                Ok(adapter) if !adapter.is_empty() => args = adapter,
-                // Without an adapter the program still runs; its activity is unknown.
-                _ => self.forget_program(id),
-            }
-        }
-        programs::launch_command(&self.shell, &exe, &args).inspect_err(|_| self.forget_program(id))
-    }
-    /// Drops a session's bridge registration and adapter settings.
-    fn forget_program(&self, id: &str) {
-        self.bridge.remove_session(id);
-        if let Some(launch) = &self.launch {
-            let _ =
-                std::fs::remove_file(launch.directory.join(format!("{id}-claude-settings.json")));
-        }
-    }
     pub fn get(&self, id: &str) -> Result<Arc<Session>, String> {
         self.inner
             .lock()
@@ -311,26 +244,17 @@ impl Registry {
             .workspaces
             .move_session(id, workspace, position)
     }
-    /// Checks the confirmation and removes the workspace under the same lock.
+    /// Checks the view's observed targets and removes the workspace under the same lock.
     pub fn close_workspace(
         &self,
         id: &str,
-        confirmed: Option<&[String]>,
+        observed: &[String],
+        force: bool,
     ) -> Result<WorkspaceClose, String> {
         let mut inner = self.inner.lock().unwrap();
         let targets = inner.workspaces.sessions(id)?.to_vec();
         let busy = busy_among(&inner, &targets);
-        if let Some(confirmed) = confirmed {
-            if !same_set(confirmed, &targets) {
-                if busy.is_empty() {
-                    return Err("Workspace confirmation expired; retry close".into());
-                }
-                return Ok(WorkspaceClose::Busy {
-                    sessions: busy,
-                    targets,
-                });
-            }
-        } else if !busy.is_empty() {
+        if !same_set(observed, &targets) || (!busy.is_empty() && !force) {
             return Ok(WorkspaceClose::Busy {
                 sessions: busy,
                 targets,
@@ -409,16 +333,12 @@ impl Registry {
         let sessions = std::mem::take(&mut self.inner.lock().unwrap().sessions);
         self.finish(sessions);
         self.uploads.remove_all();
-        if let Some(launch) = &self.launch {
-            let _ = std::fs::remove_dir(&launch.directory);
-        }
     }
     /// Stops owned processes and releases everything tied to the sessions.
     fn finish(&self, closed: Vec<Arc<Session>>) {
         for session in closed {
             session.stop();
             self.uploads.remove_session(&session.id);
-            self.forget_program(&session.id);
         }
     }
 }

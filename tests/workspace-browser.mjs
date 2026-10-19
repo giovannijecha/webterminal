@@ -110,7 +110,7 @@ async function main(){
   sessionStorage.setItem('workspaceIds',JSON.stringify([...ids.slice(0,3),moved]));
   sessionStorage.setItem('workspaceChecks',JSON.stringify(checks));sessionStorage.setItem('workspaceStage','reloaded');location.reload();
 }
-main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{workspace:active()?.dataset.workspace,panes:[1,2,3,4].map(index=>({status:pane(index)?.dataset.status,text:lines(index)?.textContent.slice(0,80)})),dock:$('dock')?.textContent,wire:window.__wire.slice(-8),snapshots:window.__snapshots.slice(-4)}}));
+main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{workspace:active()?.dataset.workspace,panes:[1,2,3,4].map(index=>({status:pane(index)?.dataset.status,text:lines(index)?.textContent.slice(0,80)})),toasts:$('toasts')?.textContent,wire:window.__wire.slice(-8),snapshots:window.__snapshots.slice(-4)}}));
 `;
 
 await mkdir(cwd,{recursive:true});await mkdir(screenshots,{recursive:true});

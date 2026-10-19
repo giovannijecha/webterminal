@@ -65,7 +65,7 @@ fn missing_file_gives_defaults() {
     assert_eq!(
         store.json(),
         format!(
-            "{{\"type\":\"settings\",\"revision\":0,\"settings\":{{\"startFolder\":null,\"fontSize\":13,\"terminalTheme\":\"dark\",\"notifications\":{{\"input\":true,\"reply\":true,\"failure\":true}}}},\"path\":{},\"problem\":null,\"notice\":null}}",
+            "{{\"type\":\"settings\",\"revision\":0,\"settings\":{{\"startFolder\":null,\"fontSize\":13,\"terminalTheme\":\"dark\"}},\"path\":{},\"problem\":null,\"notice\":null}}",
             json::quote(&scratch.file().to_string_lossy())
         )
     );
@@ -83,7 +83,7 @@ fn default_path_is_user_scoped() {
 fn save_round_trips_and_revision_survives_reopen() {
     let scratch = Scratch::new();
     let store = Store::open(scratch.file());
-    let full = r#"{"startFolder":null,"fontSize":18,"terminalTheme":"light","notifications":{"input":false,"reply":true,"failure":false}}"#;
+    let full = r#"{"startFolder":null,"fontSize":18,"terminalTheme":"light"}"#;
     let saved = json::parse(&store.save(0, &value(full)).unwrap()).unwrap();
     assert_eq!(saved.integer("revision").unwrap(), 1);
     assert_eq!(saved.get("settings"), Some(&value(full)));
@@ -95,16 +95,11 @@ fn save_round_trips_and_revision_survives_reopen() {
     );
 
     // Absent fields keep their saved value.
-    store
-        .save(1, &value(r#"{"notifications":{"input":true}}"#))
-        .unwrap();
+    store.save(1, &value(r#"{"fontSize":16}"#)).unwrap();
     let expected = Settings {
         start_folder: None,
-        font_size: 18,
+        font_size: 16,
         terminal_theme: TerminalTheme::Light,
-        notify_input: true,
-        notify_reply: true,
-        notify_failure: false,
     };
     assert_eq!(store.current(), expected);
     assert_eq!(store.revision(), 2);
@@ -221,13 +216,10 @@ fn invalid_fields_are_rejected_by_name() {
     let cases = [
         ("[]".to_string(), "settings must be an object"),
         (r#"{"colour":1}"#.into(), "Unknown field settings.colour"),
+        // Retired preferences are accepted from an existing file only.
         (
-            r#"{"notifications":{"sound":true}}"#.into(),
-            "Unknown field settings.notifications.sound",
-        ),
-        (
-            r#"{"notifications":true}"#.into(),
-            "settings.notifications must",
+            r#"{"notifications":{"reply":false}}"#.into(),
+            "Unknown field settings.notifications",
         ),
         (r#"{"fontSize":9}"#.into(), "settings.fontSize"),
         (r#"{"fontSize":21}"#.into(), "settings.fontSize"),
@@ -237,10 +229,6 @@ fn invalid_fields_are_rejected_by_name() {
             "settings.terminalTheme",
         ),
         (r#"{"terminalTheme":null}"#.into(), "settings.terminalTheme"),
-        (
-            r#"{"notifications":{"reply":"yes"}}"#.into(),
-            "settings.notifications.reply",
-        ),
         (r#"{"startFolder":5}"#.into(), "settings.startFolder"),
         (
             r#"{"startFolder":"relative\\folder"}"#.into(),
@@ -329,6 +317,10 @@ fn malformed_file_falls_back_and_is_preserved_on_save() {
         r#"{"version":1,"revision":1,"settings":{},"extra":true}"#,
         r#"{"version":1,"revision":1,"settings":{"fontSize":99}}"#,
         r#"{"version":1,"revision":1}"#,
+        // Only the exact legacy notification shape is tolerated.
+        r#"{"version":1,"revision":1,"settings":{"notifications":true}}"#,
+        r#"{"version":1,"revision":1,"settings":{"notifications":{"sound":true}}}"#,
+        r#"{"version":1,"revision":1,"settings":{"notifications":{"reply":"yes"}}}"#,
     ];
     for bad in bad_contents {
         let scratch = Scratch::new();
@@ -362,6 +354,53 @@ fn malformed_file_falls_back_and_is_preserved_on_save() {
         assert_eq!(parsed(&store).get("notice"), Some(&Value::Null));
         assert_no_temp(&folder);
     }
+}
+
+#[test]
+fn legacy_notification_preferences_keep_the_other_settings() {
+    let scratch = Scratch::new();
+    let folder = scratch.0.join("config");
+    fs::create_dir_all(&folder).unwrap();
+    let start = folder.to_string_lossy().into_owned();
+    fs::write(
+        scratch.file(),
+        format!(
+            "{{\"version\":1,\"revision\":4,\"settings\":{{\"startFolder\":{},\"fontSize\":17,\"terminalTheme\":\"light\",\"notifications\":{{\"input\":false,\"reply\":true,\"failure\":false}}}}}}\n",
+            json::quote(&start)
+        ),
+    )
+    .unwrap();
+
+    let store = Store::open(scratch.file());
+    let expected = Settings {
+        start_folder: Some(PathBuf::from(&start)),
+        font_size: 17,
+        terminal_theme: TerminalTheme::Light,
+    };
+    assert_eq!(store.current(), expected);
+    assert_eq!(store.revision(), 4);
+    assert_eq!(parsed(&store).get("problem"), Some(&Value::Null));
+    assert!(
+        parsed(&store)
+            .get("settings")
+            .unwrap()
+            .get("notifications")
+            .is_none()
+    );
+
+    // The next save keeps the revision sequence and drops the retired field.
+    let saved = json::parse(&store.save(4, &value(r#"{"fontSize":18}"#)).unwrap()).unwrap();
+    assert_eq!(saved.integer("revision"), Ok(5));
+    assert_eq!(saved.get("notice"), Some(&Value::Null));
+    assert_eq!(
+        fs::read_to_string(scratch.file()).unwrap(),
+        format!(
+            "{{\"version\":1,\"revision\":5,\"settings\":{{\"startFolder\":{},\"fontSize\":18,\"terminalTheme\":\"light\"}}}}\n",
+            json::quote(&start)
+        )
+    );
+    assert!(!folder.join("settings.invalid.json").exists());
+    assert_no_temp(&folder);
 }
 
 #[test]

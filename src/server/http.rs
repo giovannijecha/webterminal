@@ -9,13 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 pub(super) const UPLOAD: &str = "/api/upload?";
-pub(super) const HOOK: &str = "/api/bridge?";
-/// POST exists only to stage dropped files and to receive program events.
+/// POST exists only to stage dropped files.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Route {
     Get,
     Upload,
-    Hook,
 }
 pub(super) struct Request {
     pub route: Route,
@@ -62,7 +60,6 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
             let route = match (line.first(), line.get(1)) {
                 (Some(&"GET"), _) => Route::Get,
                 (Some(&"POST"), Some(path)) if path.starts_with(UPLOAD) => Route::Upload,
-                (Some(&"POST"), Some(path)) if path.starts_with(HOOK) => Route::Hook,
                 _ => Route::Get,
             };
             if line.len() != 3
@@ -72,7 +69,7 @@ pub(super) fn request(stream: &mut TcpStream) -> io::Result<Request> {
             {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Only HTTP/1.1 GET, file uploads and program events are supported",
+                    "Only HTTP/1.1 GET and file uploads are supported",
                 ));
             }
             let path = line[1].to_string();
@@ -172,14 +169,12 @@ const ASSETS: &[(&str, &str, &[u8])] = assets![
     ("/dom.js", SCRIPT, "dom.js"),
     ("/ui.js", SCRIPT, "ui.js"),
     ("/overlays.js", SCRIPT, "overlays.js"),
-    ("/dock.js", SCRIPT, "dock.js"),
     ("/actions.js", SCRIPT, "actions.js"),
     ("/launcher.js", SCRIPT, "launcher.js"),
     ("/transfers.js", SCRIPT, "transfers.js"),
     ("/sidebar.js", SCRIPT, "sidebar.js"),
     ("/workspace.js", SCRIPT, "workspace.js"),
     ("/palette.js", SCRIPT, "palette.js"),
-    ("/alerts.js", SCRIPT, "alerts.js"),
     ("/pane.js", SCRIPT, "pane.js"),
     ("/input.js", SCRIPT, "input.js"),
     ("/render.js", SCRIPT, "render.js"),
@@ -191,8 +186,7 @@ const ASSETS: &[(&str, &str, &[u8])] = assets![
     ("/reader.js", SCRIPT, "reader.js"),
     ("/documents.js", SCRIPT, "documents.js"),
     ("/overview.js", SCRIPT, "overview.js"),
-    ("/attention.js", SCRIPT, "attention.js"),
-    ("/requests.js", SCRIPT, "requests.js"),
+    ("/toasts.js", SCRIPT, "toasts.js"),
     ("/processes.js", SCRIPT, "processes.js"),
     ("/files.js", SCRIPT, "files.js"),
     ("/settings.js", SCRIPT, "settings.js"),

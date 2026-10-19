@@ -41,13 +41,10 @@ rendering details from measured behavior; do not add a framework or bundler.
 - New terminals start Windows PowerShell with `-NoLogo -NoProfile` directly.
   Do not present per-terminal shell choices. A trusted server-wide program
   override can support owned development fixtures.
-- The launcher offers that PowerShell, or one optional program started inside
-  it: Claude Code, Codex or Jecode. A program is offered only when the base
-  shell is Windows PowerShell and `<program>.exe` is found in an absolute
-  `PATH` directory; lookup never runs the program or reads its configuration.
-  Arguments are passed as quoted PowerShell literals. Plain PowerShell works
-  with no program installed, and a program that exits leaves its PowerShell
-  session open.
+- The launcher asks for a folder and a destination workspace, then starts that
+  PowerShell. Programs such as Claude Code, Codex or Jecode run when the user
+  types their command; Webterminal does not discover, launch, configure or
+  report on them, and works with none installed.
 - Sessions are organized in workspaces. A workspace has an ID, an optional
   user-assigned name and an ordered list of at most four sessions; every
   session belongs to exactly one workspace. Rust owns workspaces, their order,
@@ -59,8 +56,8 @@ rendering details from measured behavior; do not add a framework or bundler.
   default label (workspaces).
 - A view is a browser attachment to one session. Browser tab closure,
   connection loss or refresh detaches the view without terminating the session.
-- The UI is a workbench: a sidebar lists the views (Overview, Terminals, Needs
-  you, Reader, Processes, Dropped files, Settings, Themes & Appearance) and the
+- The UI is a workbench: a sidebar lists the views (Overview, Terminals,
+  Reader, Processes, Dropped files, Settings, Themes & Appearance) and the
   workspaces as a tree of their terminals; narrow screens use a drawer. The
   Terminals view shows every session of the selected workspace at once, in a
   layout derived from its count: one full pane, two side by side, three as one
@@ -73,20 +70,25 @@ rendering details from measured behavior; do not add a framework or bundler.
 - The UI provides a new-workspace action, a new-terminal launcher for the
   selected workspace, a working-directory selector and explicit close actions
   for sessions and workspaces. Overview lists every session with filters,
-  search and sorting; a bulk close targets exactly the confirmed session IDs.
-  Closing a session ends it and its owned process tree; closing a workspace
-  closes all of its sessions. Confirmation is required only while a session
-  runs a program beyond its shell. A workspace or selection confirmation
-  applies to the sessions present when it was requested; changes from another
-  view must be checked before closing any session.
+  search and sorting; a bulk close always asks first and targets exactly the
+  confirmed session IDs. Closing a session ends it and its owned process tree;
+  closing a workspace closes all of its sessions.
+- A session is busy while its owned job contains a process beyond its shell.
+  Commands running entirely inside the shell process are not detected by this
+  check. Idle sessions, an empty workspace or a workspace of idle sessions
+  close at once. Every workspace close names the session IDs the view observed;
+  the server checks that set under the same lock as removal, even for idle
+  targets. Busy sessions or changed workspace membership require review and
+  confirmation of the current targets. Sessions added by another view are never
+  closed silently, and Cancel leaves everything running.
   Closing the browser leaves sessions available while the server remains alive.
 - A workspace name is optional; new workspaces open with their default label.
 - A command palette, scoped menus and a shortcut list expose the same actions.
   None of them intercepts terminal keys while closed.
-- The Reader keeps Markdown copied from terminals and program replies, each
-  with its exact source: pasted text, terminal clipboard writes that look like
-  prose, replies reported by a program bridge, and, when the user enables it,
-  the browser clipboard polled while the view has focus. It keeps a bounded
+- The Reader keeps Markdown documents, each with its exact source: pasted
+  text, terminal clipboard writes (OSC 52) that look like prose and, when the
+  user enables it, the browser clipboard polled while the view has focus. It
+  never collects program output on its own. It keeps a bounded
   set of documents in browser memory only, never on the server, and renders
   text through DOM nodes rather than HTML parsing.
 - Processes lists only processes in Webterminal-owned session jobs, from a
@@ -95,8 +97,8 @@ rendering details from measured behavior; do not add a framework or bundler.
 - At most one view controls input and geometry for a session. Other attached
   views observe; control transfer must not allow competing input or resize.
   The server rechecks control when an action runs. Input, interrupt, resize,
-  dropped-file staging and removal, and answers to program requests belong to
-  the controlling view. Creating, renaming, moving, reordering and closing
+  and dropped-file staging and removal belong to the controlling view.
+  Creating, renaming, moving, reordering and closing
   terminals or workspaces, saving settings and stopping the server are shared
   by all views and need confirmation of their exact targets where they
   destroy work.
@@ -109,6 +111,12 @@ rendering details from measured behavior; do not add a framework or bundler.
 - Stopping the server tears down only resources and processes it owns. A view
   can stop it only after an explicit confirmation.
   Surviving a server restart is not an initial guarantee.
+- Feedback appears as in-page toasts at the bottom right. They never resize a
+  terminal, take focus or catch the pointer outside their cards. Successes
+  expire after about four seconds and toasts with an action after about eight;
+  errors stay until dismissed, and hovering or focusing a toast holds it.
+  Field validation and save conflicts stay in their forms. Webterminal sends
+  no browser or system notifications.
 
 ## Network and data boundaries
 
@@ -139,37 +147,13 @@ browser shows real progress, Retry for files it still holds and Cancel.
 
 Settings are shared by all views and stored atomically at
 `~/.webterminal/settings.json`: start folder for new terminals, terminal font
-size, terminal light/dark defaults and notification preferences. A save names
+size and terminal light/dark defaults. A save names
 the revision it edits; a save based on an older revision is refused so no
 view silently overwrites another. A malformed file falls back to defaults
 with a visible problem, and the next save keeps it as `settings.invalid.json`.
+The `notifications` object written by earlier versions is ignored without
+invalidating the file, and the next save omits it.
 A save that cannot be written fails without changing the stored settings.
-
-Browser notifications are requested only after an explicit user action and
-come only from new, deduplicated events; reconnecting does not replay them.
-
-## Program bridge
-
-Optional adapters report source-attributed events for programs started by the
-launcher. Claude Code hooks report activity, replies, permission requests and
-questions; Codex `notify` reports completed turns and replies. Webterminal
-never edits a program's own configuration: Claude Code receives per-invocation
-hooks through `--settings`, and Codex a per-invocation `notify` override. The
-hooks run the Webterminal executable as a helper that posts one event to
-`/api/bridge` with a per-session secret token; requests carrying an Origin or
-a wrong token are refused. Jecode, or a program without an adapter, shows
-lifecycle only and its activity as unknown.
-
-Claude Code permission requests and questions wait for an answer from the
-controlling view for at most ten minutes and are delivered at most once. They
-expire when the helper stops waiting, the program session changes or ends, the
-terminal closes, the turn ends, or an unambiguously identified tool call runs after a
-local answer in the terminal. Identical parallel calls without a shared
-request identifier remain pending until a turn boundary, timeout or session
-change; the program's own prompt remains the fallback. A grant "for this
-session" is narrowed to the current program session and offered only when
-its complete validated scope is visible. Webterminal never reads
-program credentials, and screen text is never parsed as a request.
 
 ## Terminal compatibility
 
@@ -193,6 +177,10 @@ when implemented; consume unsupported sequences without corrupting visible text.
 
 Preserve modified Windows keys such as `Shift+Enter` and `Ctrl+Space`, including
 the negotiated [Win32 input mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md).
+A multiline paste keeps its line breaks and never submits: in Win32 input mode
+each pasted line feed is sent as the Ctrl+J key it stands for, because ConPTY
+would deliver a bare line feed as Ctrl+Enter. Line feeds never become carriage
+returns inside a bracketed paste.
 Unicode layout needs explicit policy: [grapheme segmentation](https://www.unicode.org/reports/tr29/)
 and [East Asian Width](https://www.unicode.org/reports/tr11/) are references,
 not a complete ready-made terminal-width implementation.

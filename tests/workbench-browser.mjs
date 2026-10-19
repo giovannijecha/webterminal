@@ -19,14 +19,14 @@ const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(root,'tar
 
 const harness=String.raw`
 const $=id=>document.getElementById(id), CWD=__CWD__, CHILD=__CHILD__, LONG=__LONG__;
-const PAGES=['overview','workspace','attention','reader','processes','files','settings','appearance'], WIDTHS=[1440,1024,768,390,320];
+const PAGES=['overview','workspace','reader','processes','files','settings','appearance'], WIDTHS=[1440,1024,768,390,320];
 const checks=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,label){for(let i=0;i<300;i++){const found=await test();if(found)return found;await pause(50);}throw new Error('Timed out: '+label);}
 function check(value,label){if(!value)throw new Error(label);checks.push(label);}
 async function sessions(){return (await(await fetch('/api/sessions',{cache:'no-store'})).json()).sessions;}
 // Resizes the viewport; a shot also saves a screenshot.
-async function capture(name,width,shot=true){document.body.dataset.capture=JSON.stringify({name,width,shot});await until(()=>document.body.dataset.captured===name,'capture '+name);}
+async function capture(name,width,shot=true,height=900){document.body.dataset.capture=JSON.stringify({name,width,height,shot});await until(()=>document.body.dataset.captured===name,'capture '+name);}
 function fits(element){const box=element.getBoundingClientRect();return box.width>0&&box.left>=0&&box.right<=innerWidth+1&&box.top>=0&&box.bottom<=innerHeight+1;}
 function noSideScroll(){const page=document.querySelector('#main > .page:not([hidden])');return document.documentElement.scrollWidth<=innerWidth+1&&$('main').scrollWidth<=$('main').clientWidth+1&&page.scrollWidth<=page.clientWidth+1;}
 function enter(target,key){target.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}
@@ -56,6 +56,17 @@ async function main(){
   await capture('empty-desktop',1280);check(fits($('empty-new')),'desktop empty action fits');
 
   $('empty-new').click();await until(launcher,'launcher');
+  const {openLauncher:reopenLauncher}=await import('/launcher.js');
+  const firstLauncher=launcher();
+  firstLauncher.close();
+  const reopened=reopenLauncher();
+  check(reopenLauncher()===reopened,'repeated open while the previous dialog closes reuses one pending launcher');
+  await until(()=>launcher()&&launcher()!==firstLauncher,'launcher reopens while its close event is pending');
+  check(document.querySelectorAll('dialog.launcher[open]').length===1,'a closing launcher does not suppress the next open');
+  launcher().querySelector('button[value="cancel"]').click();
+  await reopened;
+  check(!launcher(),'Cancel does not reveal an extra queued launcher');
+  reopenLauncher();await until(launcher,'launcher after Cancel');
   check(same($('launch-folder').value,CWD),'launcher starts in the server folder');
   launcher().querySelector('.folder-row > button:last-child').click();
   await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'picker initial folder');
@@ -100,7 +111,7 @@ async function main(){
   await go('appearance');await until(()=>$('appearance-font-value')?.textContent==='14 px','appearance');check(true,'Appearance shows the saved size');
 
   await go('reader');await until(()=>document.querySelector('#reader-content .reader-root'),'reader');
-  check(document.querySelector('.reader-empty:not([hidden]) h2')?.textContent==='No replies yet','Reader starts empty');
+  check(document.querySelector('.reader-empty:not([hidden]) h2')?.textContent==='No documents yet','Reader starts empty');
   const markdown='# Fixture summary\n\n## Checks\n\n- **Safe** Markdown\n- Searchable material\n\n\x60\x60\x60js\nconst answer = 42;\n\x60\x60\x60\n\n<script>window.__injected=true</script>';
   pasteMarkdown(markdown);
   const prose=()=>document.querySelector('.reader-prose'),readerRoot=()=>document.querySelector('.reader-root');
@@ -108,21 +119,21 @@ async function main(){
   check(true,'pasted Markdown renders headings');
   check(prose().querySelector('strong')?.textContent==='Safe'&&prose().querySelector('code')?.textContent.includes('answer'),'Reader renders emphasis and code');
   check(!window.__injected&&!prose().querySelector('script'),'Reader leaves HTML inert');
-  const actions=document.querySelector('[aria-label="Reply actions"]');actions.click();
-  const menu=await until(()=>document.querySelector('.menu[aria-label="Reply actions"]'),'reply menu');
+  const actions=document.querySelector('[aria-label="Document actions"]');actions.click();
+  const menu=await until(()=>document.querySelector('.menu[aria-label="Document actions"]'),'document menu');
   menuItem(menu,'On this page').click();
   const outline=await until(()=>document.querySelector('.menu[aria-label="On this page"]'),'outline');
   check(outline.querySelectorAll('.menu-item').length===2,'outline follows Markdown headings');
   menuItem(outline,'Checks').click();
-  actions.click();menuItem(await until(()=>document.querySelector('.menu[aria-label="Reply actions"]'),'reply menu again'),'Find in reply').click();
+  actions.click();menuItem(await until(()=>document.querySelector('.menu[aria-label="Document actions"]'),'document menu again'),'Find in document').click();
   await until(()=>document.activeElement===$('reader-find'),'find field');
   $('reader-find').value='Searchable';$('reader-find').dispatchEvent(new Event('input',{bubbles:true}));
   check(document.querySelector('.reader-find-count').textContent.includes('1'),'Reader searches within the document');
   await capture('reader-desktop',1280);check(fits(document.querySelector('.reader-detail')),'Reader document fits desktop');
   document.querySelector('.reader-back').click();
   await until(()=>readerRoot().dataset.panel==='list','list');
-  check(document.querySelectorAll('.reader-index .reader-reply').length===1,'document list retains pasted Markdown');
-  document.querySelector('.reader-index .reader-reply').click();await until(()=>readerRoot().dataset.panel==='detail','reopen');check(true,'document opens from list');
+  check(document.querySelectorAll('.reader-index .reader-item').length===1,'document list retains pasted Markdown');
+  document.querySelector('.reader-index .reader-item').click();await until(()=>readerRoot().dataset.panel==='detail','reopen');check(true,'document opens from list');
   await capture('reader-mobile',390);check(fits(document.querySelector('.reader-back'))&&noSideScroll(),'Reader remains reachable on mobile');
 
   for(const page of PAGES){
@@ -184,10 +195,32 @@ async function main(){
   await until(()=>shownPanes().length===4&&shownPanes().every(following),'panes follow output after the layout changes');
   check(noSideScroll(),'four panes share the desktop and keep following output');
   await capture('terminal-wide',1440);
+  const {problem,toasts}=await import('/ui.js');
+  await capture('toast-base-320',320,false,480);
+  await pause(100);
+  const terminalHeight=()=>focused().querySelector('[id$="terminal-scroll"]').clientHeight;
+  const base320=terminalHeight();
+  for(let index=0;index<3;index++)problem('Long error '+index,'A detailed local error with a long path: '+('C:\\nested\\folder\\'.repeat(180)));
+  await Promise.all([...$('toasts').querySelectorAll('.toast')].flatMap(card=>card.getAnimations()).map(animation=>animation.finished.catch(()=>{})));
+  const toastCheck=(label,baseline)=>{
+    const cards=[...$('toasts').querySelectorAll('.toast')];
+    check(cards.length===3,label+' keeps all three errors');
+    check(cards.every(card=>fits(card)&&fits(card.querySelector('button[aria-label^="Dismiss"]'))),label+' keeps every dismiss button reachable');
+    check(cards.every(card=>{const body=card.querySelector('.toast-body'),text=body.querySelector('p');return fits(body.querySelector('h2'))&&text.scrollHeight>text.clientHeight&&getComputedStyle(text).overflowY==='auto';}),label+' keeps titles visible and scrolls long error text');
+    const first=cards[0].getBoundingClientRect(),second=cards[1].getBoundingClientRect(),gap=(first.bottom+second.top)/2;
+    check(gap>first.bottom&&gap<second.top&&document.elementFromPoint(first.left+20,gap)!==$('toasts'),label+' passes pointer events between cards');
+    check(terminalHeight()===baseline,label+' leaves terminal geometry unchanged');
+  };
+  await capture('toast-three-long-320',320,true,480);toastCheck('320x480',base320);
+  await capture('toast-base-390',390,false,520);await pause(100);
+  const base390=terminalHeight();
+  await capture('toast-three-long-390',390,true,520);toastCheck('390x520',base390);
+  for(const card of [...$('toasts').querySelectorAll('.toast')])toasts.hide(card);
+  await capture('toast-restored',1440,false);
   check(window.__probeErrors.length===0,'no browser runtime errors');
   publish({pass:true,checks,errors:window.__probeErrors});
 }
-main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{connection:$('connection-status')?.textContent,picker:$('directory-dialog')?.open,launcher:Boolean(launcher()),page:document.querySelector('#main > .page:not([hidden])')?.id,dock:$('dock')?.textContent}}));
+main().catch(error=>publish({pass:false,checks,error:String(error?.stack||error),errors:window.__probeErrors,state:{connection:$('connection-status')?.textContent,picker:$('directory-dialog')?.open,launcher:Boolean(launcher()),page:document.querySelector('#main > .page:not([hidden])')?.id,toasts:$('toasts')?.textContent?.slice(0,200)}}));
 `;
 
 await mkdir(childFolder,{recursive:true});await mkdir(resolve(cwd,'src'),{recursive:true});await mkdir(longFolder,{recursive:true});await mkdir(screenshots,{recursive:true});
@@ -201,13 +234,13 @@ try{
   await ready(port,child);proxy=await proxyFor(port,harness.replace('__CWD__',JSON.stringify(cwd)).replace('__CHILD__',JSON.stringify(childFolder)).replace('__LONG__',JSON.stringify(longFolder)));
   const report=await chromeProbe(await findChrome(),'http://127.0.0.1:'+proxy.port+'/',resolve(runRoot,'chrome'),'workbenchStage',async({protocol,evaluate})=>{
     const capture=await evaluate('document.body?.dataset.capture||""');if(!capture||capture===lastCapture)return;
-    lastCapture=capture;const {name,width,shot}=JSON.parse(capture);
-    await protocol('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    lastCapture=capture;const {name,width,height,shot}=JSON.parse(capture);
+    await protocol('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     if(shot)await writeFile(resolve(screenshots,name+'.png'),Buffer.from((await protocol('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await evaluate('document.body.dataset.captured='+JSON.stringify(name));
   });
-  assert.equal(report.pass,true,JSON.stringify(report));assert.equal(proxy.stats.upstreamErrors,0,'Asset GET failures');
+  assert.equal(report.pass,true,JSON.stringify({...report,checks:report.checks.length}));assert.equal(proxy.stats.upstreamErrors,0,'Asset GET failures');
   assert.equal(JSON.parse(await readFile(settings,'utf8')).settings.fontSize,14,'Saved font size reaches the settings file');
   await writeFile(resolve(screenshots,'verification.json'),JSON.stringify(report,null,2));
   console.log(JSON.stringify({pass:true,checks:report.checks.length,screenshots}));

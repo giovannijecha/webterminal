@@ -3,7 +3,6 @@ import test from 'node:test';
 import {ClipboardFollower, DOCUMENT_LIMIT, Documents, TEXT_LIMIT, clipboardSource, filterDocuments, meaningful, normalize} from '../assets/documents.js';
 
 const markdown = '# Private clipboard note\nThis is enough text to be treated as a document.';
-const reply = (seq, text, extra = {}) => ({seq, id:'s1', program:'codex', label:'Codex', text, at:1000 + seq, replayed:false, read:false, ...extra});
 
 test('only prose-like text counts as a captured document', () => {
   assert.equal(meaningful('C:\\Temp\\file.txt'), false);
@@ -30,46 +29,42 @@ test('clipboard provenance names a terminal only for its own recorded copy', () 
   assert.deepEqual(clipboardSource('line one\r\nline two', [{text:'line one\nline two', id:'s2'}]), {kind:'copy', id:'s2'});
 });
 
-test('replies and local documents form one newest-first collection', () => {
+test('pasted and copied documents form one newest-first collection', () => {
   let now = 5000;
   const docs = new Documents({now:() => now});
-  const replies = [reply(1, '# First reply\nBody'), reply(2, 'Second reply body', {read:true})];
-  const {doc:pasted, added} = docs.add('# Pasted\n\nText', {kind:'pasted'}, replies);
+  const {doc:pasted, added} = docs.add('# Pasted\n\nText', {kind:'pasted'});
   assert.equal(added, true);
-  const list = docs.list(replies);
-  assert.deepEqual(list.map(doc => doc.key), [pasted.key, 'r:2', 'r:1']);
-  assert.deepEqual(list.map(doc => doc.title), ['Pasted', 'Second reply body', 'First reply']);
-  assert.equal(list[1].read, true);
-  assert.equal(list[2].program, 'Codex');
-  assert.equal(list[0].id, null, 'pasted text is never assigned to a terminal');
   now++;
-  assert.equal(docs.add('# First reply\nBody', {kind:'clipboard'}, replies).added, false, 'identical text is not added twice');
-  assert.equal(docs.add('   ', {kind:'pasted'}, replies).doc, null);
+  const {doc:copied} = docs.add('# Terminal copy\nBody', {kind:'copy', id:'s2', shell:'PowerShell'});
+  assert.deepEqual(docs.list().map(doc => doc.key), [copied.key, pasted.key]);
+  assert.deepEqual(docs.list().map(doc => doc.title), ['Terminal copy', 'Pasted']);
+  assert.equal(pasted.id, null, 'pasted text is never assigned to a terminal');
+  assert.deepEqual([copied.id, copied.shell, copied.read], ['s2', 'PowerShell', false]);
+  assert.equal(docs.find(copied.key), copied);
+  now++;
+  assert.equal(docs.add('# Pasted\r\n\r\nText', {kind:'clipboard'}).added, false, 'identical text is not added twice');
+  assert.equal(docs.add('   ', {kind:'pasted'}).doc, null);
 });
 
 test('local documents are bounded and removal can be undone', () => {
   let now = 0;
   const docs = new Documents({now:() => ++now});
   for (let i = 0; i < DOCUMENT_LIMIT + 3; i++) docs.add(`Document ${i}`, {kind:'pasted'});
-  const list = docs.list([]);
+  const list = docs.list();
   assert.equal(list.length, DOCUMENT_LIMIT);
   assert.equal(list.at(-1).text, 'Document 3');
   const undo = docs.remove(list[5]);
-  assert.equal(docs.list([]).length, DOCUMENT_LIMIT - 1);
+  assert.equal(docs.list().length, DOCUMENT_LIMIT - 1);
+  assert.equal(docs.find(list[5].key), null);
   docs.restore(undo);
-  assert.deepEqual(docs.list([]).map(doc => doc.key), list.map(doc => doc.key));
-  const replies = [reply(7, 'A reply')];
-  const hidden = docs.remove(docs.find('r:7', replies));
-  assert.equal(docs.find('r:7', replies), null);
-  docs.restore(hidden);
-  assert.equal(docs.find('r:7', replies).text, 'A reply');
+  assert.deepEqual(docs.list().map(doc => doc.key), list.map(doc => doc.key));
 });
 
 test('a closed terminal keeps the name and workspace it last had', () => {
   const docs = new Documents();
-  docs.remember('s1', {name:'Codex', workspace:'webterminal', program:'Codex'});
-  docs.remember('s1', {name:'Codex review', workspace:'webterminal', program:'Codex'});
-  assert.deepEqual(docs.place('s1'), {name:'Codex review', workspace:'webterminal', program:'Codex'});
+  docs.remember('s1', {name:'Build', workspace:'webterminal', shell:'PowerShell'});
+  docs.remember('s1', {name:'Build review', workspace:'webterminal', shell:'PowerShell'});
+  assert.deepEqual(docs.place('s1'), {name:'Build review', workspace:'webterminal', shell:'PowerShell'});
   assert.equal(docs.place('missing'), null);
 });
 

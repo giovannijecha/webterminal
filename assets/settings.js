@@ -1,20 +1,12 @@
-// Settings: General, Terminal, Notifications and About tabs over the shared
-// preferences draft. Facts come from the running server, never from guesses.
-import {$, el, icon, pathText, programTile, storage, uptime} from './dom.js';
-import {go, shellLabel, state} from './model.js';
-import {browserNotices} from './ui.js';
+// Settings: General, Terminal and About tabs over the shared preferences
+// draft. Facts come from the running server, never from guesses.
+import {$, el, icon, pathText, storage, uptime} from './dom.js';
+import {go, state} from './model.js';
 import {displayPath} from './common.js';
-import {chooseFolder, loadPrograms} from './launcher.js';
+import {chooseFolder} from './launcher.js';
 import {FONT_MAX, FONT_MIN, draft, edit, fontStepper, problemBanner, ready, saveBar, terminalPreview, themeSegment} from './preferences.js';
 
-const TABS = [['general', 'General'], ['terminal', 'Terminal'], ['notifications', 'Notifications'], ['about', 'About']];
-const REPORTS = {requests:'Reports requests and replies', replies:'Reports replies only'};
-const PERMISSIONS = {
-  granted:['Allowed', 'Notices also appear while this tab is in the background, for the kinds turned on above.'],
-  default:['Not allowed yet', 'Allow them to also get notices while this tab is in the background. The browser asks once.'],
-  denied:['Blocked', 'This browser blocks notifications for this page. Allow them in the browser’s site settings, then reload.'],
-  unsupported:['Unavailable', 'This browser cannot show notifications for this page.'],
-};
+const TABS = [['general', 'General'], ['terminal', 'Terminal'], ['about', 'About']];
 const remembered = storage('session'), TAB_KEY = 'webterminal.settingsTab';
 let tab = TABS.some(([id]) => id === remembered.get(TAB_KEY)) ? remembered.get(TAB_KEY) : 'general';
 let view = null, info = null, invalidSeen = 0;
@@ -78,55 +70,17 @@ function terminal(updates) {
     el('div', {class:'prefs-row wide'}, el('button', {class:'btn ghost', type:'button', onclick:() => go('appearance')}, icon('palette'), el('span', {text:'Open Themes & Appearance'}))));
 }
 
-function toggle(updates, key, label, help) {
-  const id = `settings-notify-${key}`;
-  const button = el('button', {class:'switch', id, type:'button', role:'switch', 'aria-describedby':`${id}-help`, onclick:() => edit(key, !draft.value.notifications[key])});
-  updates.push(() => button.setAttribute('aria-checked', String(draft.value.notifications[key] !== false)));
-  return row(label, help, button, {id});
-}
-
-function notifications(updates) {
-  const badge = el('span', {class:'status-badge'}, el('span', {class:'status-label'}));
-  const help = el('p', {id:'settings-browser-help'});
-  const allow = el('button', {class:'btn', type:'button', 'aria-describedby':'settings-browser-help', onclick:async () => {
-    if (allow.getAttribute('aria-busy') === 'true') return;
-    allow.setAttribute('aria-busy', 'true');
-    // Only this click asks the browser; nothing requests permission on load.
-    await browserNotices.request();
-    allow.removeAttribute('aria-busy');
-    refresh();
-  }}, icon('bell'), el('span', {text:'Allow browser notifications'}));
-  updates.push(() => {
-    const permission = browserNotices.permission, [label, text] = PERMISSIONS[permission] || PERMISSIONS.unsupported;
-    badge.firstChild.textContent = label;
-    help.textContent = `${text} The Dock in this page shows notices either way.`;
-    allow.hidden = permission !== 'default';
-  });
-  return section('Notifications', 'Which events show a notice in the Dock, for every view of this server.',
-    toggle(updates, 'input', 'When an agent asks', 'A request from Claude Code for permission or an answer. Needs you lists every request either way.'),
-    toggle(updates, 'reply', 'When an agent replies', 'A reply from an agent that reports replies. Reader keeps every reply either way.'),
-    toggle(updates, 'failure', 'When a program fails', 'A terminal whose program exits with a non-zero code.'),
-    el('div', {class:'prefs-row'}, el('div', {class:'prefs-label'}, el('b', {text:'Browser notifications in this browser'}), help), el('div', {class:'prefs-control prefs-permission'}, badge, allow)));
-}
-
 function about(updates) {
-  const version = el('span'), server = el('span'), programs = el('ul', {class:'prefs-programs', 'aria-label':'Agent programs'}), note = el('p', {class:'help'});
+  const version = el('span'), server = el('span');
   updates.push(() => {
     const hello = state.hello || info;
     version.textContent = hello?.version ? `Webterminal ${hello.version}` : 'Unavailable';
     const started = hello?.started || info?.started;
     server.textContent = hello?.pid ? `PID ${hello.pid}${started ? ` · ${uptime(Date.now() - started)}` : ''}` : 'Unavailable';
-    const list = state.programs?.programs;
-    note.textContent = !state.programs ? 'Looking for agent programs…' : state.programs.hosted ? 'Found on this computer’s PATH. Each starts inside PowerShell when you choose it in Open terminal.'
-      : `Agent programs need Windows PowerShell as the shell; this server runs ${shellLabel(state.hello?.shell)}.`;
-    programs.replaceChildren(...(list || []).map(program => el('li', {class:'prefs-program'}, programTile(),
-      el('div', {}, el('b', {text:program.label}), el('span', {class:'muted', text:`${program.available ? 'Found' : 'Not found on PATH'} · ${REPORTS[program.bridge] || 'Unknown status'}`}),
-        program.path ? pathText(program.path) : null))));
   });
-  return section('About', 'This server and the programs it can start.',
+  return section('About', 'This server and the process that owns your terminals.',
     fact('Version', '', version),
-    fact('Server', 'The process that owns every terminal.', server),
-    el('div', {class:'prefs-row wide'}, el('div', {class:'prefs-label'}, el('b', {text:'Agent programs'}), note), programs));
+    fact('Server', 'The process that owns every terminal.', server));
 }
 
 function build() {
@@ -139,7 +93,7 @@ function build() {
       event.preventDefault();
       select(TABS[(next + TABS.length) % TABS.length][0], true);
     }}));
-  const builders = {general, terminal, notifications, about};
+  const builders = {general, terminal, about};
   const panels = TABS.map(([id]) => el('div', {class:'prefs-panel', id:`settings-panel-${id}`, role:'tabpanel', 'aria-labelledby':`settings-tab-${id}`}, builders[id](updates)));
   updates.push(banner.update, bar.update);
   const root = el('form', {class:'prefs-root', novalidate:true, onsubmit:event => event.preventDefault()}, banner.node, el('div', {class:'prefs-tabs', role:'tablist', 'aria-label':'Settings sections'}, tabs), panels, bar.node);
@@ -176,7 +130,6 @@ export function show(target) {
   $('settings-subtitle').textContent = 'Saved on this server and shared by every browser view. Save several changes together.';
   if (TABS.some(([id]) => id === target?.tab)) select(target.tab);
   loadInfo();
-  loadPrograms();
 }
 
 export function render(topics) {
@@ -191,5 +144,5 @@ export function render(topics) {
     invalidSeen = draft.invalidCount;
     if (draft.errors.startFolder) { select('general'); $('settings-folder')?.focus(); }
   }
-  if (['settings', 'preferences', 'connection', 'programs', 'page'].some(topic => topics.has(topic))) refresh();
+  if (['settings', 'preferences', 'connection', 'page'].some(topic => topics.has(topic))) refresh();
 }

@@ -37,6 +37,14 @@ async function until(probe,label,tries=300) {
   throw new Error('Timed out: '+label);
 }
 function check(value,label) { if(!value) throw new Error(label); checks.push(label); }
+function workspaces() { return [...document.querySelectorAll('#navigation-projects .navigation-workspace-row .navigation-item')]; }
+// True when each part appears on a later terminal row than the previous one.
+function rowsInOrder(...parts) {
+  const rows=[...$('terminal-lines').querySelectorAll('.term-line')].sort((a,b)=>a.dataset.index-b.dataset.index).map(row=>row.textContent);
+  let at=-1;
+  for(const part of parts) { at=rows.findIndex((row,index)=>index>at&&row.includes(part)); if(at<0) return false; }
+  return true;
+}
 function text() { return $('terminal-lines').textContent||''; }
 function key(name,code,options={},keyCode=0) {
   for(const type of ['keydown','keyup']) {
@@ -55,21 +63,29 @@ async function sessions() {
   return (await response.json()).sessions;
 }
 async function create(count) {
-  if(count>1) {
-    const selected=document.querySelector('.workspace-tab.active')?.dataset.workspace;
-    $('new-workspace').click();
-    await until(()=>document.querySelector('.workspace-tab.active')?.dataset.workspace!==selected,'new CLI workspace');
-  }
+  await until(()=>$('connection-status').textContent==='Connected'&&$('new').getAttribute('aria-disabled')==='false','launcher ready');
   $('new').click();
-  await until(()=>$('directory-dialog').open,'directory dialog');
-  $('directory-address').click();
-  $('directory-path').value=CWD;
-  $('directory-path').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
-  await until(()=>!$('directory-create').disabled,'selected directory');
-  $('directory-create').click();
+  const launcher=await until(()=>document.querySelector('dialog.launcher[open]'),'launcher dialog');
+  $('launch-folder').value=CWD;
+  // Later terminals open in their own workspace, so each one owns the view.
+  if(count>1) $('launch-workspace').value='new';
+  launcher.querySelector('.dlg-foot .btn.primary').click();
   await until(async()=>(await sessions()).length===count,'session '+count);
   await until(()=>text().includes('Ask anything'),'Jecode composer '+count);
   await until(()=>$('pane').dataset.status==='Controlling','controller '+count);
+}
+// A saved font size change refits the terminal, so ConPTY resizes natively.
+async function resize(label) {
+  const size=$('pane-status').title;
+  document.querySelector('.navigation-item[data-page="settings"]').click();
+  (await until(()=>$('settings-tab-terminal'),'settings tabs')).click();
+  $('settings-panel-terminal').querySelector('[aria-label="'+label+'"]').click();
+  const footer=await until(()=>{const node=document.querySelector('#page-settings .prefs-footer');return node&&!node.hidden&&node;},'unsaved font size');
+  [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();
+  await until(()=>footer.hidden,'saved font size');
+  document.querySelector('.navigation-item[data-page="workspace"]').click();
+  await until(()=>!$('page-workspace').hidden&&$('pane-status').title!==size,'terminal resize');
+  $('keyboard').focus();
 }
 function observed(id) {
   return new Promise((resolve,reject)=>{
@@ -114,20 +130,19 @@ async function main() {
       paste('X');
       await until(()=>text().includes('draft caf\u00e9 X'),'Unicode replacement');
       check(true,'Unicode edit survived 250ms idle before Backspace');
-      const beforeSize=$('pane-status').title;
-      $('settings').click();$('larger').click();$('preferences-close').click();
-      await until(()=>$('pane-status').title!==beforeSize,'terminal resize');
+      await resize('Larger terminal text');
       await until(()=>text().includes('draft caf\u00e9 X'),'draft redraw after browser resize');
       check(text().includes('draft caf\u00e9 X'),'draft survived browser resize');
-      $('settings').click();$('smaller').click();$('preferences-close').click();
+      paste('\nsecond \ud83d\udc69\u200d\ud83d\udcbb');
+      await until(()=>text().includes('second \ud83d\udc69\u200d\ud83d\udcbb'),'bracketed multiline paste');
+      await pause(300);
+      check(rowsInOrder('draft caf\u00e9 X','second \ud83d\udc69\u200d\ud83d\udcbb'),'paste starting with a newline keeps draft and Unicode rows in order');
+      check((await sessions()).find(item=>item.id===first.id)?.alive&&text().includes('draft caf\u00e9 X'),'multiline paste stayed in the composer');
+      await resize('Smaller terminal text');
+      await until(()=>rowsInOrder('draft caf\u00e9 X','second \ud83d\udc69\u200d\ud83d\udcbb'),'multiline draft redraw after resize');
+      check(true,'multiline draft survived browser resize');
       key('c','KeyC',{ctrlKey:true},67);
-      await until(()=>!text().includes('draft caf\u00e9 X'),'clear draft');
-
-      paste('first caf\u00e9\nsecond \ud83d\udc69\u200d\ud83d\udcbb');
-      await until(()=>text().includes('first caf\u00e9')&&text().includes('second'),'bracketed multiline paste');
-      check(text().includes('second'),'multiline paste stayed local and visible');
-      key('c','KeyC',{ctrlKey:true},67);
-      await until(()=>!text().includes('first caf\u00e9'),'clear pasted draft');
+      await until(()=>!text().includes('draft caf\u00e9 X')&&!text().includes('second \ud83d\udc69\u200d\ud83d\udcbb'),'clear pasted draft');
       $('pane').style.maxHeight='440px';
       await until(()=>Number($('pane-status').title.split('×')[1])<=24,'compact help viewport');
       key('F1','F1',{},112);
@@ -154,6 +169,9 @@ async function main() {
       await until(()=>text().includes('Resume'),'local resume menu');
       check(true,'/resume opened local selector');
       key('Escape','Escape',{},27);
+      await pause(300);
+      key('c','KeyC',{ctrlKey:true},67);
+      await until(()=>text().includes('Ask anything'),'empty composer after resume selector');
 
       await create(2);
       const all=await sessions();
@@ -167,21 +185,24 @@ async function main() {
     }
     const first=sessionStorage.getItem('jecodeBrowserFirst');
     const second=sessionStorage.getItem('jecodeBrowserSecond');
-    await until(()=>text().includes('Ask anything')&&$('workspace-tabs').querySelectorAll('.workspace-tab').length===2,'reload snapshot');
+    await until(()=>text().includes('Ask anything')&&workspaces().length===2,'reload snapshot');
     check((await sessions()).length===2,'browser reload kept both CLI sessions');
     await until(()=>$('pane').dataset.status==='Controlling','control after reload');
     let frameCount=window.__snapshots.filter(item=>item.id===first).length;
-    [...$('workspace-tabs').querySelectorAll('.workspace-tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
+    workspaces().find(row=>!row.hasAttribute('aria-current')).click();
     await until(()=>window.__snapshots.filter(item=>item.id===first).length>frameCount&&text().includes('Ask anything')&&$('pane').dataset.status==='Controlling','fresh first tab control');
     check((await sessions()).find(item=>item.id===first)?.alive,'first CLI remained alive');
     $('keyboard').focus();
     key('q','KeyQ',{ctrlKey:true},81);
     await until(async()=>!(await sessions()).find(item=>item.id===first)?.alive,'first Ctrl+Q exit');
+    await until(()=>$('pane').dataset.status.startsWith('Exited'),'first exit snapshot');
     check($('pane').dataset.status.startsWith('Exited'),'first Ctrl+Q was a normal CLI exit');
     frameCount=window.__snapshots.filter(item=>item.id===second).length;
     const wireStart=window.__wire.length;
-    [...$('workspace-tabs').querySelectorAll('.workspace-tab')].find(tab=>tab.getAttribute('aria-selected')==='false').click();
-    check($('pane').dataset.status==='Connecting…'&&$('take-control').hidden,'cached controller is gated during attach');
+    workspaces().find(row=>!row.hasAttribute('aria-current')).click();
+    // The selection renders on the next frame, before any server reply task.
+    await new Promise(resolveFrame=>requestAnimationFrame(resolveFrame));
+    check($('pane').dataset.status==='Connecting…'&&$('observer').hidden,'cached controller is gated during attach');
     const pendingRequest=window.__wire.slice(wireStart).find(item=>item.op==='attach'&&item.id===second)?.request;
     const simulate=message=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}));
     simulate(window.__snapshotBodies[second]);
@@ -189,7 +210,7 @@ async function main() {
     check($('pane').dataset.status==='Connecting…','pre-ack snapshot and wrong-token ack cannot restore control');
     $('keyboard').focus();
     key('x','KeyX',{},88);
-    $('settings').click();$('larger').click();$('preferences-close').click();
+    $('pane').style.maxHeight='440px';
     check(!window.__wire.slice(wireStart).some(item=>item.op==='input'||item.op==='resize'),'immediate key and geometry do not use stale epoch');
     await until(()=>window.__snapshots.filter(item=>item.id===second).length>frameCount&&text().includes('Ask anything')&&$('pane').dataset.status==='Controlling','fresh second tab control');
     const switched=window.__wire.slice(wireStart);
@@ -200,7 +221,8 @@ async function main() {
     $('keyboard').focus();
     paste('post-attach');
     await until(()=>text().includes('post-attach'),'fresh-epoch input reaches Jecode');
-    check(!$('toast').textContent.includes('Control changed'),'switch caused no rejected input or resize');
+    check(!$('toasts').querySelector('.toast[data-kind="error"]'),'switch caused no rejected input or resize');
+    $('pane').style.maxHeight='';
     key('c','KeyC',{ctrlKey:true},67);
     await until(()=>!text().includes('post-attach'),'clear post-attach draft');
     key('q','KeyQ',{ctrlKey:true},81);
@@ -209,7 +231,7 @@ async function main() {
     check($('pane').dataset.status.startsWith('Exited'),'second Ctrl+Q was a normal CLI exit');
     check((await sessions()).every(item=>item.exitCode===0),'both Jecode processes exited with code 0');
   } catch(error) {
-    checks.push({fail:String(error?.stack||error),status:$('pane').dataset.status,size:$('pane-status').title,active:sessionStorage.getItem('webterminal.workspace'),first:sessionStorage.getItem('jecodeBrowserFirst'),second:sessionStorage.getItem('jecodeBrowserSecond'),tabs:[...$('workspace-tabs').querySelectorAll('.workspace-tab')].map(tab=>tab.getAttribute('aria-selected')),text:text().slice(-1200),toast:$('toast').textContent,errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-5),wire:window.__wire?.slice(-10)});
+    checks.push({fail:String(error?.stack||error),status:$('pane').dataset.status,size:$('pane-status').title,active:sessionStorage.getItem('webterminal.workspace'),first:sessionStorage.getItem('jecodeBrowserFirst'),second:sessionStorage.getItem('jecodeBrowserSecond'),workspaces:workspaces().map(row=>row.getAttribute('aria-current')),text:text().slice(-1200),toasts:$('toasts').textContent,errors:window.__probeErrors,snapshots:window.__snapshots?.slice(-5),wire:window.__wire?.slice(-10)});
   }
   const report={pass:checks.every(item=>typeof item==='string'),checks,userAgent:navigator.userAgent};
   document.body.dataset.probeResult=btoa(Array.from(new TextEncoder().encode(JSON.stringify(report)),byte=>String.fromCharCode(byte)).join(''));

@@ -191,6 +191,14 @@ test('paste preserves multiline boundaries and bracketed paste exactly once', ()
   assert.equal(sent[1], 'a\rb');
 });
 
+test('a bracketed paste in Win32 input mode sends each LF as a Ctrl+J key, never as Enter', () => {
+  const {input, sent} = inputFixture({bracketedPaste:true, win32:true});
+  input.pasteText('\ncafé\r\n🙂');
+  const lineFeed = `${ESC}[74;36;10;1;8;1_${ESC}[74;36;10;0;8;1_`;
+  assert.deepEqual(sent, [`${ESC}[200~${lineFeed}café${lineFeed}🙂${ESC}[201~`]);
+  assert.ok(!sent[0].includes('\r') && !sent[0].includes(';13;'), 'no carriage return or Enter key');
+});
+
 test('composition commits Unicode once even when a final beforeinput follows', () => {
   const {input, keyboard, sent} = inputFixture();
   keyboard.emit('compositionstart');

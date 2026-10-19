@@ -35,8 +35,18 @@ fn main() -> ExitCode {
             input_records::verify_two_keys().expect("inspect console input records");
             ExitCode::SUCCESS
         }
+        Some("--paste-records") => {
+            input_records::inspect_paste_records().expect("inspect paste input records");
+            ExitCode::SUCCESS
+        }
         Some("--mouse-vt") => {
-            input_records::inspect_mouse_vt().expect("inspect VT mouse bytes");
+            input_records::inspect_vt("\x1b[?1000h").expect("inspect VT mouse bytes");
+            ExitCode::SUCCESS
+        }
+        Some("--color-queries") => {
+            // OSC 10/11 default colors and OSC 4 palette entry 1, then DA1.
+            input_records::inspect_vt("\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]4;1;?\x1b\\\x1b[c")
+                .expect("inspect VT color query replies");
             ExitCode::SUCCESS
         }
         Some("--mouse-records") => {
@@ -117,7 +127,7 @@ fn main() -> ExitCode {
         Some("--exit") => ExitCode::from(42),
         _ => {
             eprintln!(
-                "Usage: native_fixture --emit|--echo|--records|--mouse-vt|--mouse-records|--verify-isolation|--flood|--hold|--tree|--host-loss|--exit"
+                "Usage: native_fixture --emit|--echo|--records|--paste-records|--mouse-vt|--color-queries|--mouse-records|--verify-isolation|--flood|--hold|--tree|--host-loss|--exit"
             );
             ExitCode::FAILURE
         }

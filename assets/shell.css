@@ -1,4 +1,4 @@
-/* Inset shell: sidebar, page frame, drawer and the Dock. */
+/* Inset shell: sidebar, page frame, drawer and toasts. */
 #app{display:grid;grid-template-columns:272px minmax(0,1fr);gap:8px;height:100dvh;padding:8px;background:var(--canvas)}
 .sidebar{display:flex;flex-direction:column;min-height:0;padding:16px 8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--container)}
 .sb-head{display:flex;align-items:center;gap:8px;padding:0 4px 12px}
@@ -18,7 +18,7 @@
 .navigation-item{display:flex;align-items:center;gap:10px;width:100%;min-width:0;min-height:34px;padding:7px 8px;border-radius:8px;color:var(--nav-text);font-size:14px;line-height:20px;font-weight:500;text-align:left}
 .navigation-item .icon{width:16px;height:16px;color:var(--text-3)}
 .navigation-item:hover{background:#252528;color:var(--ink)}
-.navigation-item[aria-current="page"]{min-height:36px;background:var(--action);color:#fafafa;font-weight:600}
+.navigation-item[aria-current="page"]{background:var(--action);color:#fafafa;font-weight:600}
 .navigation-item[aria-current="page"] .icon{color:var(--panel-text)}
 .navigation-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .navigation-workspace-row{display:grid;grid-template-columns:32px minmax(0,1fr) 32px;align-items:center;gap:2px;min-height:36px}
@@ -36,7 +36,6 @@
 .navigation-terminals .navigation-item[aria-current="true"]{background:var(--selected);color:#ededf0;font-weight:600}
 .navigation-terminals .navigation-item[aria-current="true"]:hover{background:var(--selected-hover)}
 .navigation-terminals .status-dot{width:6px;height:6px;border-radius:50%;flex:none;background:transparent}
-.navigation-terminals .status-dot[data-tone="amber"]{background:#f59e0b}
 .navigation-terminals .status-dot[data-tone="red"]{background:var(--danger)}
 .navigation-empty{padding:6px 8px;color:var(--muted);font-size:12px}
 .sb-foot{display:grid;gap:10px;padding:12px 4px 0;border-top:1px solid var(--line)}
@@ -46,7 +45,7 @@
 .server-text b .status-badge{min-height:22px;padding:2px 8px}
 .meter{display:flex;gap:2px;height:4px;border-radius:3px;background:#1f1f23;overflow:hidden}
 .meter i{display:block;height:100%;border-radius:3px}
-.meter i:nth-child(1){background:#f59e0b}
+.meter i:nth-child(1){background:var(--danger)}
 .meter i:nth-child(2){background:var(--focus)}
 .meter i:nth-child(3){background:var(--text-3)}
 .meter-label{display:flex;justify-content:space-between;gap:8px;font-size:12px;line-height:18px;color:var(--muted)}
@@ -57,21 +56,26 @@
 .page{display:flex;flex-direction:column;flex:1;min-height:0}
 .topbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;min-height:67px;padding:12px 24px;border-bottom:1px solid var(--divider)}
 .title-block{display:grid;flex:1;min-width:0}
-.title-block h1{font-size:24px;line-height:30px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.title-block h1:focus-visible{outline-offset:2px}
+.title-block h1{justify-self:start;max-width:100%;font-size:24px;line-height:30px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.title-block h1:focus-visible{outline-offset:2px;border-radius:4px}
 .subtitle{font-size:12px;line-height:17px;color:var(--muted)}
 .top-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .menu-btn{display:none}
 .content{flex:1;min-height:0;padding:24px 28px 40px;overflow:auto;scrollbar-width:thin;scrollbar-color:#676772 transparent}
 .content.fill{display:flex;flex-direction:column;padding:12px;overflow:hidden}
-/* Dock: the last flex child of .main, so pages shrink above it. */
-.workbench-dock{flex:none;max-height:35%;overflow:auto;padding:12px 16px;border-top:1px solid var(--prefs-line)}
-.feedback-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:720px;margin:0 auto;padding:16px;border:1px solid var(--prefs-line);border-radius:12px;background:var(--frame)}
-.feedback-notice h2{font-size:14px;line-height:21px;font-weight:600;color:var(--ink)}
-.feedback-notice p{font-size:12px;line-height:18px;color:var(--muted-2);overflow-wrap:anywhere}
-.feedback-notice[data-kind="attention"] h2{color:#f59e0b}
-.feedback-notice[data-kind="error"] h2{color:var(--danger)}
-.feedback-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;flex:none}
+/* Toasts: fixed above the page rather than in its layout, so terminals keep
+   their size. Only the cards take pointer events. */
+.toasts{position:fixed;z-index:1300;right:16px;bottom:16px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:min(380px,calc(100vw - 32px));max-height:calc(100dvh - 32px);pointer-events:none}
+.toast{display:flex;align-items:flex-start;gap:8px;width:100%;min-height:0;padding:12px 8px 12px 16px;border:1px solid var(--overlay-line);border-radius:12px;background:var(--frame);box-shadow:var(--shadow);pointer-events:auto}
+.toast-body{display:flex;flex-direction:column;gap:2px;align-self:stretch;flex:1;min-width:0;min-height:0;overflow:hidden}
+.toast h2{flex:none;font-size:14px;line-height:21px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.toast p{min-height:0;overflow-y:auto;font-size:12px;line-height:18px;color:var(--muted-2);overflow-wrap:anywhere}
+.toast[data-kind="error"]{border-color:#985b65}
+.toast[data-kind="error"] h2{color:var(--danger)}
+.toast-actions{display:flex;flex:none;flex-wrap:wrap;gap:8px;margin-top:8px}
+.toast>.icon-btn{margin-top:-4px}
+@media(prefers-reduced-motion:no-preference){.toast{animation:toast-in .16s ease-out}}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}}
 @media(max-width:1180px){.topbar{padding-inline:16px}}
 @media(max-width:900px){
   #app{grid-template-columns:minmax(0,1fr)}
@@ -86,5 +90,5 @@
   .menu-btn{display:inline-grid;width:44px;height:44px}
   .content{padding:16px 14px 32px}
 }
-@media(max-width:620px){#app{padding:6px;gap:0}.sidebar{left:6px;top:6px;bottom:6px}.workbench-dock{max-height:40%;padding:12px}.feedback-notice{flex-direction:column;align-items:stretch}.search-btn{min-height:44px}}
+@media(max-width:620px){#app{padding:6px;gap:0}.sidebar{left:6px;top:6px;bottom:6px}.search-btn{min-height:44px}.toasts{left:16px;width:auto;align-items:stretch}.toast>.icon-btn{width:44px;height:44px;margin:-10px -4px -10px 0}}
 @media(prefers-reduced-motion:reduce){.sidebar,.navigation-disclosure .icon{transition:none}}

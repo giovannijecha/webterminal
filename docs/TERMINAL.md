@@ -29,13 +29,21 @@ a pane switcher. Workspace selection is stored per browser tab in
 `~/.webterminal/settings.json`. Server state, including workspaces, custom
 names and history, does not survive a server restart.
 
-Closing a terminal or workspace asks for confirmation only while a program runs
-beyond its shell. Workspace confirmation is checked against the sessions that
-were present when the dialog opened; membership changes from another view cannot
-silently add new targets to a confirmed close.
+Closing a terminal or workspace asks for confirmation while a program runs
+beyond its shell. The browser first sends a close without confirmation, naming
+the session IDs it observed for a workspace. The server closes idle targets
+only if that set still matches. Otherwise it answers `busy` with the current
+targets and any sessions that still run a program, so the view can review them.
+The server checks the target set and removes the workspace under the same lock;
+terminals added by another view are never closed silently. A changed set is
+reviewed again or refused for a retry, and Cancel leaves all sessions running.
+
+The busy check counts processes in the terminal's owned job. A PowerShell
+command running entirely inside the shell process, such as `Start-Sleep`, cannot
+be distinguished from an idle shell by this check.
 
 The Reader renders copied Markdown through DOM nodes, keeping at most 20 local
-documents of 512 KiB each, plus up to 200 program replies, in browser memory.
+documents of 512 KiB each in browser memory.
 After confirmation and a successful clipboard write, terminal text that looks
 like prose also becomes a Reader document.
 Follow clipboard reads only while enabled and the view is focused, and skips
@@ -112,21 +120,30 @@ reads are unsupported. Some browser or operating-system shortcuts may escape
 capture even in fullscreen mode. Keyboard Lock depends on browser support and
 permission.
 
-In an isolated Windows 11 probe using inbox conhost 10.0.26100.1, OSC 10/11
-default-color and OSC 4 palette queries produced no child-input reply and did
-not appear in Webterminal's raw ConPTY output. Webterminal can answer these
-queries when they reach its parser, but that path was not exercised by this
-ConPTY probe. The same probe under Windows Terminal 1.24.12741.0 received
-color replies. An isolated Codex 0.163.0 run in Webterminal lacked gray
-user-message and composer bands; whether unanswered color queries caused
-that difference remains unverified.
+With inbox conhost 10.0.26100.1 on Windows 11 build 26300, the console host
+swallows OSC 10/11 default-color queries: they never reach Webterminal's
+output and receive no reply. An OSC 4 palette query does reach Webterminal,
+which answers it, but conhost drops OSC replies, whether terminated by ST or
+BEL, before the program reads its input; CSI replies pass through. Programs
+therefore see no color replies with this inbox conhost. Webterminal cannot
+supply these replies through the supported
+[CreatePseudoConsole interface](https://learn.microsoft.com/en-us/windows/console/createpseudoconsole)
+in that environment; this requires a conhost change or a different console host.
+An earlier probe of the same
+sequences under Windows Terminal 1.24.12741.0 received color replies. An
+isolated Codex 0.163.0 run in Webterminal lacked gray user-message and
+composer bands; that these missing replies cause it is likely but unverified.
+`cargo test --locked --offline --test native_input observe_color_queries -- --nocapture`
+reproduces the observation.
 
-In the same environment, Codex 0.163.0 drops a leading newline pasted into an
-existing draft. ConPTY consumes the bracketed-paste delimiters and delivers LF
-as Ctrl+Enter input records; the Codex composer then joins the lines. The
-optional Codex browser probe checks for this loss and reports a failure while
-continuing its other checks. Replacing LF with CR can submit a prompt during
-paste, so that substitution is not used.
+For programs that read console key records, such as Codex 0.163.0, ConPTY
+consumes the bracketed-paste delimiters and delivers each pasted LF as
+Ctrl+Enter; Codex dropped such a newline at the start of a paste and joined the
+lines. Replacing LF with CR could submit a prompt during the paste. In Win32
+input mode, Webterminal therefore sends each LF of a bracketed paste as the
+Ctrl+J key it stands for: record readers receive a newline key, and VT input
+readers still receive LF between the delimiters. The native input tests and
+the optional CLI probes check both.
 The observed key-event behavior is consistent with
 [Windows Terminal's event synthesis](https://github.com/microsoft/terminal/blob/v1.24.12741.0/src/interactivity/base/EventSynthesis.cpp)
 and [the Windows input parser pinned by Codex](https://github.com/openai-oss-forks/crossterm/blob/ed1cdab335221515706178d68495bba2aed1924f/src/event/sys/windows/parse.rs).

@@ -10,15 +10,28 @@ pub const FONT_SIZES: RangeInclusive<u8> = 10..=20;
 /// Longest accepted start folder, in characters.
 pub const PATH_LIMIT: usize = 1024;
 
+/// Notification preferences that earlier versions saved.
+const LEGACY_NOTIFICATIONS: [&str; 3] = ["input", "reply", "failure"];
+
+/// How [`merge`] treats its input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Source {
+    /// A save request: a changed start folder must exist and is canonicalized.
+    Save,
+    /// The settings file: the start folder only has to be a well-formed
+    /// absolute path, and the legacy `notifications` object is dropped.
+    File,
+}
+
 /// Validates `value` as a `settings` object and applies it over `base`;
-/// absent fields keep their base value. With `verify`, a start folder that
-/// differs from the base must name an existing directory and is stored
-/// canonicalized; otherwise it only has to be a well-formed absolute path.
-pub(super) fn merge(base: &Settings, value: &Value, verify: bool) -> Result<Settings, String> {
+/// absent fields keep their base value.
+pub(super) fn merge(base: &Settings, value: &Value, source: Source) -> Result<Settings, String> {
     let mut next = base.clone();
     for (key, field) in object(value, "settings")? {
         match key.as_str() {
-            "startFolder" => next.start_folder = start_folder(field, base, verify)?,
+            "startFolder" => {
+                next.start_folder = start_folder(field, base, source == Source::Save)?;
+            }
             "fontSize" => {
                 next.font_size = field
                     .number()
@@ -39,22 +52,7 @@ pub(super) fn merge(base: &Settings, value: &Value, verify: bool) -> Result<Sett
                     _ => return Err("settings.terminalTheme must be \"dark\" or \"light\"".into()),
                 };
             }
-            "notifications" => {
-                for (key, field) in object(field, "settings.notifications")? {
-                    let slot = match key.as_str() {
-                        "input" => &mut next.notify_input,
-                        "reply" => &mut next.notify_reply,
-                        "failure" => &mut next.notify_failure,
-                        _ => return Err(unknown("settings.notifications", key)),
-                    };
-                    let Value::Bool(enabled) = field else {
-                        return Err(format!(
-                            "settings.notifications.{key} must be true or false"
-                        ));
-                    };
-                    *slot = *enabled;
-                }
-            }
+            "notifications" if source == Source::File => legacy_notifications(field)?,
             _ => return Err(unknown("settings", key)),
         }
     }
@@ -67,13 +65,25 @@ pub(super) fn render(settings: &Settings) -> String {
         |path| json::quote(&path.to_string_lossy()),
     );
     format!(
-        "{{\"startFolder\":{folder},\"fontSize\":{},\"terminalTheme\":\"{}\",\"notifications\":{{\"input\":{},\"reply\":{},\"failure\":{}}}}}",
+        "{{\"startFolder\":{folder},\"fontSize\":{},\"terminalTheme\":\"{}\"}}",
         settings.font_size,
-        settings.terminal_theme.name(),
-        settings.notify_input,
-        settings.notify_reply,
-        settings.notify_failure
+        settings.terminal_theme.name()
     )
+}
+
+/// Accepts only the shape earlier versions wrote; its values are ignored.
+fn legacy_notifications(value: &Value) -> Result<(), String> {
+    for (key, field) in object(value, "settings.notifications")? {
+        if !LEGACY_NOTIFICATIONS.contains(&key.as_str()) {
+            return Err(unknown("settings.notifications", key));
+        }
+        if !matches!(field, Value::Bool(_)) {
+            return Err(format!(
+                "settings.notifications.{key} must be true or false"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn object<'a>(value: &'a Value, name: &str) -> Result<&'a BTreeMap<String, Value>, String> {

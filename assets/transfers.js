@@ -4,7 +4,7 @@
 import {UploadQueue, dropProblem, pathList} from './upload.js';
 import {queueInput} from './connection.js';
 import {canInput, changed, go, state, terminalName} from './model.js';
-import {dock, notify, problem} from './ui.js';
+import {notify, problem, toasts} from './ui.js';
 import {plural} from './dom.js';
 
 const ESC = '\x1b';
@@ -68,7 +68,7 @@ async function track({records, finished}) {
   const cancelAll = () => records.forEach(record => queue.cancel(record.key));
   notice = {records, name};
   const title = records.length === 1 ? `Uploading ${records[0].name}` : `Uploading ${records.length} files`;
-  notice.node = notify(title, progressText(notice), {label:'Cancel', run:cancelAll}, 'upload');
+  notice.node = toasts.show({title, text:progressText(notice), action:{label:'Cancel', run:cancelAll}, key:'upload', sticky:true});
   const result = await finished;
   if (notice?.records === records) notice = null;
   report(result, records, name);
@@ -82,9 +82,9 @@ function progressText({records, name}) {
   return `To ${name}${position} · ${active.percent}%`;
 }
 
-// Updates the Dock text in place; a dismissed notice stays dismissed.
+// Updates the progress toast in place; a dismissed toast stays dismissed.
 function progressNotice() {
-  if (!notice?.node || dock.current?.notice !== notice.node) return;
+  if (!toasts.shown(notice?.node)) return;
   const text = notice.node.querySelector('p');
   if (text) text.textContent = progressText(notice);
 }

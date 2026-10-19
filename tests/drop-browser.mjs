@@ -26,14 +26,11 @@ const page = {
   create: async cwd => {
     const $ = id => document.getElementById(id), pause = ms => new Promise(done => setTimeout(done, ms));
     const until = async (probe, label) => { for (let i = 0; i < 600; i++) { if (await probe()) return; await pause(50); } throw new Error('Timed out: ' + label); };
-    await until(() => $('new') && !$('new').disabled, 'connection');
+    await until(() => $('new')?.getAttribute('aria-disabled') === 'false', 'connection');
     $('new').click();
-    await until(() => $('directory-dialog').open, 'directory dialog');
-    $('directory-address').click();
-    $('directory-path').value = cwd;
-    $('directory-path').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
-    await until(() => !$('directory-create').disabled, 'selected directory');
-    $('directory-create').click();
+    await until(() => document.querySelector('dialog.launcher[open]'), 'launcher dialog');
+    $('launch-folder').value = cwd;
+    document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();
     try { await until(() => ($('terminal-lines').textContent || '').includes('Ask anything'), 'Jecode composer'); }
     catch (error) { throw new Error(error.message + ': ' + ($('terminal-lines').textContent || '').slice(-600)); }
     await until(() => $('pane').dataset.status === 'Controlling', 'controller');

@@ -40,6 +40,13 @@ function classicKey(event, modes) {
   return (event.altKey && !altGraph ? ESC : '') + key;
 }
 
+// ConPTY consumes the bracketed paste markers for programs that read console
+// key records and turns a bare LF into Ctrl+Enter, which such programs may
+// drop or treat as a command. In Win32 input mode each pasted LF is sent as
+// the Ctrl+J key press that ASCII LF stands for: record readers get a newline
+// key, VT readers still get 0x0A between the markers.
+const PASTE_LINE_FEED = `${ESC}[74;36;10;1;8;1_${ESC}[74;36;10;0;8;1_`;
+
 function win32Key(event, down, pressed) {
   const virtualKey = event.keyCode || (event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0);
   const scan = SCANS[event.code] || 0;
@@ -171,8 +178,9 @@ export class TerminalInput {
   }
   pasteText(text) {
     if (!this.canInput() || !text) return;
-    const normalized = text.replace(/\r\n|\r/g, '\n');
-    this.sendText(this.modes().bracketedPaste ? `${ESC}[200~${normalized}${ESC}[201~` : normalized.replace(/\n/g, '\r'));
+    const normalized = text.replace(/\r\n|\r/g, '\n'), modes = this.modes();
+    if (!modes.bracketedPaste) { this.sendText(normalized.replace(/\n/g, '\r')); return; }
+    this.sendText(`${ESC}[200~${modes.win32 ? normalized.replace(/\n/g, PASTE_LINE_FEED) : normalized}${ESC}[201~`);
   }
   focusReport(focused) {
     if (this.canInput() && this.modes().focus) this.sendText(`${ESC}[${focused ? 'I' : 'O'}`);

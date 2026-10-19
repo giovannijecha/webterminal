@@ -74,14 +74,13 @@ fn read_routes_describe_only_owned_state() {
     let info = body(&app, "/api/info");
     assert_eq!(info.integer("port"), Ok(i64::from(app.port)));
     assert_eq!(info.integer("pid"), Ok(i64::from(std::process::id())));
-    // Programs need a PowerShell base shell; this fixture shell hosts none.
-    let programs = body(&app, "/api/programs");
-    assert!(matches!(programs.get("hosted"), Some(Value::Bool(false))));
-    assert!(
-        array(&programs, "programs")
-            .iter()
-            .all(|program| matches!(program.get("available"), Some(Value::Bool(false))))
-    );
+    // Program discovery and agent activity are not part of the API.
+    for retired in ["/api/programs", "/api/agents"] {
+        assert!(
+            app.request(retired, "").starts_with("HTTP/1.1 404"),
+            "{retired}"
+        );
+    }
     let processes = body(&app, "/api/processes");
     let sessions = array(&processes, "sessions");
     assert_eq!(sessions.len(), 1);
@@ -95,15 +94,8 @@ fn read_routes_describe_only_owned_state() {
     }));
     let files = body(&app, "/api/files");
     assert!(array(&files, "files").is_empty());
-    let agents = body(&app, "/api/agents");
-    assert!(array(&agents, "sources").is_empty() && array(&agents, "requests").is_empty());
 
-    for path in [
-        "/api/processes",
-        "/api/files",
-        "/api/agents",
-        "/api/settings",
-    ] {
+    for path in ["/api/processes", "/api/files", "/api/settings"] {
         let foreign = app.raw_http(&format!(
             "GET {path} HTTP/1.1\r\nHost: evil.example\r\n\r\n"
         ));
@@ -123,7 +115,7 @@ fn settings_saved_over_the_socket_reject_stale_revisions() {
     let revision = body(&app, "/api/settings").integer("revision").unwrap();
     let save = |revision: i64, size: u32| {
         format!(
-            "{{\"op\":\"save-settings\",\"revision\":{revision},\"settings\":{{\"fontSize\":{size},\"notifications\":{{\"reply\":false}}}}}}"
+            "{{\"op\":\"save-settings\",\"revision\":{revision},\"settings\":{{\"fontSize\":{size}}}}}"
         )
     };
     writer.send(&save(revision, 15));
@@ -132,15 +124,16 @@ fn settings_saved_over_the_socket_reject_stale_revisions() {
     assert!(next > revision);
     let settings = saved.get("settings").unwrap();
     assert_eq!(settings.integer("fontSize"), Ok(15));
-    let notifications = settings.get("notifications").unwrap();
-    assert!(matches!(
-        notifications.get("reply"),
-        Some(Value::Bool(false))
+    assert!(settings.get("notifications").is_none());
+    // Retired preferences are accepted only from an existing file.
+    writer.send(&format!(
+        "{{\"op\":\"save-settings\",\"revision\":{next},\"settings\":{{\"notifications\":{{\"reply\":false}}}}}}"
     ));
-    assert!(matches!(
-        notifications.get("input"),
-        Some(Value::Bool(true))
-    ));
+    assert!(
+        writer
+            .recv_type("error")
+            .contains("Unknown field settings.notifications")
+    );
 
     // A draft based on the earlier revision is refused and nothing changes.
     writer.send(&save(revision, 18));
