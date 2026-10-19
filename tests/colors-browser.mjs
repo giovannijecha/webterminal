@@ -19,6 +19,7 @@ await copyFile(resolve(binaries,'webterminal.exe'),resolve(runRoot,'webterminal.
 await copyFile(resolve(binaries,'color_fixture.exe'),resolve(runRoot,'color_fixture.exe'));
 
 const harness=String.raw`
+import {paneFor} from '/workspace.js';
 const $=id=>document.getElementById(id);
 const checks=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -26,6 +27,11 @@ async function until(test,label){for(let i=0;i<500;i++){if(test())return;await p
 function check(value,label){if(!value)throw new Error(label);checks.push(label);}
 function send(text){const data=new DataTransfer();data.setData('text/plain',text);$('keyboard').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));}
 function current(){return window.__snapshotBodies[Object.keys(window.__snapshotBodies)[0]];}
+// Transport state can advance before the next animation frame paints it.
+function painted(){
+  const latest=current(),rendered=latest&&paneFor(latest.id)?.renderer.snapshot;
+  return rendered&&rendered.id===latest.id&&rendered.epoch===latest.epoch&&rendered.seq===latest.seq;
+}
 function rows(){const term=current().terminal;return term.alternate?term.screen:[...term.history,...term.screen];}
 function cell(marker){
   for(const row of rows()){
@@ -93,7 +99,7 @@ async function resizeFont(label){
   const step=document.querySelector('#settings-panel-terminal [aria-label="'+label+' terminal text"]');step.click();step.click();
   const footer=document.querySelector('#page-settings .prefs-footer');await until(()=>!footer.hidden,'unsaved settings');
   [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();await until(()=>footer.hidden,'settings saved');
-  page('workspace');await until(()=>current().terminal.cols!==cols,'native resize');await pause(150);
+  page('workspace');await until(()=>current().terminal.cols!==cols&&painted(),'painted native resize');
 }
 function rgb(hex){return 'rgb('+[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)).join(', ')+')';}
 function completed(){
@@ -102,12 +108,12 @@ function completed(){
 }
 async function paintAndWait(command){
   const before=completed();send(command+'\r');
-  await until(()=>completed()>before&&$('terminal-lines').textContent.includes('COLOR_DONE:'+completed()),'completed '+command);
+  await until(()=>completed()>before&&painted()&&$('terminal-lines').textContent.includes('COLOR_DONE:'+completed()),'painted '+command);
 }
 async function main(){
   await until(()=>$('connection-status').textContent==='Connected','connection');
   if(sessionStorage.getItem('colorStage')==='reconnect'){
-    await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('RGB_TEXT'),'reconnect');
+    await until(()=>$('pane').dataset.status==='Controlling'&&painted()&&$('terminal-lines').textContent.includes('RGB_TEXT'),'reconnect');
     verifyColors('reconnect');check(Object.keys(window.__snapshotBodies).length===1,'reconnect retains the same session');
     check(current().id===sessionStorage.getItem('colorSession'),'session identity survives reconnect');
     const before=current().seq;await paintAndWait('paint');check(current().seq>before,'fresh ordered colors after reconnect');
@@ -118,7 +124,7 @@ async function main(){
   }
   await until(()=>$('new').getAttribute('aria-disabled')==='false','workspace ready for launcher');
   $('new').click();await until(()=>document.querySelector('dialog.launcher[open]'),'launcher');document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();
-  await until(()=>$('pane').dataset.status==='Controlling'&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
+  await until(()=>$('pane').dataset.status==='Controlling'&&painted()&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
   check($('terminal-lines').textContent.includes('COLOR_ENABLED=true'),'CLI-style color detection ignores the redirected host');
   verifyColors('initial');await paintAndWait('scroll');verifyColors('scrollback update');
   check(current().terminal.history.length>0,'colored output remains in bounded history');

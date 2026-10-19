@@ -60,7 +60,7 @@ function key(name, code, options={}, keyCode=0, type='keydown') {
 async function launcher() {
   await until(() => $('connection-status').textContent === 'Connected' && $('new').getAttribute('aria-disabled') === 'false', 'workspace ready for launcher');
   $('new').click();
-  return until(() => document.querySelector('dialog.launcher[open]'), 'launcher dialog; dock='+$('dock').textContent);
+  return until(() => document.querySelector('dialog.launcher[open]'), 'launcher dialog; toasts='+$('toasts').textContent);
 }
 async function newTerminal(expectedCount) {
   const open = await launcher();
@@ -69,11 +69,13 @@ async function newTerminal(expectedCount) {
   await until(async () => (await sessions()).length === expectedCount, 'session creation');
   await until(() => status() === 'Controlling', 'terminal control');
 }
-async function closeFocused() {
+// An exited terminal is idle, so it closes without a confirmation.
+async function closeFocused(remaining) {
   part('pane-menu').click();
   const item = await until(() => [...document.querySelectorAll('.menu-item')].find(node => node.textContent.includes('Close terminal')), 'close terminal menu item');
   item.click();
-  (await until(() => dialog()?.querySelector('.dlg-foot .btn.primary'), 'close confirmation')).click();
+  await until(async () => (await sessions()).length===remaining, 'close to '+remaining+' sessions');
+  verify(!dialog(), 'idle terminal closes without confirmation');
 }
 function navigate(path) {
   $('directory-address').click();
@@ -178,8 +180,7 @@ async function echo() {
   await until(() => terminalText().includes('ECHO:hello café🙂'), 'Unicode echo through ConPTY');
   await until(() => status().startsWith('Exited'), 'normal echo exit');
   verify(terminalText().includes('ECHO:hello café🙂'), 'browser keyboard and paste reached fixture');
-  await closeFocused();
-  await until(async () => (await sessions()).length===1, 'close second session');
+  await closeFocused(1);
   verify((await sessions())[0].id===first && (await sessions())[0].alive, 'closing second left first running');
   workspaceItems().find(item => !item.hasAttribute('aria-current')).click();
   await until(() => terminalText().includes('READY') && status()==='Controlling', 'first workspace resumes');
@@ -188,8 +189,7 @@ async function echo() {
   key('Enter','Enter',{},13);
   await until(() => terminalText().includes('ECHO:other'), 'first independent echo');
   await until(() => status().startsWith('Exited'), 'first normal exit');
-  await closeFocused();
-  await until(async () => (await sessions()).length===0, 'close first session');
+  await closeFocused(0);
   await until(() => !$('empty-state').hidden, 'empty state');
   verify($('empty-state').hidden===false, 'empty state returns');
 
@@ -238,7 +238,7 @@ async function records() {
 }
 async function main() {
   try { const outcome=PHASE==='echo' ? await echo() : await records(); if (outcome==='reloading') return; }
-  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({workspaces:workspaceItems().length,text:terminalText().slice(0,120),status:status(),active:activeWorkspace(),dock:$('dock').textContent,errors:window.__e2eErrors})}); }
+  catch (error) { results.push({pass:false,label:String(error?.stack || error)+' UI '+JSON.stringify({workspaces:workspaceItems().length,text:terminalText().slice(0,120),status:status(),active:activeWorkspace(),toasts:$('toasts').textContent,errors:window.__e2eErrors})}); }
   const report={phase:PHASE,pass:results.every(result=>result.pass),results,userAgent:navigator.userAgent};
   sessionStorage.removeItem('browserE2eResults');
   const bytes=new TextEncoder().encode(JSON.stringify(report));

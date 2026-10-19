@@ -1,12 +1,11 @@
 //! Loopback-only HTTP/WebSocket service with bounded connections and messages.
 mod api;
 mod commands;
-mod hooks;
 mod http;
 mod upload;
 use crate::{
     json, native,
-    session::{self, Launch, Registry, unix_ms},
+    session::{self, Registry, unix_ms},
     settings::Store,
     terminal::SnapshotBaseline,
     uploads::Uploads,
@@ -32,9 +31,6 @@ pub struct Config {
     pub shell: String,
     /// The user's settings file; tests pass a disposable path.
     pub settings: PathBuf,
-    /// Executable that program adapters run to reach this server; without it
-    /// programs start without activity reporting.
-    pub helper: Option<PathBuf>,
 }
 /// What every connection of one server shares.
 pub(crate) struct Context {
@@ -73,15 +69,7 @@ impl Server {
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let owner = format!("{}-{port}", std::process::id());
-        let mut registry =
-            Registry::new(config.cwd, config.shell, Uploads::temporary(owner.clone()));
-        if let Some(helper) = config.helper {
-            registry = registry.with_launch(Launch {
-                port,
-                helper,
-                directory: std::env::temp_dir().join("webterminal-bridge").join(owner),
-            });
-        }
+        let registry = Registry::new(config.cwd, config.shell, Uploads::temporary(owner));
         Ok(Self {
             listener,
             context: Arc::new(Context {
@@ -200,7 +188,7 @@ fn connection(mut stream: TcpStream, context: Arc<Context>) -> io::Result<()> {
     }
     match req.route {
         http::Route::Upload => upload::handle(&mut stream, &req, &context.registry, &origin),
-        http::Route::Hook => hooks::handle(&mut stream, &req, &context.registry),
+
         http::Route::Get if req.path == "/ws" => {
             let valid = req
                 .headers
@@ -242,8 +230,6 @@ fn connection(mut stream: TcpStream, context: Arc<Context>) -> io::Result<()> {
 struct Published {
     list: String,
     settings: Option<u64>,
-    agents: Option<u64>,
-    replies: u64,
     files: Option<u64>,
     slow: Option<Instant>,
 }
@@ -254,29 +240,6 @@ impl Published {
         if list != self.list {
             websocket::send_text(stream, &list)?;
             self.list = list;
-        }
-        let agents = registry.bridge.revision();
-        if self.agents != Some(agents) {
-            websocket::send_text(stream, &registry.bridge.json())?;
-            self.agents = Some(agents);
-        }
-        // Replies already present at connect are marked so views can list
-        // them without notifying again.
-        let replayed = self.slow.is_none();
-        for reply in registry.bridge.replies_after(self.replies) {
-            websocket::send_text(
-                stream,
-                &format!(
-                    "{{\"type\":\"reply\",\"seq\":{},\"id\":{},\"program\":{},\"label\":{},\"text\":{},\"at\":{},\"replayed\":{replayed}}}",
-                    reply.seq,
-                    json::quote(&reply.session),
-                    json::quote(reply.program.id()),
-                    json::quote(reply.program.label()),
-                    json::quote(&reply.text),
-                    reply.at
-                ),
-            )?;
-            self.replies = reply.seq;
         }
         if self.slow.is_some_and(|at| at.elapsed() < SLOW_INTERVAL) {
             return Ok(());
@@ -439,7 +402,6 @@ mod tests {
                 cwd: PathBuf::from("."),
                 shell: "cmd.exe /d /q".into(),
                 settings: std::env::temp_dir().join("webterminal-unused-settings.json"),
-                helper: None,
             })
             .is_err()
         );
@@ -453,7 +415,6 @@ mod tests {
             cwd: PathBuf::from("."),
             shell: "powershell.exe -NoLogo -NoProfile".into(),
             settings: std::env::temp_dir().join("webterminal-unused-stop-settings.json"),
-            helper: None,
         })
         .unwrap();
         let command = json::parse(r#"{"op":"stop-server","confirmed":true}"#).unwrap();

@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf, process::ExitCode};
 use webterminal::{
-    bridge, native,
+    native,
     server::{Config, Server},
     settings,
 };
@@ -12,7 +12,7 @@ Usage: webterminal [--port PORT] [--cwd DIRECTORY] [--shell COMMAND] [--config F
 Options:
   --port PORT        Loopback HTTP/WebSocket port (default 4183)
   --cwd DIRECTORY    Initial working directory (default current directory)
-  --shell COMMAND    Server-wide program override for development checks
+  --shell COMMAND    Server-wide shell override for development checks
   --config FILE      Settings file (default ~/.webterminal/settings.json)
   -h, --help         Show this help
   -V, --version      Show the package version
@@ -25,11 +25,6 @@ New terminals run Windows PowerShell with -NoLogo -NoProfile.
 ";
 
 fn main() -> ExitCode {
-    // Program adapters run `webterminal bridge ...` to report one event.
-    if env::args_os().nth(1).is_some_and(|arg| arg == "bridge") {
-        bridge::helper::run(env::args_os().skip(2));
-        return ExitCode::SUCCESS;
-    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -45,7 +40,6 @@ fn run() -> Result<(), String> {
         cwd: env::current_dir().map_err(|e| e.to_string())?,
         shell: "powershell.exe -NoLogo -NoProfile".into(),
         settings: PathBuf::new(),
-        helper: env::current_exe().ok(),
     };
     let mut settings = None;
     while let Some(arg) = args.next() {

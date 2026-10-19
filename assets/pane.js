@@ -2,11 +2,11 @@ import {TerminalRenderer, lineText} from './render.js';
 import {TerminalInput} from './input.js';
 import {droppedFiles} from './upload.js';
 import {displayPath, sessionName} from './common.js';
-import {state, canInput, control, programLabel, ready, requestSummary, requestsFor, terminalStatus} from './model.js';
+import {state, canInput, control, ready, sessionShell, terminalStatus} from './model.js';
 import {plural} from './dom.js';
 
 export const SESSION_DRAG = 'application/x-webterminal-session';
-const PARTS = ['pane-header', 'terminal-scroll', 'terminal-lines', 'keyboard', 'terminal-title', 'terminal-path', 'pane-program', 'pane-status', 'find', 'maximize', 'maximize-icon', 'pane-menu', 'findbar', 'find-input', 'find-count', 'find-prev', 'find-next', 'find-close', 'observer', 'take-control', 'prompt', 'prompt-text', 'prompt-review', 'follow', 'latest', 'terminal-hint'];
+const PARTS = ['pane-header', 'terminal-scroll', 'terminal-lines', 'keyboard', 'terminal-title', 'terminal-path', 'pane-shell', 'pane-status', 'find', 'maximize', 'maximize-icon', 'pane-menu', 'findbar', 'find-input', 'find-count', 'find-prev', 'find-next', 'find-close', 'observer', 'take-control', 'follow', 'latest', 'terminal-hint'];
 
 function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
 function setAttribute(node, name, value) { if (node.getAttribute(name) !== value) node.setAttribute(name, value); }
@@ -39,7 +39,7 @@ export class TerminalPane {
     ui.maximize.addEventListener('click', () => callbacks.maximize(this));
     ui['pane-menu'].addEventListener('click', () => callbacks.menu(this, ui['pane-menu']));
     ui['terminal-title'].addEventListener('click', () => callbacks.rename(this));
-    ui['prompt-review'].addEventListener('click', () => callbacks.review(this));
+
     ui.latest.addEventListener('click', () => { this.scrollToLatest(); this.focus(); });
     const scroll = ui['terminal-scroll'];
     scroll.addEventListener('pointerdown', () => {
@@ -126,7 +126,7 @@ export class TerminalPane {
     setText(ui['terminal-title'], name);
     ui['terminal-title'].title = `${session?.title || name}\nClick to rename`;
     setAttribute(ui['terminal-title'], 'aria-label', `Rename terminal ${name}`);
-    setText(ui['pane-program'], programLabel(session));
+    setText(ui['pane-shell'], sessionShell(session));
     setText(ui['terminal-path'], path);
     ui['terminal-path'].title = path;
     setText(ui['pane-status'].firstElementChild, status.label);
@@ -136,9 +136,7 @@ export class TerminalPane {
     ui.observer.hidden = !observing;
     ui['take-control'].disabled = !state.connected;
     ui['take-control'].title = state.connected ? '' : 'Reconnect before taking control';
-    const request = requestsFor(this.id)[0];
-    ui.prompt.hidden = !request;
-    if (request) setText(ui['prompt-text'], `${request.label || programLabel(session)} ${requestSummary(request)}`);
+
     setAttribute(ui['maximize-icon'], 'href', maximized ? '#icon-minimize-2' : '#icon-maximize-2');
     setAttribute(ui.maximize, 'aria-label', maximized ? 'Restore layout' : 'Maximize terminal');
     ui.maximize.title = maximized ? 'Restore layout' : 'Maximize';

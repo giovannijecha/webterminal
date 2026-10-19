@@ -50,7 +50,7 @@ testing an isolated build. `WEBTERMINAL_TEST_REDUCED_MOTION=1` makes
 not a production CLI benchmark.
 
 Rust tests exercise terminal parsing, rendering state, sessions, ConPTY
-ownership, transport, settings, file staging and program-bridge rules. The
+ownership and input encoding, transport, settings and file staging. The
 JavaScript and Chrome checks exercise browser input and rendering, workspaces,
 the launcher, reader, settings, file views and narrow layouts. These checks use
 owned fixtures; they do not prove authenticated CLI use.
@@ -59,8 +59,14 @@ owned fixtures; they do not prove authenticated CLI use.
 
 The CLI probes require the corresponding installed executables and use
 disposable profiles. `tests/cli-api-browser.mjs` gives Codex and Claude Code
-fixed responses from an owned loopback API. Jecode probes use local drafts and
-commands. Set the executable paths in PowerShell before running a probe:
+fixed responses from an owned loopback API. Jecode's provider endpoint is
+fixed, so its probe uses local drafts and commands and never submits a prompt.
+Each probe types a Unicode draft, pastes text that starts with a newline and
+checks that the lines keep their order, nothing is submitted during the paste
+and the draft survives a native resize. The API probe then checks that one
+Enter answers exactly one turn. The probes also cover editing, reconnect after
+a reload and normal exit. Set the executable paths in PowerShell before
+running a probe:
 
 ```powershell
 $env:WEBTERMINAL_JECODE_EXE = 'C:\path\to\jecode.exe'
@@ -103,16 +109,16 @@ directory. Uploads require the controlling view and its current control epoch;
 closing a session removes its copies. Startup cleanup removes only staging
 directories marked and owned by Webterminal. Originals are never modified.
 
-Claude Code receives per-invocation hook settings in a temporary file; Codex
-receives a per-invocation `notify` override. The helper posts events through
-the token-protected loopback `/api/bridge` endpoint. These adapters do not read
-CLI credentials or change either program's own configuration.
-
-The Windows checks recorded on 2026-10-18 used Rust 1.95.0, Node 24.18.0 and
-headless Chrome 155. Cargo checks, JavaScript module tests and the listed
-browser suites passed with local fixtures, including the reduced-motion run.
-Earlier isolated Jecode, Codex and Claude Code probes opened their text
-interfaces; authenticated provider sessions remain unverified. Edge, Firefox,
-physical IME input and browser clipboard permission prompts have not been
-manually validated. Known ConPTY and Codex paste limits are in
-[TERMINAL.md](TERMINAL.md).
+The Windows checks recorded on 2026-10-19 used Rust 1.95.0, Node 24.18.0 and
+headless Chrome 155 on Windows 11 build 26300. Cargo checks, JavaScript module
+tests and the listed browser suites passed with local fixtures, including the
+reduced-motion run. With disposable profiles, the CLI probes passed for Jecode
+0.1.0, Codex CLI 0.163.0 and Claude Code 2.1.303, the last two against the
+owned loopback API, and the drop probe passed in all three variants.
+The review regressions cover an idle workspace changed by another view,
+immediate launcher reopening and three long error toasts at 320×480 and
+390×520 without changing terminal geometry. Native input probes wait for
+fixture readiness before sending input.
+Authenticated provider sessions, Jecode prompt submission, Edge, Firefox,
+physical IME input and browser clipboard permission prompts remain unverified.
+Known ConPTY color-query and paste behavior is in [TERMINAL.md](TERMINAL.md).

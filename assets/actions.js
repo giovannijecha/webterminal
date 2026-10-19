@@ -1,21 +1,12 @@
 // User actions on terminals, workspaces and the server, with their
-// confirmations and Dock feedback. The server re-checks every action.
+// confirmations and toast feedback. The server re-checks every action.
 import {ask, queueInput, send} from './connection.js';
 import {PANE_LIMIT, WORKSPACE_LIMIT, changed, control, go, showTerminal, state, terminalName, terminalPlace, workspaceById, workspaceLabel, workspaceOf} from './model.js';
-import {el, plural, storage} from './dom.js';
+import {el, plural} from './dom.js';
 import {dialogs, menu, notify, problem} from './ui.js';
 
-const hooks = {geometry:() => null, find() {}, copy() {}, launch() {}, reply:() => null};
+const hooks = {geometry:() => null, find() {}, copy() {}, launch() {}};
 export function configureActions(next) { Object.assign(hooks, next); }
-
-const session = storage('session');
-const muted = new Set((() => { try { return JSON.parse(session.get('webterminal.muted') || '[]'); } catch { return []; } })());
-export function isMuted(id) { return muted.has(id); }
-function setMuted(id, value) {
-  if (value) muted.add(id); else muted.delete(id);
-  session.set('webterminal.muted', JSON.stringify([...muted].filter(item => state.sessions.has(item))));
-  changed('sessions');
-}
 
 export function nameProblem(name) {
   if ([...name.trim()].length > 80) return 'Use 80 characters or fewer.';
@@ -85,7 +76,7 @@ export function orderWorkspaces(ids) {
   changed('sessions');
 }
 
-// Moves a terminal; the Dock offers a guarded Undo back to its old place.
+// Moves a terminal; a toast offers a guarded Undo back to its old place.
 export function moveTerminal(id, target, position, {undo = true} = {}) {
   const source = workspaceOf(id), destination = workspaceById(target);
   if (!source || !destination) return false;
@@ -110,42 +101,76 @@ export function moveTerminal(id, target, position, {undo = true} = {}) {
   return true;
 }
 
-function targetList(ids) {
-  return el('ul', {class:'target-list', 'aria-label':'Terminals to close'}, ids.map(id => el('li', {}, el('b', {text:terminalName(id)}), el('span', {text:terminalPlace(id)}))));
+// The exact terminals a confirmation names; busy ones say why they need it.
+function targetList(ids, busy = []) {
+  return el('ul', {class:'target-list', 'aria-label':'Terminals to close'}, ids.map(id => {
+    const place = busy.includes(id) ? `Running a program · ${terminalPlace(id)}` : terminalPlace(id);
+    return el('li', {}, el('b', {text:terminalName(id), title:terminalName(id)}), el('span', {text:place, title:place}));
+  }));
 }
-// Closes exactly the confirmed terminals; a set that changed is refused.
-export async function closeTerminals(ids) {
+const sameSet = (a, b) => a.length === b.length && a.every(id => b.includes(id));
+const RECONFIRM_LIMIT = 3;
+
+// Closes exactly `ids`. Terminals idle at their shell close at once; a
+// program still running, or an explicit bulk selection (`confirm`), asks
+// first. The confirmed set is revalidated and only ever shrinks.
+export async function closeTerminals(ids, {confirm = false} = {}) {
   ids = [...new Set(ids)].filter(id => state.sessions.has(id));
   if (!ids.length) return false;
-  const single = ids.length === 1;
-  const confirmed = await dialogs.confirm({
-    title:single ? 'Close terminal?' : `Close ${ids.length} terminals?`,
-    description:'Closing stops their programs and removes their staged files.',
-    body:targetList(ids), cancelLabel:single ? 'Keep terminal' : 'Keep terminals', action:single ? 'Close terminal' : `Close ${ids.length} terminals`,
-  });
-  if (!confirmed) return false;
+  const request = (targets, force) => {
+    const key = JSON.stringify(targets);
+    return ask({op:'close-sessions', ids:targets, force}, message => message.type === 'closed' && JSON.stringify(message.ids) === key);
+  };
   try {
-    const key = JSON.stringify(ids);
-    const reply = await ask({op:'close-sessions', ids, force:true}, message => message.type === 'closed' && JSON.stringify(message.ids) === key);
+    let reply = confirm ? {type:'busy', sessions:[]} : await request(ids, false);
+    for (let round = 0; reply?.type === 'busy'; round++) {
+      if (round >= RECONFIRM_LIMIT) { problem('Terminals not closed', 'They kept changing while you were confirming. Try again.'); return false; }
+      const busy = reply.sessions || [], single = ids.length === 1;
+      const confirmed = await dialogs.confirm({
+        title:single ? 'Close terminal?' : `Close ${ids.length} terminals?`,
+        description:busy.length ? `${busy.length === 1 ? 'A program is' : 'Programs are'} still running. Closing stops ${busy.length === 1 ? 'it' : 'them'} and removes staged files.` : 'Closing stops their programs and removes their staged files.',
+        body:targetList(ids, busy), cancelLabel:single ? 'Keep terminal' : 'Keep terminals', action:single ? 'Close terminal' : `Close ${ids.length} terminals`,
+      });
+      if (!confirmed) return false;
+      // Terminals closed elsewhere meanwhile drop out; the rest are confirmed again.
+      const remaining = ids.filter(id => state.sessions.has(id));
+      if (!remaining.length) return false;
+      if (remaining.length !== ids.length) { ids = remaining; reply = {type:'busy', sessions:busy.filter(id => remaining.includes(id))}; continue; }
+      reply = await request(ids, true);
+    }
     if (!reply) return false;
-    notify(single ? 'Terminal closed' : `${ids.length} terminals closed`, single ? terminalName(ids[0]) : '');
+    notify(ids.length === 1 ? 'Terminal closed' : `${ids.length} terminals closed`, ids.length === 1 ? terminalName(ids[0]) : '');
     return true;
   } catch (error) { failure('Terminals not closed', error); return false; }
 }
+// Closes an unchanged empty or idle workspace at once. Busy or changed
+// workspaces need confirmation of the server's exact target set.
 export async function closeWorkspace(id) {
   const workspace = workspaceById(id);
-  if (!workspace) return;
-  const ids = [...workspace.sessions], name = workspaceLabel(workspace);
-  const confirmed = await dialogs.confirm({
-    title:'Close workspace?', description:'All terminals in this workspace will close and their programs will stop.',
-    body:ids.length ? targetList(ids) : null, cancelLabel:'Keep workspace', action:'Close workspace', origin:name,
-  });
-  if (!confirmed) return;
+  if (!workspace) return false;
+  const name = workspaceLabel(workspace);
   // Success has no direct reply; the next list no longer holds the workspace.
   const gone = message => message.type === 'sessions' && !(message.workspaces || []).some(item => item.id === id);
-  const reply = await ask({op:'close-workspace', id, force:true, confirmed:ids}, gone).catch(error => { failure('Workspace not closed', error); return null; });
-  if (reply?.type === 'busy') { problem('Workspace changed', 'Its terminals changed while you were confirming. Review them and try again.'); return; }
-  if (reply) notify('Workspace closed', name);
+  try {
+    let reply = await ask({op:'close-workspace', id, targets:[...workspace.sessions]}, gone);
+    for (let round = 0; reply?.type === 'busy'; round++) {
+      if (round >= RECONFIRM_LIMIT) { problem('Workspace not closed', 'Its terminals kept changing while you were confirming. Try again.'); return false; }
+      const targets = reply.targets || [], busy = reply.sessions || [];
+      const confirmed = await dialogs.confirm({
+        title:round || !busy.length ? 'Workspace changed' : 'Close workspace?',
+        description:busy.length ? `${round ? 'Its terminals changed. ' : ''}${busy.length === 1 ? 'A program is' : 'Programs are'} still running. Closing the workspace stops ${plural(targets.length, 'terminal')}.` : `Its terminals changed. Closing the workspace stops ${plural(targets.length, 'terminal')}.`,
+        body:targetList(targets, busy), cancelLabel:'Keep workspace', action:'Close workspace', origin:name,
+      });
+      if (!confirmed) return false;
+      const current = workspaceById(id);
+      if (!current) return false;
+      if (!sameSet(targets, current.sessions)) { problem('Workspace changed', 'Its terminals changed while you were confirming. Review them and try again.'); return false; }
+      reply = await ask({op:'close-workspace', id, targets, force:true}, gone);
+    }
+    if (!reply) return false;
+    notify('Workspace closed', name);
+    return true;
+  } catch (error) { failure('Workspace not closed', error); return false; }
 }
 
 export function takeControl(id) {
@@ -181,7 +206,7 @@ export function workspaceMenu(id) {
     {label:'New terminal here', icon:'plus', disabled:full, hint:full ? 'Full' : '', action:() => hooks.launch({workspace:id})},
     {label:'Rename workspace', icon:'pencil', action:() => renameWorkspaceDialog(id)},
     {separator:true},
-    {label:'Close workspace…', icon:'trash-2', danger:true, action:() => closeWorkspace(id)},
+    {label:'Close workspace', icon:'trash-2', danger:true, action:() => closeWorkspace(id)},
   ];
 }
 function moveMenu(id) {
@@ -201,19 +226,17 @@ function moveMenu(id) {
 // The shared terminal menu for pane heads, cards and processes.
 export function terminalMenu(id, {here = false} = {}) {
   if (!state.sessions.has(id)) return [];
-  const owner = control(id), shot = state.snapshots.get(id), reply = hooks.reply(id);
+  const owner = control(id), shot = state.snapshots.get(id);
   return [
     {head:terminalName(id)},
     here ? null : {label:'Open terminal', icon:'square-terminal', action:() => showTerminal(id)},
     {label:'Rename…', icon:'pencil', action:() => renameTerminal(id)},
     here ? {label:'Find in history', icon:'text-search', hint:'Ctrl Shift F', action:() => hooks.find(id)} : null,
     here ? {label:'Copy all output', icon:'copy', action:() => hooks.copy(id)} : null,
-    reply ? {label:'Open latest reply', icon:'book-open-text', action:() => go('reader', {reply:reply.seq})} : null,
     {label:'Move to workspace', icon:'arrow-right-left', submenu:() => moveMenu(id)},
     shot?.alive && !owner.mine && here ? {label:'Take control', icon:'hand', disabled:!state.connected, action:() => takeControl(id)} : null,
-    isMuted(id) ? {label:'Turn notifications on', icon:'bell', action:() => setMuted(id, false)} : {label:'Mute notifications', icon:'bell-off', action:() => setMuted(id, true)},
     {separator:true},
-    {label:'Close terminal…', icon:'square-x', danger:true, action:() => closeTerminals([id])},
+    {label:'Close terminal', icon:'square-x', danger:true, action:() => closeTerminals([id])},
   ].filter(Boolean);
 }
 export function showTerminalMenu(id, anchor, options) { menu.toggle(anchor, () => terminalMenu(id, options), {label:'Terminal actions', back:'Back to terminal actions'}); }

@@ -1,6 +1,6 @@
-// Reader documents: agent replies plus Markdown pasted or captured from the
-// clipboard. Everything lives in this tab's memory; nothing reaches the
-// server or browser storage. Pure logic, so Node tests can drive it.
+// Reader documents: Markdown pasted or captured from the clipboard.
+// Everything lives in this tab's memory; nothing reaches the server or
+// browser storage. Pure logic, so Node tests can drive it.
 import {markdownTitle} from './markdown.js';
 
 export const DOCUMENT_LIMIT = 20;
@@ -36,12 +36,11 @@ export function filterDocuments(docs, {query = '', filter = 'all'} = {}) {
   return docs.filter(doc => (filter !== 'unread' || !doc.read) && (!needle || doc.title.toLowerCase().includes(needle) || doc.text.toLowerCase().includes(needle)));
 }
 
-// Replies stay in the model's bounded list; this collection adds up to
-// DOCUMENT_LIMIT local documents, hides removed replies, and keeps the
-// terminal name and workspace each source had, so closed terminals stay named.
+// Up to DOCUMENT_LIMIT documents, plus the terminal name and workspace each
+// source had, so a copy from a closed terminal stays named.
 export class Documents {
   constructor({now = Date.now, title = markdownTitle} = {}) {
-    Object.assign(this, {now, title, local:[], hidden:new Set(), places:new Map(), replies:new Map(), counter:0});
+    Object.assign(this, {now, title, local:[], places:new Map(), counter:0});
   }
   // Records where a terminal is while it exists; the last record survives closure.
   remember(id, place) {
@@ -51,46 +50,27 @@ export class Documents {
     if (this.places.size > SNAPSHOT_LIMIT) this.places.delete(this.places.keys().next().value);
   }
   place(id) { return this.places.get(id) || null; }
-  reply(reply) {
-    let doc = this.replies.get(reply.seq);
-    if (!doc) {
-      const text = normalize(reply.text);
-      doc = {key:`r:${reply.seq}`, kind:'reply', seq:reply.seq, text, title:this.title(text), at:reply.at, id:reply.id, program:reply.label || '', reply};
-      this.replies.set(reply.seq, doc);
-    }
-    doc.reply = reply;
-    doc.read = Boolean(reply.read);
-    return doc;
-  }
-  // Newest first. Cached reply documents follow the model's own bound.
-  list(replies = []) {
-    const seqs = new Set(replies.map(reply => reply.seq));
-    for (const seq of this.replies.keys()) if (!seqs.has(seq)) this.replies.delete(seq);
-    for (const seq of this.hidden) if (!seqs.has(seq)) this.hidden.delete(seq);
-    const docs = replies.filter(reply => !this.hidden.has(reply.seq)).map(reply => this.reply(reply));
-    return [...docs, ...this.local].sort((a, b) => b.at - a.at);
-  }
-  find(key, replies = []) { return this.list(replies).find(doc => doc.key === key) || null; }
+  // Newest first.
+  list() { return [...this.local].sort((a, b) => b.at - a.at); }
+  find(key) { return this.local.find(doc => doc.key === key) || null; }
   // Adds pasted or captured text; identical text already listed is returned instead.
-  add(text, {kind = 'pasted', id = null, program = ''} = {}, replies = []) {
+  add(text, {kind = 'pasted', id = null, shell = ''} = {}) {
     const value = normalize(text);
     if (!value.trim()) return {doc:null, added:false};
-    const existing = this.list(replies).find(doc => doc.text === value);
+    const existing = this.local.find(doc => doc.text === value);
     if (existing) return {doc:existing, added:false};
-    const doc = {key:`d:${++this.counter}`, kind, text:value, title:this.title(value), at:this.now(), id, program, read:false};
+    const doc = {key:`d:${++this.counter}`, kind, text:value, title:this.title(value), at:this.now(), id, shell, read:false};
     this.local.push(doc);
     if (this.local.length > DOCUMENT_LIMIT) this.local.splice(0, this.local.length - DOCUMENT_LIMIT);
     return {doc, added:true};
   }
   // Returns what `restore` needs to undo the removal.
   remove(doc) {
-    if (doc.kind === 'reply') { this.hidden.add(doc.seq); return {doc}; }
     const index = this.local.indexOf(doc);
     if (index >= 0) this.local.splice(index, 1);
     return {doc, index};
   }
   restore({doc, index}) {
-    if (doc.kind === 'reply') { this.hidden.delete(doc.seq); return; }
     if (this.local.includes(doc)) return;
     this.local.splice(Math.min(index ?? this.local.length, this.local.length), 0, doc);
     if (this.local.length > DOCUMENT_LIMIT) this.local.splice(0, this.local.length - DOCUMENT_LIMIT);

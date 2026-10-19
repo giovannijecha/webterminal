@@ -1,7 +1,7 @@
 // The sidebar: Views, the workspace tree, server status and, on narrow
 // screens, the navigation drawer.
 import {$, counter, el, icon, plural, storage, uptime} from './dom.js';
-import {SESSION_LIMIT, changed, failedSessions, focusedId, go, programLabel, showTerminal, state, terminalName, terminalStatus, unreadReplies, waitingRequests, workspaceById, workspaceLabel} from './model.js';
+import {SESSION_LIMIT, changed, failedSessions, focusedId, go, sessionShell, showTerminal, state, terminalName, terminalStatus, workspaceById, workspaceLabel} from './model.js';
 import {menu} from './ui.js';
 import {createWorkspace, moveTerminal, orderWorkspaces, stopServer, workspaceMenu} from './actions.js';
 import {SESSION_DRAG} from './pane.js';
@@ -80,29 +80,29 @@ function selectWorkspace(id) {
   navigate('workspace');
 }
 
+// The tree is rebuilt only when its content changes; selection alone updates
+// `aria-current` in place, so rows keep their focus, scroll position, open
+// menus and drags.
 function treeKey() {
-  const focused = focusedId(workspaceById(state.selected));
-  return JSON.stringify([state.page, state.selected, focused, [...collapsed], state.workspaces.map(workspace => [workspace.id, workspaceLabel(workspace),
-    workspace.sessions.map(id => [id, terminalName(id), terminalStatus(id).label, programLabel(state.sessions.get(id))])])]);
+  return JSON.stringify([[...collapsed], state.workspaces.map(workspace => [workspace.id, workspaceLabel(workspace),
+    workspace.sessions.map(id => [id, terminalName(id), terminalStatus(id).label, sessionShell(state.sessions.get(id))])])]);
 }
 function tree() {
-  const focused = focusedId(workspaceById(state.selected));
   return state.workspaces.map(workspace => {
     const id = workspace.id, label = workspaceLabel(workspace), count = workspace.sessions.length, expanded = !collapsed.has(id);
-    const current = state.page === 'workspace' && state.selected === id;
     const terminals = el('ul', {class:'navigation-terminals', id:`navigation-terminals-${id}`, hidden:!expanded},
       count ? workspace.sessions.map(session => {
         const status = terminalStatus(session), name = terminalName(session);
         return el('li', {}, el('button', {
-          class:'navigation-item', type:'button', draggable:'true', 'aria-current':current && session === focused ? 'true' : null,
-          title:`${programLabel(state.sessions.get(session))} · ${status.label}`, 'aria-label':`${name}, ${status.label}`,
+          class:'navigation-item', type:'button', draggable:'true',
+          title:`${sessionShell(state.sessions.get(session))} · ${status.label}`, 'aria-label':`${name}, ${status.label}`,
           dataset:{focus:`terminal:${session}`, session}, onclick:() => { closeDrawer(false); showTerminal(session); },
         }, el('span', {class:'status-dot', 'data-tone':status.tone}), el('span', {class:'navigation-name', text:name})));
       }) : el('li', {class:'navigation-empty', text:'No terminals yet'}));
     return el('li', {class:'navigation-project', dataset:{workspace:id}},
       el('div', {class:'navigation-workspace-row', draggable:'true'},
         el('button', {class:'navigation-disclosure', type:'button', 'aria-expanded':String(expanded), 'aria-controls':terminals.id, 'aria-label':`${expanded ? 'Collapse' : 'Expand'} ${label}`, dataset:{focus:`disclosure:${id}`}, onclick:() => toggle(id)}, icon('chevron-right')),
-        el('button', {class:'navigation-item', type:'button', 'aria-current':current ? 'location' : null, 'aria-label':`${label}, ${plural(count, 'terminal')}`, title:'Alt+↑ or Alt+↓ reorders', dataset:{focus:`workspace:${id}`}, onclick:() => selectWorkspace(id)},
+        el('button', {class:'navigation-item', type:'button', 'aria-label':`${label}, ${plural(count, 'terminal')}`, title:'Alt+↑ or Alt+↓ reorders', dataset:{focus:`workspace:${id}`}, onclick:() => selectWorkspace(id)},
           el('span', {class:'navigation-name', text:label}), counter(count, 'neutral', plural(count, 'terminal'))),
         el('button', {class:'icon-btn ghost sm navigation-more', type:'button', 'aria-haspopup':'menu', 'aria-label':`${label} options`, title:`${label} options`, dataset:{focus:`more:${id}`},
           onclick:event => menu.toggle(event.currentTarget, workspaceMenu(id), {label:`${label} options`})}, icon('ellipsis'))),
@@ -111,11 +111,25 @@ function tree() {
 }
 function renderTree() {
   const key = treeKey();
-  if (projects.dataset.key === key) return;
-  const focus = projects.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
-  projects.dataset.key = key;
-  projects.replaceChildren(...tree());
-  if (focus) projects.querySelector(`[data-focus="${CSS.escape(focus)}"]`)?.focus();
+  if (projects.dataset.key !== key) {
+    const focus = projects.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+    projects.dataset.key = key;
+    projects.replaceChildren(...tree());
+    if (focus) projects.querySelector(`[data-focus="${CSS.escape(focus)}"]`)?.focus();
+  }
+  markSelection();
+}
+function markSelection() {
+  const shown = state.page === 'workspace', focused = focusedId(workspaceById(state.selected));
+  for (const project of projects.querySelectorAll('[data-workspace]')) {
+    const current = shown && project.dataset.workspace === state.selected;
+    setCurrent(project.querySelector('.navigation-workspace-row .navigation-item'), current ? 'location' : null);
+    for (const item of project.querySelectorAll('[data-session]')) setCurrent(item, current && item.dataset.session === focused ? 'true' : null);
+  }
+}
+function setCurrent(node, value) {
+  if (!node || node.getAttribute('aria-current') === value) return;
+  if (value) node.setAttribute('aria-current', value); else node.removeAttribute('aria-current');
 }
 
 // Drag a terminal onto a workspace or terminal row, or a workspace to reorder.
@@ -180,13 +194,9 @@ function setCounter(id, count, label) {
   node.setAttribute('aria-label', label);
 }
 function renderViews() {
-  const total = state.sessions.size, needs = waitingRequests().length + failedSessions().length, unread = unreadReplies();
+  const total = state.sessions.size;
   setCounter('count-terminals', total, plural(total, 'terminal'));
-  setCounter('count-attention', needs, `${needs} need${needs === 1 ? 's' : ''} you`);
-  setCounter('count-reader', unread, plural(unread, 'unread reply', 'unread replies'));
-  for (const button of document.querySelectorAll('#navigation-views [data-page]')) {
-    if (button.dataset.page === state.page) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
-  }
+  for (const button of document.querySelectorAll('#navigation-views [data-page]')) setCurrent(button, button.dataset.page === state.page ? 'page' : null);
 }
 function renderServer() {
   const online = state.connected, stopped = state.stopping && !online;
@@ -195,9 +205,10 @@ function renderServer() {
   $('connection-status').textContent = online ? 'Connected' : stopped ? 'Disconnected' : state.hello ? 'Reconnecting…' : 'Connecting…';
   $('uptime').textContent = online && state.hello?.started ? uptime(Date.now() - state.hello.started) : stopped ? 'Server stopped' : 'Waiting for the local server';
   $('brand-sub').textContent = state.hello?.port ? `127.0.0.1:${state.hello.port}` : 'Local terminal server';
-  const total = state.sessions.size, needs = new Set([...waitingRequests().map(request => request.session), ...failedSessions().map(session => session.id)]).size;
-  const active = [...state.sessions.keys()].filter(id => ['active'].includes(terminalStatus(id).key)).length;
-  const widths = [needs, active, Math.max(0, total - needs - active)];
+  // Segments: failed, running, then exited terminals.
+  const total = state.sessions.size, failures = failedSessions().length;
+  const active = [...state.sessions.keys()].filter(id => terminalStatus(id).key === 'active').length;
+  const widths = [failures, active, Math.max(0, total - failures - active)];
   [...$('meter').children].forEach((segment, index) => { segment.style.width = `${(widths[index] / SESSION_LIMIT) * 100}%`; });
   $('meter').setAttribute('aria-label', `${total} of ${SESSION_LIMIT} terminals in use`);
   $('meter-count').textContent = String(total);

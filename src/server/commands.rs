@@ -1,17 +1,15 @@
 //! WebSocket operations and the central action policy.
 //!
-//! Controller-only: input, interrupt (input), resize, uploads, staged-copy
-//! removal and request answers. The server checks control and epoch under
-//! the session's control fence when the action runs.
+//! Controller-only: input, interrupt (input), resize, uploads and staged-copy
+//! removal. The server checks control and epoch under the session's control
+//! fence when the action runs.
 //!
 //! Shared with exact-target confirmation: create, rename, move, reorder,
 //! close terminals or workspaces, settings and stopping the server. Busy
 //! targets are confirmed by repeating the exact set the view was shown.
 use super::{Attachment, Context};
 use crate::{
-    bridge::Answer,
     json::{self, Value},
-    programs::Program,
     session::{self, WorkspaceClose},
     settings::SaveError,
 };
@@ -31,7 +29,7 @@ pub(super) fn action(
         "create" => {
             let request = create_request(command)?;
             let updates = wants_updates(command)?;
-            let size = session::geometry(command)?;
+            let (cols, rows) = session::geometry(command)?;
             if command.get("profile").is_some() {
                 return Err("Per-terminal shell selection is not supported".into());
             }
@@ -39,21 +37,12 @@ pub(super) fn action(
                 None => None,
                 Some(value) => Some(value.string().ok_or("Workspace must be a workspace ID")?),
             };
-            let program = match command.get("program") {
-                None | Some(Value::Null) => None,
-                Some(value) => Some(
-                    value
-                        .string()
-                        .and_then(Program::parse)
-                        .ok_or("Unknown program")?,
-                ),
-            };
-            let (session, workspace) = registry.create_program(
+            let (session, workspace) = registry.create(
                 &PathBuf::from(command.field("cwd")?),
-                size,
+                cols,
+                rows,
                 view,
                 workspace,
-                program,
             )?;
             attached.insert(session.id.clone(), Attachment::new(updates, 0));
             return Ok(Some(format!(
@@ -78,9 +67,15 @@ pub(super) fn action(
         }
         "close-workspace" => {
             let id = command.field("id")?;
-            let confirmed = confirmed_targets(command, 4)?;
+            let targets = string_array(
+                command.get("targets"),
+                "Workspace targets must list terminal IDs",
+            )?;
+            if targets.len() > 4 {
+                return Err("Workspace targets have too many terminal IDs".into());
+            }
             if let WorkspaceClose::Busy { sessions, targets } =
-                registry.close_workspace(id, confirmed.as_deref())?
+                registry.close_workspace(id, &targets, forced(command)?)?
             {
                 return Ok(Some(busy_message(
                     "close-workspace",
@@ -157,24 +152,6 @@ pub(super) fn action(
                 json::quote(&removed.id)
             )));
         }
-        "respond" => {
-            let id = command.field("id")?;
-            let revision = command.integer("revision")?;
-            let answer = answer(command)?;
-            let session = registry
-                .bridge
-                .session_of(id)
-                .ok_or("Request is no longer available")?;
-            registry
-                .get(&session)?
-                .with_control(view, command.integer("epoch")?, || {
-                    registry.bridge.respond(id, revision.max(0) as u64, answer)
-                })?;
-            return Ok(Some(format!(
-                "{{\"type\":\"responded\",\"id\":{}}}",
-                json::quote(id)
-            )));
-        }
         "stop-server" => {
             if !matches!(command.get("confirmed"), Some(Value::Bool(true))) {
                 return Err("Stopping the server needs confirmation".into());
@@ -238,29 +215,8 @@ pub(super) fn action(
     Ok(None)
 }
 
-fn answer(command: &Value) -> Result<Answer, String> {
-    Ok(match command.field("answer")? {
-        "allow" => Answer::Allow,
-        "allow-session" => Answer::AllowSession,
-        "deny" => Answer::Deny,
-        "terminal" => Answer::Terminal,
-        "answers" => {
-            let Some(Value::Object(fields)) = command.get("answers") else {
-                return Err("Answers must map each question to an offered answer".into());
-            };
-            let mut answers = BTreeMap::new();
-            for (question, value) in fields.iter().take(8) {
-                let value = value.string().ok_or("Answers must be text")?;
-                answers.insert(question.clone(), value.to_owned());
-            }
-            Answer::Answers(answers)
-        }
-        _ => return Err("Unknown answer".into()),
-    })
-}
-
-/// Closing a running program needs the view to confirm and resend with
-/// `force`; terminals idle at their shell close at once.
+/// Closing a running program or a changed workspace needs the view to confirm
+/// the server's targets and resend with `force`.
 fn busy_message(op: &str, id: &str, busy: &[String], targets: &[String]) -> String {
     format!(
         "{{\"type\":\"busy\",\"op\":{},\"id\":{},\"sessions\":{},\"targets\":{}}}",
@@ -305,32 +261,6 @@ fn forced(command: &Value) -> Result<bool, String> {
         Some(Value::Bool(true)) => Ok(true),
         _ => Err("The force flag must be a boolean".into()),
     }
-}
-
-fn confirmed_targets(command: &Value, limit: usize) -> Result<Option<Vec<String>>, String> {
-    if !forced(command)? {
-        if command.get("confirmed").is_some() {
-            return Err("Workspace confirmation requires force".into());
-        }
-        return Ok(None);
-    }
-    let Some(Value::Array(values)) = command.get("confirmed") else {
-        return Err("Workspace force requires confirmed session IDs".into());
-    };
-    if values.len() > limit {
-        return Err("Workspace confirmation has too many session IDs".into());
-    }
-    let mut confirmed = Vec::with_capacity(values.len());
-    for value in values {
-        let id = value
-            .string()
-            .ok_or("Workspace confirmation must contain session IDs")?;
-        if confirmed.iter().any(|existing| existing == id) {
-            return Err("Workspace confirmation contains duplicate session IDs".into());
-        }
-        confirmed.push(id.to_owned());
-    }
-    Ok(Some(confirmed))
 }
 
 const MAX_SAFE_REQUEST: i64 = 9_007_199_254_740_991;

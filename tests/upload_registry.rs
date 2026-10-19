@@ -87,7 +87,7 @@ fn closing_a_workspace_removes_the_staging_of_every_closed_session() {
 
     let confirmed = [first.id.clone(), second.id.clone()];
     assert!(matches!(
-        registry.close_workspace(&workspace, Some(&confirmed[..])),
+        registry.close_workspace(&workspace, &confirmed, true),
         Ok(WorkspaceClose::Closed)
     ));
     assert!(matches!(late.commit(), Err(UploadError::Closed)));

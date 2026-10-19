@@ -2,8 +2,8 @@
 // Keys typed inside a terminal reach the program, except the "Anywhere" ones.
 import {avatar, badge, el, icon, plural, programTile} from './dom.js';
 import {displayPath} from './common.js';
-import {PROGRAM_LABELS, failedSessions, focusedId, go, orderedSessions, programLabel, requestSummary, requestsFor, shellLabel, showTerminal, state, terminalName, terminalStatus, waitingRequests, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
-import {dialogs, menu, notify} from './ui.js';
+import {go, orderedSessions, sessionShell, shellLabel, showTerminal, state, terminalName, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {dialogs, menu} from './ui.js';
 import {createWorkspace} from './actions.js';
 import {createTerminal, openLauncher, splitFolder} from './launcher.js';
 import {closeDrawer} from './sidebar.js';
@@ -11,7 +11,7 @@ import {closeDrawer} from './sidebar.js';
 export const PAGES = [
   {page:'overview', label:'Overview', icon:'layout-dashboard'},
   {page:'workspace', label:'Terminals', icon:'square-terminal'},
-  {page:'attention', label:'Needs you', icon:'bell-ring'},
+
   {page:'reader', label:'Reader', icon:'book-open-text'},
   {page:'processes', label:'Processes', icon:'cpu'},
   {page:'files', label:'Dropped files', icon:'paperclip'},
@@ -19,43 +19,26 @@ export const PAGES = [
   {page:'appearance', label:'Themes & Appearance', icon:'palette'},
 ];
 
-// Terminals that need an answer first, then failures, in sidebar order.
-function attentionOrder() {
-  const order = orderedSessions(), waiting = new Set(waitingRequests().map(request => request.session)), failed = new Set(failedSessions().map(session => session.id));
-  return [...order.filter(id => waiting.has(id)), ...order.filter(id => failed.has(id) && !waiting.has(id))];
-}
-export function nextNeedingYou() {
-  const ids = attentionOrder();
-  if (!ids.length) { notify('Nothing needs you', 'No agent is waiting and no terminal has failed.'); return; }
-  const current = state.page === 'workspace' ? focusedId() : null;
-  showTerminal(ids[(ids.indexOf(current) + 1) % ids.length]);
-}
-
 function items(query) {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const match = text => words.every(word => text.toLowerCase().includes(word));
-  const next = attentionOrder()[0];
-  const suggested = next ? [{group:'Suggested', icon:'bell-ring', title:'Go to the next terminal that needs you',
-    sub:requestsFor(next)[0] ? `${programLabel(state.sessions.get(next))} ${requestSummary(requestsFor(next)[0])}` : `${terminalName(next)} · ${terminalStatus(next).label}`, run:nextNeedingYou}] : [];
   const terminals = orderedSessions().map(id => {
     const session = state.sessions.get(id), workspace = workspaceOf(id), status = terminalStatus(id);
-    return {group:'Terminals', tile:true, status, title:terminalName(id), sub:`${programLabel(session)} in ${workspaceLabel(workspace)}, ${displayPath(session.cwd)}`, run:() => showTerminal(id)};
+    return {group:'Terminals', tile:true, status, title:terminalName(id), sub:`${sessionShell(session)} in ${workspaceLabel(workspace)}, ${displayPath(session.cwd)}`, run:() => showTerminal(id)};
   });
   const workspaces = state.workspaces.map(workspace => ({group:'Workspaces', workspace, title:workspaceLabel(workspace), sub:plural(workspace.sessions.length, 'terminal'),
     run:() => { state.selected = workspace.id; go('workspace'); }}));
   const here = state.page === 'workspace' ? workspaceById(state.selected) : null, folder = splitFolder();
-  const programs = (state.programs?.programs || []).filter(program => program.available && state.programs.hosted);
   const actions = [
-    {icon:'plus', title:'New terminal', sub:'Choose a program and a folder', run:() => openLauncher({workspace:state.selected})},
+    {icon:'plus', title:'New terminal', sub:'Choose a folder and a workspace', run:() => openLauncher({workspace:state.selected})},
     ...(here && here.sessions.length < 4 ? [
       {icon:'square-terminal', title:`New ${shellLabel(state.hello?.shell)} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, workspace:here.id})},
-      ...programs.map(program => ({icon:'sparkles', title:`New ${PROGRAM_LABELS[program.id] || program.label} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, program:program.id, workspace:here.id})})),
     ] : []),
     {icon:'layers', title:'New workspace', sub:'An empty workspace for up to four terminals', run:() => createWorkspace()},
     {icon:'keyboard', title:'Keyboard shortcuts', sub:'', run:() => showShortcuts()},
   ].map(item => ({group:'Actions', ...item}));
   const pages = PAGES.map(page => ({group:'Go to', icon:page.icon, title:page.label, sub:'', run:() => go(page.page)}));
-  return [...suggested, ...terminals, ...workspaces, ...actions, ...pages].filter(item => !words.length || match(`${item.title} ${item.sub}`));
+  return [...terminals, ...workspaces, ...actions, ...pages].filter(item => !words.length || match(`${item.title} ${item.sub}`));
 }
 
 let palette = null;
@@ -125,7 +108,7 @@ export function openPalette() {
 }
 
 const SHORTCUTS = [
-  ['Anywhere', [['Search and commands', 'Ctrl', 'Shift', 'P'], ['Next terminal that needs you', 'Ctrl', 'Shift', 'A']]],
+  ['Anywhere', [['Search and commands', 'Ctrl', 'Shift', 'P']]],
   ['Outside a terminal', [['Search', 'Ctrl', 'K'], ['Search', '/'], ['Keyboard shortcuts', '?'], ['New terminal', 'N'], ['Reorder a workspace in the sidebar', 'Alt', '↑ ↓']]],
   ['In a terminal', [['Find in history', 'Ctrl', 'Shift', 'F'], ['Copy selection', 'Ctrl', 'Shift', 'C'], ['Paste', 'Ctrl', 'V'], ['Select text while an app uses the mouse', 'Shift', 'drag']]],
 ];
@@ -145,11 +128,11 @@ function pageOwnsKey(target) {
 }
 document.addEventListener('keydown', event => {
   const key = event.key.toLowerCase();
-  if (event.ctrlKey && event.shiftKey && !event.altKey && (key === 'p' || key === 'a')) {
+  if (event.ctrlKey && event.shiftKey && !event.altKey && key === 'p') {
     if (document.querySelector('dialog[open]:not(.palette)')) return;
     event.preventDefault();
     event.stopPropagation();
-    if (key === 'p') openPalette(); else { palette?.close(); nextNeedingYou(); }
+    openPalette();
     return;
   }
   if (event.defaultPrevented || event.altKey || event.metaKey || !pageOwnsKey(event.target)) return;

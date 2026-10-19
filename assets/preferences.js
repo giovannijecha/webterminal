@@ -6,20 +6,15 @@ import {ask} from './connection.js';
 import {changed, go, state, subscribe} from './model.js';
 import {el, icon} from './dom.js';
 import {displayPath} from './common.js';
-import {dock, notify, pageHeading} from './ui.js';
+import {notify, pageHeading, toasts} from './ui.js';
 
 // Mirrors src/settings/fields.rs.
 export const FONT_MIN = 10, FONT_MAX = 20, PATH_LIMIT = 1024;
 export const APPEARANCE_DEFAULTS = {fontSize:13, terminalTheme:'dark'};
-const NOTICES = ['input', 'reply', 'failure'];
-const onOff = value => value ? 'On' : 'Off';
 export const FIELDS = {
   startFolder:{label:'Starting folder', text:value => value ? displayPath(value) : 'Server folder'},
   fontSize:{label:'Font size', text:value => `${value} px`},
   terminalTheme:{label:'Terminal colors', text:value => value === 'light' ? 'Light' : 'Dark'},
-  input:{label:'Agent requests', text:onOff},
-  reply:{label:'Agent replies', text:onOff},
-  failure:{label:'Program failures', text:onOff},
 };
 const KEYS = Object.keys(FIELDS);
 const PAGES = new Set(['settings', 'appearance']);
@@ -29,11 +24,8 @@ const PAGES = new Set(['settings', 'appearance']);
 export const draft = {base:null, value:null, revision:0, phase:'idle', message:'', errors:{}, latest:null, invalidCount:0};
 
 const clone = settings => JSON.parse(JSON.stringify(settings));
-export const read = (settings, key) => NOTICES.includes(key) ? settings?.notifications?.[key] : settings?.[key];
-function write(settings, key, value) {
-  if (NOTICES.includes(key)) settings.notifications = {...settings.notifications, [key]:value};
-  else settings[key] = value;
-}
+export const read = (settings, key) => settings?.[key];
+function write(settings, key, value) { settings[key] = value; }
 // Windows folders compare without case or a trailing separator.
 const folderKey = path => {
   const visible = path ? displayPath(path) : '';
@@ -122,7 +114,7 @@ async function loadLatest() {
 
 // Server messages name the field: "settings.fontSize must be …".
 function failed(message) {
-  const field = /^settings\.(?:notifications\.)?(\w+) (.*)$/s.exec(message);
+  const field = /^settings\.(\w+) (.*)$/s.exec(message);
   if (/changed elsewhere/i.test(message)) {
     Object.assign(draft, {phase:'conflict', message});
     loadLatest();
@@ -303,7 +295,7 @@ subscribe(topics => {
   if (state.page === lastPage) return;
   const from = lastPage;
   lastPage = state.page;
-  if (PAGES.has(state.page)) dock.clear('settings-draft');
+  if (PAGES.has(state.page)) toasts.clear('settings-draft');
   else if (PAGES.has(from) && (dirty() || resolving())) {
     notify('Settings not saved yet', 'Your changes stay as a draft in this tab until you save or discard them.', {label:'Review changes', run:() => go(from)}, 'settings-draft');
   }

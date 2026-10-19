@@ -3,7 +3,7 @@
 // pages are shown, so its control and answers keep working.
 import {$, avatar, el, plural, storage} from './dom.js';
 import {displayPath, editInline} from './common.js';
-import {PANE_LIMIT, canInput, changed, currentWorkspace, focusedId, go, latestReply, requestsFor, state, terminalName, workspaceIndex, workspaceLabel} from './model.js';
+import {PANE_LIMIT, canInput, changed, currentWorkspace, focusedId, go, state, terminalName, workspaceIndex, workspaceLabel} from './model.js';
 import {createPanes} from './pane.js';
 import {discardInput, nextRequest, queueInput, send} from './connection.js';
 import {mergeUpdate} from './updates.js';
@@ -30,7 +30,6 @@ const panes = createPanes(PANE_LIMIT, {
   rename:pane => renameTerminal(pane.id),
   menu:(pane, anchor) => showTerminalMenu(pane.id, anchor, {here:true}),
   maximize:() => toggleMaximized(),
-  review:pane => go('attention', {request:requestsFor(pane.id)[0]?.id}),
   drop:(pane, id) => moveTerminal(id, state.selected, currentWorkspace().sessions.indexOf(pane.id)),
 });
 export function paneFor(id) { return panes.find(pane => pane.id && pane.id === id) || null; }
@@ -47,7 +46,6 @@ configureActions({
   find:id => { if (state.page !== 'workspace') go('workspace'); requestAnimationFrame(() => paneFor(id)?.showFind(true)); },
   copy:copyOutput,
   launch:options => openLauncher(options),
-  reply:latestReply,
 });
 configureLauncher({estimate:estimateSize, created:adopt});
 
@@ -108,9 +106,9 @@ function estimateSize(count) {
   return {cols:Math.max(20, Math.min(300, Math.floor(width / metrics.cellWidth))), rows:Math.max(5, Math.min(120, Math.floor(height / metrics.lineHeight)))};
 }
 // A terminal this view created is attached and shown at once.
-function adopt(reply, {cwd, program}) {
+function adopt(reply, {cwd}) {
   if (!state.sessions.has(reply.id)) {
-    state.sessions.set(reply.id, {id:reply.id, cwd, shell:state.hello?.shell || '', program, created:Date.now(), title:'', name:null, alive:true, controller:state.view, exitCode:null});
+    state.sessions.set(reply.id, {id:reply.id, cwd, shell:state.hello?.shell || '', created:Date.now(), title:'', name:null, alive:true, controller:state.view, exitCode:null});
   }
   const workspace = state.workspaces.find(item => item.id === reply.workspace);
   if (workspace && !workspace.sessions.includes(reply.id)) workspace.sessions.push(reply.id);
@@ -346,7 +344,7 @@ export function restoreSelection() { state.selected = view.get('webterminal.work
 export function renderWorkspace(topics) {
   // Selecting a workspace arrives as a page change, so it rebinds the panes.
   if (topics.has('sessions') || topics.has('connection') || topics.has('page')) synchronize();
-  else if (topics.has('focus') || topics.has('agents')) renderChrome();
+  else if (topics.has('focus')) renderChrome();
   if (topics.has('page') && state.page === 'workspace') {
     scheduleFrame();
     const target = state.target?.focus || focusedId();

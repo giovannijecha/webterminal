@@ -200,7 +200,7 @@ fn decode(text: &str) -> Result<(u64, Settings), String> {
     let settings = fields::merge(
         &Settings::default(),
         entries.get("settings").unwrap_or(&Value::Null),
-        false,
+        fields::Source::File,
     )
     .map_err(|e| format!("The settings file is invalid: {e}"))?;
     Ok((revision, settings))

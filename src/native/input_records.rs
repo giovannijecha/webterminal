@@ -108,7 +108,8 @@ pub fn inspect_mouse_records() -> io::Result<()> {
     Ok(())
 }
 
-pub fn inspect_mouse_vt() -> io::Result<()> {
+/// Writes `request`, then prints VT input bytes until a `q` arrives.
+pub fn inspect_vt(request: &str) -> io::Result<()> {
     let input = unsafe { GetStdHandle((-10i32) as u32) };
     if input.is_null() || input as isize == -1 {
         return Err(io::Error::last_os_error());
@@ -123,7 +124,7 @@ pub fn inspect_mouse_vt() -> io::Result<()> {
     if unsafe { SetConsoleMode(input, (mode | 0x200) & !(0x2 | 0x4)) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    print!("\x1b[?1000hVT_READY\r\n");
+    print!("{request}VT_READY\r\n");
     use std::io::Write;
     io::stdout().flush()?;
     loop {
@@ -159,6 +160,49 @@ pub fn inspect_mouse_vt() -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Prints every key record in raw console mode, as crossterm-based CLIs read
+/// them, until a `q` press. Bracketed paste is requested first.
+pub fn inspect_paste_records() -> io::Result<()> {
+    let input = unsafe { GetStdHandle((-10i32) as u32) };
+    if input.is_null() || input as isize == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut mode = 0;
+    if unsafe { GetConsoleMode(input, &mut mode) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Raw mode: no processed, line or echo input.
+    if unsafe { SetConsoleMode(input, mode & !0x7) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    print!("\x1b[?2004hPASTE_READY\r\n");
+    use std::io::Write;
+    io::stdout().flush()?;
+    loop {
+        let mut record = InputRecord {
+            kind: 0,
+            _padding: 0,
+            event: [0; 16],
+        };
+        let mut read = 0;
+        if unsafe { ReadConsoleInputW(input, &mut record, 1, &mut read) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if read != 1 || record.kind != 1 {
+            continue;
+        }
+        let down = u32::from_ne_bytes(record.event[0..4].try_into().unwrap());
+        let key = u16::from_ne_bytes(record.event[6..8].try_into().unwrap());
+        let unicode = u16::from_ne_bytes(record.event[10..12].try_into().unwrap());
+        let modifiers = u32::from_ne_bytes(record.event[12..16].try_into().unwrap());
+        println!("KEY {down} {key} {unicode} {modifiers}");
+        io::stdout().flush()?;
+        if down != 0 && unicode == b'q' as u16 {
+            return Ok(());
+        }
+    }
 }
 
 pub fn verify_two_keys() -> io::Result<()> {

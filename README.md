@@ -39,10 +39,12 @@ cargo run --locked --offline
 The server prints `Webterminal listening at http://127.0.0.1:4183/` when ready.
 Open that address and choose **New terminal** (or press N). The launcher asks
 for a folder, starting from your configured start folder: type a full path,
-pick a recent folder, or choose **Browse** to navigate. It also offers the
-workspace and, when installed, Claude Code, Codex or Jecode to start inside
-the new PowerShell. Select **Open terminal**, then type `pwd` to check the
-working directory. New terminals run `powershell.exe -NoLogo -NoProfile`;
+pick a recent folder, or choose **Browse** to navigate, and the destination
+workspace. Select **Open terminal**, then type `pwd` to check the working
+directory; run any installed program by typing its command. **Split** in the
+workspace toolbar opens another PowerShell next to the focused terminal, in
+its folder or one you choose. New terminals run
+`powershell.exe -NoLogo -NoProfile`;
 PowerShell profiles are skipped. Press Ctrl+C in the server console to stop
 the server and its sessions, or use **Stop server** in the sidebar's server
 options menu.
@@ -72,21 +74,22 @@ commands, and ? lists the keyboard shortcuts.
 - Each terminal has its own process, directory, screen, and scrollback.
   Closing a browser tab leaves sessions running while the server remains
   open; closing a terminal ends it and its child processes, and closing a
-  workspace closes all of its terminals. Terminals idle at their shell close
-  at once; Webterminal asks first only while a program still runs in one.
+  workspace closes all of its terminals. Terminals idle at their shell, an
+  empty workspace and a workspace of idle terminals close at once.
+  Webterminal asks first while a program runs beyond its shell, or when a
+  workspace's terminals have changed since the view last saw them. It checks
+  exact targets before closing; terminals opened meanwhile in another view are
+  never closed silently, and Cancel keeps everything running. Commands running
+  entirely inside PowerShell are not detected by the busy check; see
+  [terminal behavior](docs/TERMINAL.md).
   Names and order are shared across browser views while the server runs.
 - A second browser view can observe a session. **Take control** transfers its
   keyboard input and terminal size from the current controller. Reconnecting
   restores a screen and history snapshot before input is enabled.
 - **Overview** lists every terminal with search, filters, sorting and a
   confirmed bulk close.
-- **Needs you** collects permission requests and questions reported by Claude
-  Code started from the launcher, unread replies, and failed terminals. Codex
-  reports completed turns and replies, but not permission requests; check its
-  terminal for prompts. Answer Claude Code from the controlling view or in its
-  terminal. Ctrl+Shift+A jumps to the next item.
-- **Reader** renders Markdown: text you paste, terminal clipboard writes that
-  look like prose, and replies reported by Claude Code and Codex. With
+- **Reader** renders Markdown: text you paste and terminal clipboard writes
+  (OSC 52) that look like prose. With
   **Follow clipboard** on, it checks the system clipboard about once a second
   while the window has focus, skipping short single-line copies and text
   Webterminal copied itself. Each document has an outline, search and
@@ -104,19 +107,22 @@ commands, and ? lists the keyboard shortcuts.
   progress, Retry, Cancel and Remove. Staged copies are removed when the
   terminal closes or the server stops; a later server removes those left by a
   crash.
-- **Settings** holds the start folder, terminal font size, terminal colors and
-  notification choices, shared by every view and saved in
-  `~/.webterminal/settings.json`; **Themes & Appearance** previews them.
-  Notices stay in the Dock until dismissed; browser notifications are
-  requested only when you turn them on.
+- **Settings** holds the start folder, terminal font size and terminal colors,
+  shared by every view and saved in `~/.webterminal/settings.json`;
+  **Themes & Appearance** previews them. Notification choices saved by earlier
+  versions are ignored and dropped on the next save.
+- Results appear as toasts at the bottom right. Successes disappear after
+  about four seconds, errors stay until you close them, and pointing at or
+  focusing a toast keeps it open; Escape closes the focused one. Toasts never
+  take focus from the terminal or cover anything outside their cards.
+  Webterminal shows no browser or system notifications.
 
 The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
-they disappear when the server stops. Dropped-file copies and temporary
-per-session Claude Code bridge settings are written under `%TEMP%` and removed
-when their session ends. The browser keeps recent folders in local storage,
-and the selected workspace, collapsed sidebar groups, the Settings tab and
-muted terminals only for the tab's session.
+they disappear when the server stops. Dropped-file copies are written under
+`%TEMP%` and removed when their session ends. The browser keeps recent folders
+in local storage, and the selected workspace, collapsed sidebar groups and the
+Settings tab only for the tab's session.
 
 ## Compatibility and limits
 

@@ -2,7 +2,7 @@
 // Search, filter, sort, selection and scroll survive live updates; bulk close
 // always targets the exact selected IDs that still exist.
 import {$, ago, avatar, badge, el, icon, patch, pathText, plural, programTile} from './dom.js';
-import {SESSION_LIMIT, WORKSPACE_LIMIT, failedSessions, go, needsYou, orderedSessions, programLabel, showTerminal, state, terminalName, terminalStatus, unreadReplies, waitingRequests, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {SESSION_LIMIT, WORKSPACE_LIMIT, failedSessions, go, orderedSessions, sessionShell, showTerminal, state, terminalName, terminalStatus, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {displayPath} from './common.js';
 import {closeTerminals, showTerminalMenu} from './actions.js';
 import {openLauncher} from './launcher.js';
@@ -10,13 +10,13 @@ import {choice} from './overlays.js';
 
 const FILTERS = [
   {id:'all', label:'All', test:() => true},
-  {id:'needs', label:'Needs you', test:row => needsYou(row.id)},
   {id:'running', label:'Running', test:row => row.alive},
+  {id:'failed', label:'Failed', test:row => row.status.key === 'failed'},
   {id:'exited', label:'Exited or failed', test:row => !row.alive},
 ];
 const SORTS = [['workspace', 'Workspace order'], ['name', 'Name A–Z'], ['status', 'Status'], ['newest', 'Newest first']];
-// Status sort: what needs you first, then live work, then finished terminals.
-const RANK = {needs:0, failed:1, active:2, quiet:3, exited:4, unknown:5};
+// Status sort: failures first, then live work, then finished terminals.
+const RANK = {failed:0, active:1, exited:2, unknown:3};
 
 const view = {query:'', filter:'all', sort:'workspace', selected:new Set()};
 let ui = null;
@@ -28,7 +28,7 @@ function rows() {
   return order.map((id, index) => {
     const session = state.sessions.get(id), workspace = workspaceOf(id);
     return {
-      id, index, alive:Boolean(session.alive), name:terminalName(id), program:programLabel(session), cwd:displayPath(session.cwd),
+      id, index, alive:Boolean(session.alive), name:terminalName(id), program:sessionShell(session), cwd:displayPath(session.cwd),
       workspace, place:workspace ? workspaceLabel(workspace) : 'No workspace', status:terminalStatus(id), created:session.created || 0,
     };
   });
@@ -60,7 +60,7 @@ function clearFilters() {
 function build() {
   ui = {};
   ui.summary = el('section', {class:'overview-summary', 'aria-label':'Summary'});
-  ui.search = el('input', {type:'search', class:'field', id:'inventory-search', placeholder:'Name, program, folder…', autocomplete:'off', spellcheck:'false',
+  ui.search = el('input', {type:'search', class:'field', id:'inventory-search', placeholder:'Name, shell, folder…', autocomplete:'off', spellcheck:'false',
     oninput:event => { view.query = event.target.value; update(); }});
   const select = el('select', {id:'inventory-sort', onchange:event => { view.sort = event.target.value; update(); }},
     SORTS.map(([value, label]) => el('option', {value, text:label})));
@@ -102,19 +102,16 @@ function build() {
   ui.rows = new Map();
 }
 
-// The summary keeps each count separate: requests, failures and replies
-// answer different questions and are never added together.
+// The summary keeps capacity and outcomes as separate counts.
 function summary() {
-  const total = state.sessions.size, spaces = state.workspaces.length, waiting = waitingRequests(), failures = failedSessions().length, unread = unreadReplies();
-  const oldest = waiting.reduce((min, request) => Math.min(min, request.created || Infinity), Infinity);
+  const total = state.sessions.size, spaces = state.workspaces.length, failures = failedSessions().length;
+  const running = [...state.sessions.values()].filter(session => session.alive).length;
   const tiles = [
-    {value:total, label:total === 1 ? 'Terminal' : 'Terminals', note:`of ${SESSION_LIMIT} · ${Math.max(0, SESSION_LIMIT - total)} free`, action:'Show the list', run:showList},
+    {value:total, label:total === 1 ? 'Terminal' : 'Terminals', note:`of ${SESSION_LIMIT} · ${Math.max(0, SESSION_LIMIT - total)} free`, action:'Show the list', run:() => showList('all')},
     {value:spaces, label:spaces === 1 ? 'Workspace' : 'Workspaces', note:`of ${WORKSPACE_LIMIT}`, action:'Open Terminals', run:() => go('workspace')},
-    {value:waiting.length, label:waiting.length === 1 ? 'Request waiting' : 'Requests waiting', tone:waiting.length ? 'amber' : null,
-      note:waiting.length ? `Oldest ${Number.isFinite(oldest) ? ago(oldest) : 'now'}` : 'No agent is waiting', action:'Open Needs you', run:() => go('attention')},
+    {value:running, label:'Running', note:running ? 'Shell or program alive' : 'Nothing running', action:'Show running terminals', run:() => showList('running')},
     {value:failures, label:failures === 1 ? 'Failed terminal' : 'Failed terminals', tone:failures ? 'red' : null,
-      note:failures ? 'Exited with an error' : 'No failures', action:'Open Needs you', run:() => go('attention')},
-    {value:unread, label:unread === 1 ? 'Unread reply' : 'Unread replies', note:unread ? 'Waiting in Reader' : 'All read', action:'Open Reader', run:() => go('reader')},
+      note:failures ? 'Exited with an error' : 'No failures', action:'Show failed terminals', run:() => showList('failed')},
   ];
   const focused = [...ui.summary.children].indexOf(document.activeElement);
   patch(ui.summary, JSON.stringify(tiles.map(({value, label, note, tone}) => [value, label, note, tone])), () => tiles.map(tile =>
@@ -122,7 +119,8 @@ function summary() {
       el('b', {text:String(tile.value)}), el('span', {class:'overview-stat-label', text:tile.label}), el('small', {text:tile.note}))));
   if (focused >= 0 && !ui.summary.contains(document.activeElement)) ui.summary.children[focused]?.focus({preventScroll:true});
 }
-function showList() {
+function showList(filter) {
+  if (view.filter !== filter) { view.filter = filter; update(); }
   // Only the page content scrolls, so the top bar stays in place.
   const content = $('overview-content');
   content.scrollTop += ui.panel.getBoundingClientRect().top - content.getBoundingClientRect().top - 16;
@@ -221,7 +219,7 @@ function renderBulk(visible) {
 }
 async function closeSelected() {
   const ids = [...view.selected].filter(id => state.sessions.has(id));
-  if (await closeTerminals(ids)) {
+  if (await closeTerminals(ids, {confirm:true})) {
     for (const id of ids) view.selected.delete(id);
     update();
   }

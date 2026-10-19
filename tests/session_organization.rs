@@ -251,12 +251,24 @@ fn workspaces_group_sessions_and_invalid_changes_are_atomic() {
     assert!(socket.recv_type("error").contains("at most 4"));
     assert_eq!(list(&app).len(), 6);
 
-    socket.send("{\"op\":\"close-workspace\",\"id\":\"w1\"}");
+    let w1_targets = layout(&app)
+        .into_iter()
+        .find(|(id, _)| id == "w1")
+        .unwrap()
+        .1;
+    socket.send(&format!(
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[{}]}}",
+        w1_targets
+            .iter()
+            .map(|id| json::quote(id))
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
     wait_for_sessions(&mut socket, |entries| {
         ids(entries) == [second.as_str(), third.as_str()]
     });
     assert_eq!(layout(&app), [(other.clone(), owned(&[&second, &third]))]);
-    socket.send("{\"op\":\"close-workspace\",\"id\":\"w1\"}");
+    socket.send("{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[]}");
     assert!(
         socket
             .recv_type("error")
@@ -265,8 +277,10 @@ fn workspaces_group_sessions_and_invalid_changes_are_atomic() {
 
     // Closing the last workspace leaves a fresh, empty one.
     socket.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":{}}}",
-        json::quote(&other)
+        "{{\"op\":\"close-workspace\",\"id\":{},\"targets\":[{},{}]}}",
+        json::quote(&other),
+        json::quote(&second),
+        json::quote(&third)
     ));
     wait_for_sessions(&mut socket, <[Value]>::is_empty);
     let remaining = layout(&app);
@@ -342,8 +356,13 @@ fn closing_confirms_only_while_a_program_runs_beyond_the_shell() {
     let workspace = workspaces(&busy)[0].0.clone();
     let mut targets = Vec::new();
     for (op, target) in [("close", &id), ("close-workspace", &workspace)] {
+        let observed = if op == "close-workspace" {
+            format!(",\"targets\":[{}]", json::quote(&id))
+        } else {
+            String::new()
+        };
         socket.send(&format!(
-            "{{\"op\":\"{op}\",\"id\":{}}}",
+            "{{\"op\":\"{op}\",\"id\":{}{observed}}}",
             json::quote(target)
         ));
         let reply = json::parse(&socket.recv_type("busy")).unwrap();
@@ -360,31 +379,74 @@ fn closing_confirms_only_while_a_program_runs_beyond_the_shell() {
     assert_eq!(targets.as_slice(), std::slice::from_ref(&id));
     for invalid in [
         "\"force\":true".to_owned(),
-        "\"force\":true,\"confirmed\":null".to_owned(),
-        "\"force\":true,\"confirmed\":[42]".to_owned(),
+        "\"force\":true,\"targets\":null".to_owned(),
+        "\"force\":true,\"targets\":[42]".to_owned(),
         format!(
-            "\"force\":true,\"confirmed\":[{},{}]",
+            "\"force\":true,\"targets\":[{},{},{},{},{}]",
+            json::quote(&id),
+            json::quote(&id),
+            json::quote(&id),
             json::quote(&id),
             json::quote(&id)
         ),
-        format!("\"force\":false,\"confirmed\":[{}]", json::quote(&id)),
-        format!("\"force\":\"true\",\"confirmed\":[{}]", json::quote(&id)),
+        format!("\"force\":\"true\",\"targets\":[{}]", json::quote(&id)),
     ] {
         socket.send(&format!(
             "{{\"op\":\"close-workspace\",\"id\":{}, {invalid}}}",
             json::quote(&workspace)
         ));
         let reply = socket.recv_type("error");
-        assert!(reply.contains("confirmation") || reply.contains("force"));
+        assert!(reply.contains("targets") || reply.contains("force"));
         assert_eq!(layout(&busy), [(workspace.clone(), owned(&[&id]))]);
     }
     socket.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":{},\"force\":true,\"confirmed\":[{}]}}",
+        "{{\"op\":\"close-workspace\",\"id\":{},\"force\":true,\"targets\":[{}]}}",
         json::quote(&workspace),
         json::quote(&id)
     ));
     wait_for_sessions(&mut socket, <[Value]>::is_empty);
     let _ = std::fs::remove_file(marker);
+}
+
+#[test]
+fn stale_idle_workspace_selection_needs_confirmation() {
+    let app = Harness::new(shell("--hold", None));
+    let mut owner = app.socket();
+    let mut other = app.socket();
+
+    // The owner saw an empty workspace before the other view opened a shell.
+    let first = create_in(&mut other, &app.cwd, Some("w1"));
+    owner.send("{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[]}");
+    let changed = json::parse(&owner.recv_type("busy")).unwrap();
+    assert!(array(&changed, "sessions").is_empty());
+    assert_eq!(array(&changed, "targets")[0].string(), Some(first.as_str()));
+    assert_eq!(layout(&app), [("w1".to_owned(), owned(&[&first]))]);
+
+    // A stale view must also preserve a newly added shell when it saw one.
+    let second = create_in(&mut other, &app.cwd, Some("w1"));
+    owner.send(&format!(
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[{}]}}",
+        json::quote(&first)
+    ));
+    let changed = json::parse(&owner.recv_type("busy")).unwrap();
+    assert!(array(&changed, "sessions").is_empty());
+    assert_eq!(
+        array(&changed, "targets")
+            .iter()
+            .map(|id| id.string().unwrap())
+            .collect::<Vec<_>>(),
+        [first.as_str(), second.as_str()]
+    );
+    assert_eq!(layout(&app), [("w1".to_owned(), owned(&[&first, &second]))]);
+
+    owner.send(&format!(
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[{}],\"force\":true}}",
+        json::quote(&first)
+    ));
+    let changed = json::parse(&owner.recv_type("busy")).unwrap();
+    assert!(array(&changed, "sessions").is_empty());
+    assert_eq!(array(&changed, "targets").len(), 2);
+    assert_eq!(layout(&app), [("w1".to_owned(), owned(&[&first, &second]))]);
 }
 
 #[test]
@@ -406,7 +468,10 @@ fn stale_workspace_confirmation_does_not_close_a_new_member() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    owner.send("{\"op\":\"close-workspace\",\"id\":\"w1\"}");
+    owner.send(&format!(
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"targets\":[{}]}}",
+        json::quote(&original)
+    ));
     let busy = json::parse(&owner.recv_type("busy")).unwrap();
     assert_eq!(
         array(&busy, "sessions")[0].string(),
@@ -431,13 +496,13 @@ fn stale_workspace_confirmation_does_not_close_a_new_member() {
     let replacement = create_in(&mut other, &app.cwd, Some("w1"));
 
     owner.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"force\":true,\"confirmed\":[{}]}}",
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"force\":true,\"targets\":[{}]}}",
         json::quote(&original)
     ));
     let reply = owner.recv_matching(|text| {
         text.starts_with("{\"type\":\"error\"") || text.starts_with("{\"type\":\"busy\"")
     });
-    assert!(reply.contains("confirmation") || reply.contains("\"type\":\"busy\""));
+    assert!(reply.contains("\"type\":\"busy\""));
     assert_eq!(
         layout(&app),
         [
@@ -447,8 +512,9 @@ fn stale_workspace_confirmation_does_not_close_a_new_member() {
     );
     assert_eq!(array(&busy, "targets")[0].string(), Some(original.as_str()));
     other.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":{}}}",
-        json::quote(&second)
+        "{{\"op\":\"close-workspace\",\"id\":{},\"targets\":[{}]}}",
+        json::quote(&second),
+        json::quote(&original)
     ));
     let reply = json::parse(&other.recv_type("busy")).unwrap();
     assert_eq!(
@@ -456,13 +522,13 @@ fn stale_workspace_confirmation_does_not_close_a_new_member() {
         Some(original.as_str())
     );
     other.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":{},\"force\":true,\"confirmed\":[{}]}}",
+        "{{\"op\":\"close-workspace\",\"id\":{},\"force\":true,\"targets\":[{}]}}",
         json::quote(&second),
         json::quote(&original)
     ));
     wait_for_sessions(&mut other, |entries| ids(entries) == [replacement.as_str()]);
     other.send(&format!(
-        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"force\":true,\"confirmed\":[{}]}}",
+        "{{\"op\":\"close-workspace\",\"id\":\"w1\",\"force\":true,\"targets\":[{}]}}",
         json::quote(&replacement)
     ));
     wait_for_sessions(&mut other, <[Value]>::is_empty);

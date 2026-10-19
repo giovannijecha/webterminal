@@ -1,6 +1,6 @@
 /* Reader and Dropped files. */
 
-/* Reader: an inbox. The list comes first; a reply opens on its own panel. */
+/* Reader: an inbox. The list comes first; a document opens on its own panel. */
 .content.reader-content{display:flex;flex-direction:column;overflow:hidden}
 .reader-root{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .reader-root[data-panel="list"] .reader-detail,.reader-root[data-panel="detail"] .reader-collection{display:none}
@@ -14,13 +14,13 @@
 .segment .btn[aria-pressed="true"] :is(.reader-count,.files-count){color:var(--ink)}
 .reader-index-scroll{flex:1;min-height:0;overflow:auto;padding:8px;scrollbar-width:thin;scrollbar-color:#686872 var(--frame)}
 .reader-index{display:grid;gap:2px}
-.reader-reply{display:grid;gap:4px;width:100%;padding:12px;border:1px solid transparent;border-radius:12px;text-align:left;color:var(--panel-text)}
-.reader-reply:hover{background:var(--well)}
-.reader-reply-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}
-.reader-reply b{min-width:0;font-size:14px;line-height:21px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
-.reader-reply[data-read="true"] b{font-weight:500;color:#dcdce3}
+.reader-item{display:grid;gap:4px;width:100%;padding:12px;border:1px solid transparent;border-radius:12px;text-align:left;color:var(--panel-text)}
+.reader-item:hover{background:var(--well)}
+.reader-item-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}
+.reader-item b{min-width:0;font-size:14px;line-height:21px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.reader-item[data-read="true"] b{font-weight:500;color:#dcdce3}
 .reader-read-label{flex:none;color:#b0dec1;font-size:12px;line-height:20px;font-weight:600}
-.reader-reply-source{color:var(--muted-2);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.reader-item-source{color:var(--muted-2);font-size:12px;line-height:18px;overflow-wrap:anywhere}
 .reader-empty{margin:32px auto}
 .reader-following{flex:none}
 .reader-detail-header{display:grid;gap:8px;flex:none;max-height:220px;overflow:auto;padding:16px 20px;border-bottom:1px solid var(--panel-line)}

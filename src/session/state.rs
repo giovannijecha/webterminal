@@ -1,8 +1,7 @@
-//! One terminal session: control fencing, snapshots and program events.
+//! One terminal session: control fencing, snapshots and terminal events.
 use crate::{
     json,
     native::{self, ProcessList},
-    programs::Program,
     terminal::{Event, SnapshotBaseline, Terminal},
 };
 use std::collections::{HashSet, VecDeque};
@@ -16,8 +15,6 @@ pub struct Session {
     pub id: String,
     pub cwd: PathBuf,
     pub shell: String,
-    /// The optional program launched inside the shell.
-    pub program: Option<Program>,
     /// Unix milliseconds when the terminal started.
     pub created: u64,
     pub(super) pty: Arc<native::Pty>,
@@ -243,12 +240,10 @@ impl Session {
     pub(super) fn json(&self) -> String {
         let state = self.state.lock().unwrap();
         format!(
-            "{{\"id\":{},\"cwd\":{},\"shell\":{},\"program\":{},\"created\":{},\"title\":{},\"name\":{},\"alive\":{},\"controller\":{},\"exitCode\":{}}}",
+            "{{\"id\":{},\"cwd\":{},\"shell\":{},\"created\":{},\"title\":{},\"name\":{},\"alive\":{},\"controller\":{},\"exitCode\":{}}}",
             json::quote(&self.id),
             json::quote(&self.cwd.to_string_lossy()),
             json::quote(&self.shell),
-            self.program
-                .map_or_else(|| "null".into(), |program| json::quote(program.id())),
             self.created,
             json::quote(state.terminal.title()),
             optional_string(&state.name),

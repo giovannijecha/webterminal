@@ -2,16 +2,14 @@
 // loads on first visit and renders only while shown, so a failing page never
 // takes the terminals down with it.
 import {$, el} from './dom.js';
-import {addReply, changed, noteCopied, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
+import {changed, noteCopied, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
 import {configure, connect, resetInput, settle} from './connection.js';
 import {problem} from './ui.js';
 import {renderSidebar, configureSidebar} from './sidebar.js';
 import {configureWorkspace, connected, disconnected, forget, handleTerminal, renderWorkspace, restoreSelection, setFontSize, synchronize} from './workspace.js';
 import {PAGES, openPalette, showShortcuts} from './palette.js';
-import {agentsChanged, connectionOpened, replyReceived, sessionsChanged} from './alerts.js';
-import {loadPrograms} from './launcher.js';
 
-const MODULES = {overview:'./overview.js', attention:'./attention.js', reader:'./reader.js', processes:'./processes.js', files:'./files.js', settings:'./settings.js', appearance:'./appearance.js'};
+const MODULES = {overview:'./overview.js', reader:'./reader.js', processes:'./processes.js', files:'./files.js', settings:'./settings.js', appearance:'./appearance.js'};
 const loaded = new Map();
 let shown = null;
 
@@ -23,9 +21,7 @@ function receive(message, answered) {
       state.view = message.view;
       state.connected = true;
       resetInput();
-      connectionOpened();
       connected();
-      if (!state.programs) loadPrograms();
       changed('connection', 'focus');
       break;
     case 'sessions': {
@@ -36,18 +32,9 @@ function receive(message, answered) {
       const ids = new Set(state.workspaces.map(workspace => workspace.id));
       for (const id of [...state.focus.keys()]) if (!ids.has(id)) state.focus.delete(id);
       for (const id of [...state.maximized]) if (!ids.has(id)) state.maximized.delete(id);
-      sessionsChanged();
       changed('sessions');
       break;
     }
-    case 'agents':
-      state.agents = {revision:message.revision, sources:message.sources || [], requests:message.requests || []};
-      agentsChanged();
-      changed('agents');
-      break;
-    case 'reply':
-      if (addReply(message)) replyReceived(message);
-      break;
     case 'settings':
       state.settings = message;
       applySettings();
@@ -115,7 +102,7 @@ async function show(page, topics) {
   try {
     if (view) {
       if (changedPage) view.show?.(visit);
-      view.render?.(changedPage ? new Set([...topics, 'page', 'sessions', 'agents', 'settings', 'files', 'replies', 'programs', 'connection']) : topics);
+      view.render?.(changedPage ? new Set([...topics, 'page', 'sessions', 'settings', 'files', 'connection']) : topics);
     }
   } catch (error) { failed(page, error); }
   if (changedPage && shown !== null && page !== 'workspace' && !document.querySelector('dialog[open]')) {

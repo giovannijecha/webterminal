@@ -1,25 +1,18 @@
 //! Owned loopback Responses/Messages fixture for manual CLI terminal checks.
-//! By default request bodies are consumed only to enforce bounds. The opt-in
-//! `--tool-probe` mode parses them to script tool calls for `bridge_probe`; it
-//! logs tool names and the selected scenario only, never request content.
+//! Request bodies are consumed only to enforce bounds, never kept or logged.
 use std::collections::BTreeSet;
 use std::env;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use webterminal::json::quote;
-#[path = "api_fixture/probe.rs"]
-mod api_fixture_probe;
-use api_fixture_probe::{probe_messages, probe_responses};
 
 const HEADER_LIMIT: usize = 16 * 1024;
 const BODY_LIMIT: usize = 2 * 1024 * 1024;
 const CONNECTION_LIMIT: usize = 64;
 const REQUEST_LIMIT: usize = 32;
-// Probe sessions add side requests and several tool round trips per scenario.
-const PROBE_REQUEST_LIMIT: usize = 256;
 const TEXT: &str = "Webterminal local fixture response.";
-const USAGE: &str = "Usage: api_fixture [--tool-probe]";
+const USAGE: &str = "Usage: api_fixture";
 const MESSAGE_ID: &str = "msg_webterminal_fixture";
 const MESSAGE_START: &str = r#"{"type":"message_start","message":{"id":"{id}","type":"message","role":"assistant","content":[],"model":"fixture-model","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":32,"output_tokens":0}}}"#;
 
@@ -27,20 +20,12 @@ struct Request {
     method: String,
     path: String,
     host: String,
-    body: Vec<u8>,
 }
 
 fn main() -> io::Result<()> {
-    let probe = match env::args().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => false,
-        [flag] if flag == "--tool-probe" => true,
-        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE)),
-    };
-    let (connection_limit, request_limit) = if probe {
-        (PROBE_REQUEST_LIMIT, PROBE_REQUEST_LIMIT)
-    } else {
-        (CONNECTION_LIMIT, REQUEST_LIMIT)
-    };
+    if env::args().len() > 1 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE));
+    }
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     println!("http://127.0.0.1:{port}/v1");
@@ -49,12 +34,12 @@ fn main() -> io::Result<()> {
     let mut requests = 0;
     let mut responses_submitted = 0usize;
     let mut messages_submitted = 0usize;
-    while connections < connection_limit && requests < request_limit {
+    while connections < CONNECTION_LIMIT && requests < REQUEST_LIMIT {
         let (mut stream, _) = listener.accept()?;
         connections += 1;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        let request = match read_request(&mut stream, probe) {
+        let request = match read_request(&mut stream) {
             Ok(request) => request,
             Err(status) => {
                 let _ = reply(&mut stream, status, "application/json", "{}");
@@ -78,21 +63,11 @@ fn main() -> io::Result<()> {
         let (status, mime, body) = match (request.method.as_str(), request.path.as_str()) {
             ("POST", "/v1/responses") => {
                 responses_submitted += 1;
-                let body = if probe {
-                    probe_responses(&request.body, responses_submitted)
-                } else {
-                    responses_stream()
-                };
-                ("200 OK", "text/event-stream", body)
+                ("200 OK", "text/event-stream", responses_stream())
             }
             ("POST", "/v1/messages") => {
                 messages_submitted += 1;
-                if probe {
-                    let (mime, body) = probe_messages(&request.body, messages_submitted);
-                    ("200 OK", mime, body)
-                } else {
-                    ("200 OK", "text/event-stream", messages_stream())
-                }
+                ("200 OK", "text/event-stream", messages_stream())
             }
             ("GET", "/fixture/status") => (
                 "200 OK",
@@ -119,7 +94,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn read_request(stream: &mut TcpStream, keep_body: bool) -> Result<Request, &'static str> {
+fn read_request(stream: &mut TcpStream) -> Result<Request, &'static str> {
     let mut bytes = Vec::new();
     let end = loop {
         let mut buffer = [0; 4096];
@@ -196,10 +171,6 @@ fn read_request(stream: &mut TcpStream, keep_body: bool) -> Result<Request, &'st
     if already > length {
         return Err("400 Bad Request");
     }
-    let mut body = Vec::new();
-    if keep_body {
-        body.extend_from_slice(&bytes[end + 4..]);
-    }
     let mut remaining = length - already;
     while remaining > 0 {
         let mut buffer = [0; 4096];
@@ -210,16 +181,12 @@ fn read_request(stream: &mut TcpStream, keep_body: bool) -> Result<Request, &'st
         if n == 0 {
             return Err("400 Bad Request");
         }
-        if keep_body {
-            body.extend_from_slice(&buffer[..n]);
-        }
         remaining -= n;
     }
     Ok(Request {
         method: method.to_owned(),
         path: path.split('?').next().unwrap_or(path).to_owned(),
         host: host.ok_or("400 Bad Request")?,
-        body,
     })
 }
 
