@@ -61,16 +61,18 @@ all options.
 
 ## Using Webterminal
 
-The sidebar lists the views and, below them, each workspace with its
-terminals; on narrow screens it becomes a drawer. Ctrl+K or / opens search and
-commands, and ? lists the keyboard shortcuts.
+Webterminal is a desktop interface with a dark theme. The sidebar holds the
+server menu, search, the Overview, Processes and Dropped files pages and the
+workspace list; Settings is the gear in its footer, next to the connection
+status. Ctrl+K or / opens search and commands, and ? lists the keyboard
+shortcuts.
 
-- **Terminals** shows the selected workspace: one pane, two side by side, one
-  large plus two stacked, or a grid of four. Maximize a pane from its header,
-  or drag a header to reorder panes or onto a workspace in the sidebar to move
-  the terminal. Narrow screens show one pane with a switcher. **New workspace**
-  adds an empty one; rename workspaces and terminals from their menus, or a
-  terminal by clicking its title.
+- **Workspaces** open from the sidebar and show their terminals together: one
+  pane, two side by side, one large plus two stacked, or a grid of four.
+  Maximize a pane from its header, or drag a header to reorder panes or onto a
+  workspace in the sidebar to move the terminal. **New workspace** adds an
+  empty one; rename workspaces and terminals from their menus, or a terminal
+  by clicking its title.
 - Each terminal has its own process, directory, screen, and scrollback.
   Closing a browser tab leaves sessions running while the server remains
   open; closing a terminal ends it and its child processes, and closing a
@@ -86,16 +88,14 @@ commands, and ? lists the keyboard shortcuts.
 - A second browser view can observe a session. **Take control** transfers its
   keyboard input and terminal size from the current controller. Reconnecting
   restores a screen and history snapshot before input is enabled.
-- **Overview** lists every terminal with search, filters, sorting and a
+- **Overview** summarizes terminals, workspaces, running and failed sessions,
+  and lists every terminal with search, status filters, sorting and a
   confirmed bulk close.
-- **Reader** renders Markdown: text you paste and terminal clipboard writes
-  (OSC 52) that look like prose. With
-  **Follow clipboard** on, it checks the system clipboard about once a second
-  while the window has focus, skipping short single-line copies and text
-  Webterminal copied itself. Each document has an outline, search and
-  per-block copy. Documents stay in the browser tab's memory until reload.
-- **Processes** shows the processes running inside each terminal, with
-  Interrupt and Close terminal; Webterminal never kills a single process.
+- **Processes** shows each terminal's process count and, expanded, its process
+  tree. Search by process name or PID opens the matching tree with its parent
+  context. Interrupt reaches only a terminal you control; **Take control**
+  opens the owning terminal and transfers input and size to this view.
+  Close terminal stops its owned tree; Webterminal never kills a single process.
 - Drag to select text. Use **Find** or Ctrl+Shift+F to search retained history,
   and Ctrl+Shift+C to copy. Paste uses the browser clipboard; supported
   terminal clipboard writes ask for confirmation. Alt shortcuts such as Alt+V
@@ -104,13 +104,16 @@ commands, and ? lists the keyboard shortcuts.
   paths, as native terminals do. Each file is first uploaded to a staging
   folder owned by that terminal under `%TEMP%\webterminal-uploads\`, at most 64
   files of 1 GiB each per drop. **Dropped files** lists the staged copies with
-  progress, Retry, Cancel and Remove. Staged copies are removed when the
+  progress, Retry, Cancel and Remove, and shows the selected copy's details
+  beside the list. Staged copies are removed when the
   terminal closes or the server stops; a later server removes those left by a
   crash.
-- **Settings** holds the start folder, terminal font size and terminal colors,
-  shared by every view and saved in `~/.webterminal/settings.json`;
-  **Themes & Appearance** previews them. Notification choices saved by earlier
-  versions are ignored and dropped on the next save.
+- **Settings** has General (starting folder, address, shell, settings file),
+  Terminal (font size and Dark or Light terminal colors, with a live preview)
+  and About tabs. Settings are shared by every view and saved in
+  `~/.webterminal/settings.json`. Terminal colors never change the dark
+  interface. Notification choices saved by earlier versions are ignored and
+  dropped on the next save.
 - Results appear as toasts at the bottom right. Successes disappear after
   about four seconds, errors stay until you close them, and pointing at or
   focusing a toast keeps it open; Escape closes the focused one. Toasts never
@@ -121,8 +124,8 @@ The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
 they disappear when the server stops. Dropped-file copies are written under
 `%TEMP%` and removed when their session ends. The browser keeps recent folders
-in local storage, and the selected workspace, collapsed sidebar groups and the
-Settings tab only for the tab's session.
+in local storage, and the selected workspace and the Settings tab only for the
+tab's session.
 
 ## Compatibility and limits
 

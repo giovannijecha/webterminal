@@ -3,7 +3,7 @@
 // pages are shown, so its control and answers keep working.
 import {$, avatar, el, plural, storage} from './dom.js';
 import {displayPath, editInline} from './common.js';
-import {PANE_LIMIT, canInput, changed, currentWorkspace, focusedId, go, state, terminalName, workspaceIndex, workspaceLabel} from './model.js';
+import {PANE_LIMIT, canInput, changed, currentWorkspace, focusedId, go, ready, state, terminalName, workspaceIndex, workspaceLabel} from './model.js';
 import {createPanes} from './pane.js';
 import {discardInput, nextRequest, queueInput, send} from './connection.js';
 import {mergeUpdate} from './updates.js';
@@ -12,13 +12,9 @@ import {configureActions, moveTerminal, renameTerminal, renameWorkspace, showTer
 import {configureLauncher, openLauncher, showSplitMenu} from './launcher.js';
 import {stageDrop} from './transfers.js';
 
-const narrow = matchMedia('(max-width:900px)');
 const view = storage('session');
-const hooks = {copied() {}};
 const views = new Map();
-let selectedIndex = 0, frame = 0, resizeTimer = 0;
-
-export function configureWorkspace(next) { Object.assign(hooks, next); }
+let selectedIndex = 0, frame = 0, resizeTimer = 0, claimFrame = 0;
 
 const panes = createPanes(PANE_LIMIT, {
   input:(pane, data) => { const error = queueInput(pane.id, data); if (error) problem('Input not sent', error); },
@@ -38,7 +34,7 @@ export function focusedPane() { return paneFor(focusedId()); }
 async function copyOutput(id) {
   const pane = paneFor(id), text = pane?.outputText() || '';
   if (!text) { problem('Nothing to copy', 'This terminal has no output yet.'); return; }
-  try { await navigator.clipboard.writeText(text); hooks.copied(text); notify('Output copied', terminalName(id)); }
+  try { await navigator.clipboard.writeText(text); notify('Output copied', terminalName(id)); }
   catch { problem('Copy failed', 'Clipboard access was denied by the browser.'); }
 }
 configureActions({
@@ -56,8 +52,25 @@ function attach(pane) {
   send({op:'attach', id:pane.id, request, updates:true, ...pane.renderer.dimensions()}, {quiet:true});
 }
 
+function scheduleClaim() {
+  if (!state.target?.claim || claimFrame) return;
+  claimFrame = requestAnimationFrame(() => {
+    claimFrame = 0;
+    const target = state.target, id = target?.focus;
+    if (!target?.claim || state.page !== 'workspace' || !currentWorkspace()?.sessions.includes(id) || focusedId() !== id) {
+      if (target) target.claim = false;
+      return;
+    }
+    if (!state.connected) { target.claim = false; return; }
+    const pane = paneFor(id), snapshot = state.snapshots.get(id);
+    if (!pane || !pane.visible || !ready(id) || !snapshot) return;
+    target.claim = false;
+    if (snapshot.alive && snapshot.controller !== state.view) takeControl(id);
+  });
+}
+
 // Binds the selected workspace's terminals to panes and attaches exactly
-// those. Narrow screens and a maximized layout hide, but keep, the others.
+// those. A maximized layout hides, but keeps, the others.
 export function synchronize(focus = false) {
   const index = state.workspaces.findIndex(workspace => workspace.id === state.selected);
   if (index >= 0) selectedIndex = index;
@@ -77,6 +90,7 @@ export function synchronize(focus = false) {
   for (const pane of panes) if (pane.id && !state.attachments.has(pane.id)) attach(pane);
   renderChrome();
   scheduleResize();
+  scheduleClaim();
   if (focus && state.page === 'workspace') requestAnimationFrame(() => focusedPane()?.focus());
 }
 
@@ -85,11 +99,6 @@ function focusPane(pane) {
   if (!pane.id || !workspace || state.focus.get(workspace.id) === pane.id) return;
   state.focus.set(workspace.id, pane.id);
   changed('focus');
-}
-function selectPane(id) {
-  state.focus.set(state.selected, id);
-  changed('focus');
-  requestAnimationFrame(() => paneFor(id)?.focus());
 }
 function toggleMaximized() {
   if (state.maximized.has(state.selected)) state.maximized.delete(state.selected); else state.maximized.add(state.selected);
@@ -101,7 +110,7 @@ function toggleMaximized() {
 function estimateSize(count) {
   const box = $('panes').getBoundingClientRect(), metrics = panes[0].renderer;
   metrics.measure();
-  const columns = narrow.matches || count < 2 ? 1 : 2, rows = !narrow.matches && count > 2 ? 2 : 1;
+  const columns = count < 2 ? 1 : 2, rows = count > 2 ? 2 : 1;
   const width = (box.width || innerWidth - 320) / columns - 36, height = (box.height || innerHeight - 200) / rows - 140;
   return {cols:Math.max(20, Math.min(300, Math.floor(width / metrics.cellWidth))), rows:Math.max(5, Math.min(120, Math.floor(height / metrics.lineHeight)))};
 }
@@ -131,7 +140,7 @@ async function clipboard(message) {
     cancelLabel:'Don’t copy', action:'Copy text', origin:name,
   });
   if (!accepted || !paneFor(message.id) || state.socket !== connection) return;
-  try { await navigator.clipboard.writeText(content); hooks.copied(content, message.id); notify('Copied to clipboard', name); }
+  try { await navigator.clipboard.writeText(content); notify('Copied to clipboard', name); }
   catch { problem('Copy failed', 'Clipboard access was denied by the browser.'); }
 }
 
@@ -163,23 +172,26 @@ export function handleTerminal(message) {
     const pane = paneFor(message.id);
     if (pane) pane.dirty = true;
     scheduleFrame();
+    scheduleClaim();
     return true;
   }
   if (message.type === 'attached') {
     const attachment = state.attachments.get(message.id);
-    if (attachment && message.request === attachment.request) { attachment.acked = true; changed('focus'); }
+    if (attachment && message.request === attachment.request) { attachment.acked = true; changed('focus'); scheduleClaim(); }
     return true;
   }
   if (message.type === 'clipboard') { clipboard(message); return true; }
   return false;
 }
 export function connected() {
+  if (state.target) state.target.claim = false;
   state.snapshots.clear();
   state.attachments.clear();
   for (const pane of panes) { pane.renderer.clear(); pane.input.reset(); }
   for (const pane of panes) if (pane.id) attach(pane);
 }
 export function disconnected() {
+  if (state.target) state.target.claim = false;
   state.attachments.clear();
   for (const pane of panes) pane.input.reset();
 }
@@ -234,12 +246,19 @@ function renderPanes() {
   $('panes').classList.toggle('maximized', maximized);
   for (const pane of panes) if (pane.id) pane.update({focused:pane.id === focused, maximized});
 }
+function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
+// The focused terminal's viewers: whether another view controls it, or how many watch.
+function viewerStatus(id) {
+  const shot = state.snapshots.get(id), watchers = Math.max(0, (shot?.viewers || 0) - 1);
+  const watched = Boolean(state.connected && shot?.alive && shot.controller && shot.controller !== state.view);
+  return watched ? 'Another view has control' : watchers ? `${plural(watchers, 'other view')} watching` : '';
+}
 function renderChrome() {
   const workspace = currentWorkspace(), ids = workspace?.sessions || [], focused = focusedId(workspace), count = ids.length;
   const label = workspaceLabel(workspace), full = count >= PANE_LIMIT;
   const title = $('workspace-title');
   if (title.isConnected) {
-    if (title.textContent !== label) title.textContent = label;
+    setText(title, label);
     title.setAttribute('aria-label', `Rename workspace ${label}`);
   }
   const mark = avatar(workspaceIndex(workspace), label, 'lg');
@@ -249,52 +268,21 @@ function renderChrome() {
     $(id).setAttribute('aria-disabled', String(full || !workspace));
     $(id).title = full ? `Workspace full · ${PANE_LIMIT} terminals` : id === 'split' ? 'Add a terminal next to the others' : 'Open a terminal in this workspace';
   }
-  const context = $('workspace-context'), pathSlot = context.parentElement;
-  const contextText = () => full ? `Workspace full · ${PANE_LIMIT} terminals` : count ? `${count} of ${PANE_LIMIT} terminals in ` : `No terminals yet · up to ${PANE_LIMIT}`;
-  const contextNodes = cwd => cwd && !full ? [contextText(), ...pathParts(cwd)] : [contextText()];
-  context.replaceChildren(...contextNodes(state.sessions.get(focused)?.cwd));
-  const pathSamples = full ? [] : ids.map(id => state.sessions.get(id)?.cwd).filter(Boolean).map(cwd => {
-    const sample = el('span', {class:'header-context-sizer', 'aria-hidden':'true'});
-    sample.replaceChildren(...contextNodes(cwd));
-    return sample;
-  });
-  pathSlot.replaceChildren(context, ...pathSamples);
-  const viewerStatus = id => {
-    const shot = state.snapshots.get(id), watchers = Math.max(0, (shot?.viewers || 0) - 1);
-    const watched = Boolean(state.connected && shot?.alive && shot.controller && shot.controller !== state.view);
-    return watched ? 'Another view has control' : watchers ? `${plural(watchers, 'other view')} watching` : '';
-  };
-  const viewers = $('workspace-viewers'), viewerSlot = $('workspace-viewers-slot');
-  const status = viewerStatus(focused);
-  viewers.hidden = !status;
-  viewers.querySelector('.status-label').textContent = status;
-  const viewerSamples = ids.map(viewerStatus).filter(Boolean).map(label => {
-    const sample = viewers.cloneNode(true);
-    sample.removeAttribute('id');
-    sample.removeAttribute('title');
-    sample.hidden = false;
-    sample.classList.add('header-context-sizer');
-    sample.setAttribute('aria-hidden', 'true');
-    sample.querySelector('.status-label').textContent = label;
-    return sample;
-  });
-  viewerSlot.replaceChildren(viewers, ...viewerSamples);
-  viewerSlot.hidden = viewerSamples.length === 0;
-  $('empty-state').hidden = !state.listed || count > 0;
-  const tabs = $('pane-tabs');
-  tabs.hidden = count < 2;
-  const key = JSON.stringify([ids.map(id => terminalName(id)), focused]);
-  if (tabs.dataset.key !== key) {
-    tabs.dataset.key = key;
-    tabs.replaceChildren(...ids.map(id => el('button', {type:'button', 'aria-pressed':String(id === focused), text:terminalName(id), onclick:() => selectPane(id)})));
+  // One line, "3 of 4 terminals in C:\dev\app"; the tooltip keeps a long path whole.
+  const cwd = state.sessions.get(focused)?.cwd, path = cwd ? displayPath(cwd) : '';
+  const summary = count ? `${count} of ${PANE_LIMIT} terminals` : `No terminals yet · up to ${PANE_LIMIT}`;
+  const context = $('workspace-context'), key = JSON.stringify([summary, path]);
+  if (context.dataset.key !== key) {
+    context.dataset.key = key;
+    context.replaceChildren(summary, ...(path ? [' in ', el('span', {class:'mono', text:path})] : []));
+    context.title = path ? `${summary} in ${path}` : summary;
   }
+  const viewers = $('workspace-viewers'), status = viewerStatus(focused);
+  viewers.hidden = !status;
+  setText(viewers.firstElementChild, status);
+  $('empty-state').hidden = !state.listed || count > 0;
   renderPanes();
 }
-function pathParts(path) {
-  const parts = displayPath(path).split(/(?<=[\\/])/);
-  return parts.flatMap((part, index) => index < parts.length - 1 ? [part, el('wbr')] : [part]);
-}
-
 $('workspace-title').addEventListener('click', () => {
   const workspace = currentWorkspace(), label = $('workspace-title');
   if (!workspace) return;
@@ -318,7 +306,7 @@ document.addEventListener('keydown', event => {
 async function copySelection(pane) {
   const text = pane.selectionText();
   if (!text) return;
-  try { await navigator.clipboard.writeText(text); hooks.copied(text); notify('Copied selection', terminalName(pane.id)); }
+  try { await navigator.clipboard.writeText(text); notify('Copied selection', terminalName(pane.id)); }
   catch { problem('Copy failed', 'Clipboard access was denied by the browser.'); }
 }
 document.addEventListener('selectionchange', () => {
@@ -330,7 +318,6 @@ document.addEventListener('copy', event => {
   const selection = document.getSelection();
   const pane = panes.find(item => item.ui['terminal-lines'].contains(selection?.anchorNode) && item.ui['terminal-lines'].contains(selection?.focusNode));
   const text = pane?.selectionText();
-  hooks.copied(text || selection?.toString());
   if (text && event.clipboardData) { event.clipboardData.setData('text/plain', text); event.preventDefault(); }
 });
 // A file dropped outside a terminal must not navigate away from the sessions.
@@ -338,7 +325,6 @@ for (const name of ['dragover', 'drop']) addEventListener(name, event => { if (e
 document.addEventListener('dragend', () => { for (const element of document.querySelectorAll('.pane.drop-target')) element.classList.remove('drop-target'); });
 document.addEventListener('fullscreenchange', scheduleResize);
 document.fonts?.ready.then(scheduleResize);
-narrow.addEventListener('change', () => { scheduleResize(); scheduleFrame(); });
 
 export function restoreSelection() { state.selected = view.get('webterminal.workspace'); }
 export function renderWorkspace(topics) {
@@ -347,6 +333,7 @@ export function renderWorkspace(topics) {
   else if (topics.has('focus')) renderChrome();
   if (topics.has('page') && state.page === 'workspace') {
     scheduleFrame();
+    scheduleClaim();
     const target = state.target?.focus || focusedId();
     requestAnimationFrame(() => { if (!document.querySelector('dialog[open]')) paneFor(target)?.focus(); });
   }

@@ -1,5 +1,5 @@
-// Launcher and folder picker, Settings, Reader, every page at five widths and
-// narrow pane switching with long paths, through native Chrome.
+// Launcher and folder picker, Settings, every page at four desktop sizes and
+// pane focus with long paths in a full grid, through native Chrome.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {copyFile, mkdir, readFile, rm, writeFile} from 'node:fs/promises';
@@ -11,15 +11,16 @@ const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const scratch=resolve(root,'.tmp'), runRoot=resolve(scratch,`workbench-${process.pid}-${Date.now()}`);
 assert.ok(runRoot.startsWith(scratch+sep));
 const cwd=resolve(runRoot,'sample-workspace'), childFolder=resolve(cwd,'reports & notes');
-// Wrap the context at narrow widths without exceeding the native process
-// working-directory limit in the runner's longer checkout path.
+// Long enough to truncate the one-line context and Overview paths without
+// exceeding the native process working-directory limit in the runner's
+// longer checkout path.
 const longFolder=resolve(cwd,'long-header-context','and-a-nested-segment');
 const screenshots=resolve(scratch,'browser-qa-workbench');
 const binaries=resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(root,'target/debug'));
 
 const harness=String.raw`
 const $=id=>document.getElementById(id), CWD=__CWD__, CHILD=__CHILD__, LONG=__LONG__;
-const PAGES=['overview','workspace','reader','processes','files','settings','appearance'], WIDTHS=[1440,1024,768,390,320];
+const PAGES=['overview','workspace','processes','files','settings'], SIZES=[[1920,1080],[1440,900],[1366,768],[1280,720]];
 const checks=[];
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,label){for(let i=0;i<300;i++){const found=await test();if(found)return found;await pause(50);}throw new Error('Timed out: '+label);}
@@ -33,13 +34,16 @@ function enter(target,key){target.dispatchEvent(new KeyboardEvent('keydown',{key
 function address(path){$('directory-address').click();$('directory-path').value=path;enter($('directory-path'),'Enter');}
 function same(a,b){return a.toLowerCase().replace(/^\\\\\?\\/,'')===b.toLowerCase();}
 function launcher(){return document.querySelector('dialog.launcher[open]');}
-function go(page){document.querySelector('.navigation-item[data-page="'+page+'"]').click();return until(()=>!$('page-'+page).hidden,'page '+page);}
+// The terminals page is the selected workspace's row; other pages have their own items.
+function go(page){document.querySelector(page==='workspace'?'#navigation-projects .navigation-workspace-row .navigation-item[aria-current], #navigation-projects .navigation-workspace-row .navigation-item':'#sidebar [data-page="'+page+'"]').click();return until(()=>!$('page-'+page).hidden,'page '+page);}
 function focused(){return document.querySelector('#panes > .pane.focused:not([hidden])');}
 // A shown pane that follows output keeps its live cursor in view.
 function following(pane){const cursor=pane.querySelector('[id$="terminal-lines"] .cursor'),scroll=pane.querySelector('[id$="terminal-scroll"]');if(!cursor||pane.querySelector('[id$="follow"]').textContent!=='Following output')return false;const a=cursor.getBoundingClientRect(),b=scroll.getBoundingClientRect();return a.top>=b.top-1&&a.bottom<=b.bottom+1;}
 function shownPanes(){return [...$('panes').children].filter(pane=>!pane.hidden&&pane.querySelector('[id$="terminal-scroll"]').clientWidth>0);}
 function menuItem(menu,label){return [...menu.querySelectorAll('.menu-item')].find(item=>item.textContent.includes(label));}
-function pasteMarkdown(value){const data=new DataTransfer();data.setData('text/plain',value);$('page-reader').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));}
+// A click on a pane focuses it. The release matters: a press alone holds the
+// renderer still for a text selection.
+function choose(pane){const scroll=pane.querySelector('[id$="terminal-scroll"]');for(const type of ['pointerdown','pointerup'])scroll.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,button:0}));}
 function publish(report){document.body.dataset.probeResult=btoa(unescape(encodeURIComponent(JSON.stringify(report))));}
 async function open(folder,count){
   $('new').click();await until(launcher,'launcher');$('launch-folder').value=folder;
@@ -83,7 +87,7 @@ async function main(){
   $('directory-back').click();await until(()=>$('directory-breadcrumbs').lastElementChild.textContent==='sample-workspace','back navigation');
   $('directory-forward').click();await until(()=>$('directory-breadcrumbs').lastElementChild.textContent==='reports & notes','forward navigation');
   $('directory-up').click();await until(()=>$('directory-breadcrumbs').lastElementChild.textContent==='sample-workspace','up navigation');
-  await capture('picker-mobile',320);check(fits($('directory-dialog'))&&fits($('directory-create')),'picker and its action fit at 320px');
+  await capture('picker-compact',1280,true,720);check(fits($('directory-dialog'))&&fits($('directory-create')),'picker and its action fit at 1280x720');
   await capture('picker-restored',1280);
   address(CWD+'\\missing-folder');await until(()=>!$('directory-error').hidden,'invalid address');
   check($('directory-error-text').textContent.length>0&&$('directory-dialog').open,'invalid location shows inline error');
@@ -108,39 +112,24 @@ async function main(){
   [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();
   await until(()=>footer.hidden&&getComputedStyle(document.documentElement).getPropertyValue('--font-size').trim()==='14px','saved font');
   check(true,'saved font size reaches the terminals');
-  await go('appearance');await until(()=>$('appearance-font-value')?.textContent==='14 px','appearance');check(true,'Appearance shows the saved size');
-
-  await go('reader');await until(()=>document.querySelector('#reader-content .reader-root'),'reader');
-  check(document.querySelector('.reader-empty:not([hidden]) h2')?.textContent==='No documents yet','Reader starts empty');
-  const markdown='# Fixture summary\n\n## Checks\n\n- **Safe** Markdown\n- Searchable material\n\n\x60\x60\x60js\nconst answer = 42;\n\x60\x60\x60\n\n<script>window.__injected=true</script>';
-  pasteMarkdown(markdown);
-  const prose=()=>document.querySelector('.reader-prose'),readerRoot=()=>document.querySelector('.reader-root');
-  await until(()=>readerRoot().dataset.panel==='detail'&&prose().querySelector('h1')?.textContent==='Fixture summary','pasted document');
-  check(true,'pasted Markdown renders headings');
-  check(prose().querySelector('strong')?.textContent==='Safe'&&prose().querySelector('code')?.textContent.includes('answer'),'Reader renders emphasis and code');
-  check(!window.__injected&&!prose().querySelector('script'),'Reader leaves HTML inert');
-  const actions=document.querySelector('[aria-label="Document actions"]');actions.click();
-  const menu=await until(()=>document.querySelector('.menu[aria-label="Document actions"]'),'document menu');
-  menuItem(menu,'On this page').click();
-  const outline=await until(()=>document.querySelector('.menu[aria-label="On this page"]'),'outline');
-  check(outline.querySelectorAll('.menu-item').length===2,'outline follows Markdown headings');
-  menuItem(outline,'Checks').click();
-  actions.click();menuItem(await until(()=>document.querySelector('.menu[aria-label="Document actions"]'),'document menu again'),'Find in document').click();
-  await until(()=>document.activeElement===$('reader-find'),'find field');
-  $('reader-find').value='Searchable';$('reader-find').dispatchEvent(new Event('input',{bubbles:true}));
-  check(document.querySelector('.reader-find-count').textContent.includes('1'),'Reader searches within the document');
-  await capture('reader-desktop',1280);check(fits(document.querySelector('.reader-detail')),'Reader document fits desktop');
-  document.querySelector('.reader-back').click();
-  await until(()=>readerRoot().dataset.panel==='list','list');
-  check(document.querySelectorAll('.reader-index .reader-item').length===1,'document list retains pasted Markdown');
-  document.querySelector('.reader-index .reader-item').click();await until(()=>readerRoot().dataset.panel==='detail','reopen');check(true,'document opens from list');
-  await capture('reader-mobile',390);check(fits(document.querySelector('.reader-back'))&&noSideScroll(),'Reader remains reachable on mobile');
+  await go('overview');await go('settings');
+  await until(()=>$('settings-tab-terminal').getAttribute('aria-selected')==='true'&&$('settings-font-value').textContent==='14 px','settings return');
+  check(true,'Settings reopens on the Terminal tab with the saved size');
+  check(!document.querySelector('[data-page="reader"],[data-page="appearance"],#page-reader,#page-appearance'),'retired pages have no navigation or view');
+  (await import('/model.js')).go('reader');
+  await until(()=>!$('page-workspace').hidden,'unknown page fallback');
+  check(document.querySelectorAll('#main > .page:not([hidden])').length===1,'an unknown page falls back to the terminals');
 
   for(const page of PAGES){
     await go(page);
-    for(const width of WIDTHS){
-      await capture(page+'-'+width,width,width===1440||width===390);
-      check(noSideScroll()&&fits(document.querySelector('#page-'+page+' .topbar')),page+' fits at '+width+'px');
+    for(const [width,height] of SIZES){
+      await capture(page+'-'+width+'x'+height,width,true,height);
+      check(noSideScroll()&&fits(document.querySelector('#page-'+page+' .topbar')),page+' fits at '+width+'x'+height);
+      const root=document.querySelector({overview:'.overview',processes:'.process-root',files:'.files-layout',settings:'.prefs-root'}[page]||'#panes');
+      if(page!=='workspace'){
+        const content=$(''+page+'-content'),style=getComputedStyle(content),available=content.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+        check(Math.abs(root.getBoundingClientRect().width-available)<1,page+' uses its available desktop width at '+width+'x'+height);
+      }
     }
   }
 
@@ -148,23 +137,25 @@ async function main(){
   await open(LONG,2);
   await until(()=>$('workspace-context').textContent.includes('and-a-nested-segment'),'second terminal context');
   const twoPaneNodes=[...$('panes').children];
-  check(LONG.length>CHILD.length&&$('workspace-context').textContent.includes('and-a-nested-segment'),'two terminals have unequal workspace paths');
-  check(document.querySelectorAll('.header-path-slot .header-context-sizer[aria-hidden="true"]').length===2,'workspace header reserves both actual paths');
-  for(const width of [1440,1024,768,390,320]){
-    await capture('two-path-context-'+width,width,false);
+  check(LONG.length>CHILD.length&&$('workspace-context').title.includes('and-a-nested-segment'),'two terminals have unequal workspace paths');
+  check(getComputedStyle($('workspace-context')).whiteSpace==='nowrap','workspace context keeps one line; its tooltip keeps the whole path');
+  for(const [width,height] of SIZES){
+    await capture('two-path-context-'+width+'x'+height,width,false,height);
+    check($('workspace-title').scrollWidth<=$('workspace-title').clientWidth,'workspace title '+JSON.stringify($('workspace-title').textContent)+' is not truncated at '+width+'px');
     const dimensions=()=>({header:document.querySelector('#page-workspace .topbar').getBoundingClientRect().height,scroll:focused().querySelector('[id$="terminal-scroll"]').clientHeight});
-    $('pane-tabs').children[0].click();
+    choose(twoPaneNodes[0]);
     await until(()=>focused()===twoPaneNodes[0]&&$('workspace-context').textContent.includes('reports & notes'),'short path focus at '+width+'px');
     await until(()=>{const scroll=focused().querySelector('[id$="terminal-scroll"]');return scroll.scrollWidth<=scroll.clientWidth+1;},'short pane refits at '+width+'px');
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const base=dimensions();
+    const bases=[dimensions()];
     for(let round=0;round<3;round++)for(const index of [1,0]){
-      $('pane-tabs').children[index].click();
-      await until(()=>focused()===twoPaneNodes[index]&&$('pane-tabs').children[index].getAttribute('aria-pressed')==='true','two-path pane '+index+' at '+width+'px');
+      choose(twoPaneNodes[index]);
+      await until(()=>focused()===twoPaneNodes[index],'two-path pane '+index+' at '+width+'px');
       await until(()=>{const scroll=focused().querySelector('[id$="terminal-scroll"]');return scroll.scrollWidth<=scroll.clientWidth+1;},'context pane refits at '+width+'px');
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const current=dimensions();
-      check(Math.abs(current.header-base.header)<1&&Math.abs(current.scroll-base.scroll)<1,'workspace header and terminal height stay stable at '+width+'px, pane '+index+', round '+round+' '+JSON.stringify({base,current}));
+      const current=dimensions(),base=bases[index]||(bases[index]=current),context=$('workspace-context').getBoundingClientRect(),bar=document.querySelector('#page-workspace .topbar').getBoundingClientRect();
+      check(Math.abs(current.header-bases[0].header)<1&&Math.abs(current.scroll-base.scroll)<1,'workspace header and terminal height stay stable at '+width+'px, pane '+index+', round '+round+' '+JSON.stringify({base,current}));
+      check(context.right<=bar.right+1,'workspace context stays inside its header at '+width+'px');
       check([...$('panes').children].every((pane,paneIndex)=>pane===twoPaneNodes[paneIndex]),'pane DOM survives context focus at '+width+'px, pane '+index+', round '+round);
     }
   }
@@ -177,24 +168,122 @@ async function main(){
   await until(()=>[...$('panes').children].every(pane=>pane.dataset.status==='Controlling')&&sizes().size===1&&!sizes().has(undefined),'every pane controls the settled grid size');
   for(const pane of [...$('panes').children]){const data=new DataTransfer();data.setData('text/plain','history\r');pane.querySelector('[id$="keyboard"]').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));}
   await until(()=>[...$('panes').children].every(pane=>pane.querySelector('[id$="terminal-lines"]').textContent.includes('HISTORY_READY')),'history in every pane');
-  for(const width of [390,320]){
-    await capture('switch-'+width,width);
+  // The smallest desktop sizes: every pane of a full grid keeps its header, path and live cursor in place.
+  for(const [width,height] of [[1280,720],[1366,768]]){
+    await capture('switch-'+width+'x'+height,width,true,height);
+    check([...$('panes').children].every(pane=>{const follow=pane.querySelector('[id$="follow"]');return follow.getBoundingClientRect().height<=16&&getComputedStyle(follow,'::before').content!=='none';}),'every pane footer keeps its live status on one line at '+width+'px');
     for(let round=0;round<3;round++){
-      for(let index=0;index<$('pane-tabs').children.length;index++){const tab=$('pane-tabs').children[index];
-        tab.click();await until(()=>$('pane-tabs').children[index]?.getAttribute('aria-pressed')==='true'&&focused()===$('panes').children[index],'pane '+index);
-        const pane=focused(),path=pane.querySelector('[id$="terminal-path"]').parentElement,scroll=pane.querySelector('[id$="terminal-scroll"]');
-        // The terminal refits to the newly shown pane; its long path is clipped by its strip.
-        await until(()=>scroll.scrollWidth<=scroll.clientWidth+1&&following(pane),'pane '+index+' refits and follows at '+width+'px');
-        if(!(noSideScroll()&&fits(pane.querySelector('[id$="pane-header"]'))&&path.getBoundingClientRect().right<=innerWidth+1)){const box=node=>JSON.stringify(node.getBoundingClientRect());throw new Error('pane '+index+' overflows at '+width+'px: '+JSON.stringify({side:noSideScroll(),doc:document.documentElement.scrollWidth,main:[$('main').scrollWidth,$('main').clientWidth],header:box(pane.querySelector('[id$="pane-header"]')),path:box(path),viewport:[innerWidth,innerHeight]}));}
+      for(const pane of [...$('panes').children]){
+        choose(pane);await until(()=>focused()===pane,'pane focus at '+width+'px');
+        const path=pane.querySelector('[id$="terminal-path"]').parentElement,scroll=pane.querySelector('[id$="terminal-scroll"]');
+        // The terminal keeps its fitted size; its long path is clipped by its strip.
+        await until(()=>scroll.scrollWidth<=scroll.clientWidth+1&&following(pane),'pane refits and follows at '+width+'px');
+        const header=pane.querySelector('[id$="pane-header"]').getBoundingClientRect(),strip=path.getBoundingClientRect(),box=pane.getBoundingClientRect();
+        if(!(noSideScroll()&&fits(pane.querySelector('[id$="pane-header"]'))&&strip.right<=box.right+1&&header.right<=box.right+1)){const show=node=>JSON.stringify(node.getBoundingClientRect());throw new Error('pane overflows at '+width+'px: '+JSON.stringify({side:noSideScroll(),doc:document.documentElement.scrollWidth,main:[$('main').scrollWidth,$('main').clientWidth],header:show(pane.querySelector('[id$="pane-header"]')),path:show(path),pane:show(pane),viewport:[innerWidth,innerHeight]}));}
       }
     }
-    check(true,'repeated pane switching keeps long paths inside '+width+'px');
+    check(shownPanes().length===4,'a full workspace shows all four panes at '+width+'x'+height);
+    check(true,'repeated pane focus keeps long paths inside each pane at '+width+'x'+height);
   }
-  await capture('terminal-mobile',390);
   await capture('terminal-wide-size',1440,false);
   await until(()=>shownPanes().length===4&&shownPanes().every(following),'panes follow output after the layout changes');
   check(noSideScroll(),'four panes share the desktop and keep following output');
   await capture('terminal-wide',1440);
+  // Overview, Processes and Dropped files describe the live grid, never sample data.
+  await go('overview');
+  const inventory=()=>[...document.querySelectorAll('#overview-content tr.inventory-row')],bulk=()=>document.querySelector('#overview-content .inventory-bulk');
+  await until(()=>inventory().length===4,'overview rows');
+  inventory()[0].querySelector('input[type="checkbox"]').click();
+  await until(()=>!bulk().hidden&&bulk().textContent.includes('1 selected'),'one terminal selected');
+  const search=$('inventory-search');search.value='and-a-nested-segment';search.dispatchEvent(new Event('input',{bubbles:true}));
+  await until(()=>inventory().length===3,'search narrows the overview');
+  check(document.querySelector('#overview-content .inventory-hidden:not([hidden])')?.textContent.includes('1 terminal is hidden by the search.'),'Overview counts the terminal the search hides');
+  check(bulk().querySelector('.inventory-bulk-detail').textContent.includes('1 hidden by the filter'),'the bulk bar keeps the hidden selection in its count');
+  await capture('overview-hidden-selection',1440);
+  const table=document.querySelector('#overview-content .inventory-table'),actions=inventory()[0].querySelector('.inventory-cell-actions').getBoundingClientRect();
+  check(Math.abs(actions.right-table.getBoundingClientRect().right)<=1,'grouped Overview columns fill the table width');
+  check(inventory().every(row=>row.querySelector('.inventory-sub').getBoundingClientRect().height<=20),'long Overview paths stay on one truncated line');
+  [...bulk().querySelectorAll('button')].find(button=>button.textContent==='Clear').click();
+  await until(()=>bulk().hidden,'selection cleared');
+  search.value='';search.dispatchEvent(new Event('input',{bubbles:true}));
+  await until(()=>inventory().length===4,'search cleared');
+  check(true,'clearing the search and selection restores every row');
+  await go('processes');
+  const items=()=>[...document.querySelectorAll('#processes-content li.process-item')];
+  await until(()=>items().length===4,'process rows');
+  check(items().every(item=>/^\d+( of \d+)?$/.test(item.querySelector('.process-row .process-count').textContent)),'each terminal row counts its real processes');
+  items()[0].querySelector('.process-row').click();
+  await until(()=>items()[0].querySelector('.process-row').getAttribute('aria-expanded')==='true'&&items()[0].querySelector('.process-tree .process-node'),'process tree');
+  check(items()[0].querySelector('.process-tree').textContent.includes('perf_fixture'),'an expanded row lists the terminal process tree');
+  const processPid=items()[0].querySelector('.process-pid').textContent.replace(/\D/g,'');
+  await capture('processes-expanded',1440);
+  items()[0].querySelector('.process-row').click();
+  await until(()=>items()[0].querySelector('.process-row').getAttribute('aria-expanded')==='false'&&!items()[0].querySelector('.process-detail'),'process row collapses');
+  const processSearch=$('process-search');
+  processSearch.value=processPid;processSearch.dispatchEvent(new Event('input',{bubbles:true}));
+  await until(()=>items().length===1&&items()[0].querySelector('.process-row').getAttribute('aria-expanded')==='true','a matching process opens its tree');
+  check(items()[0].querySelector('.process-tree').textContent.includes(processPid),'process search exposes its matching PID');
+  processSearch.value='';processSearch.dispatchEvent(new Event('input',{bubbles:true}));
+  await until(()=>items().every(item=>item.querySelector('.process-row').getAttribute('aria-expanded')==='false'),'clearing process search restores the collapsed trees');
+  // A different workspace detaches these terminals. Another view owns the target
+  // before Processes explicitly navigates, attaches, measures and claims it.
+  const original=currentWorkspace().id,target=currentWorkspace().sessions[0],workspaceActions=await import('/actions.js');
+  await workspaceActions.createWorkspace();
+  await until(()=>currentWorkspace().id!==original&&!state.attachments.has(target),'empty workspace detaches the original terminals');
+  const emptyWorkspace=currentWorkspace().id,watcher=new WebSocket('ws://'+location.host+'/ws'),messages=[];
+  watcher.addEventListener('message',event=>messages.push(JSON.parse(event.data)));
+  try{
+    await new Promise((resolve,reject)=>{watcher.addEventListener('open',resolve,{once:true});watcher.addEventListener('error',reject,{once:true});});
+    const hello=await until(()=>messages.find(message=>message.type==='hello'),'other view hello');
+    watcher.send(JSON.stringify({op:'attach',id:target,cols:80,rows:24}));
+    await until(()=>messages.find(message=>message.type==='snapshot'&&message.id===target&&message.controller===hello.view),'other view controls detached terminal');
+    await go('processes');
+    const targetRow=()=>document.querySelector('.process-item[data-id="'+target+'"]');
+    await until(targetRow,'observing process row');targetRow().querySelector('.process-row').click();
+    const claim=await until(()=>[...targetRow().querySelectorAll('button')].find(button=>button.textContent==='Take control'),'process control action');
+    await capture('processes-observing',1440);claim.click();
+    await until(()=>state.selected===original&&state.snapshots.get(target)?.controller===state.view&&state.attachments.get(target)?.ready&&!$('page-workspace').hidden,'process action attaches and transfers control');
+    check((await import('/model.js')).canInput(target),'Processes Take control enables the owning terminal only after attachment and snapshot');
+    await until(()=>messages.some(message=>message.id===target&&message.controller===state.view),'previous controller becomes observer');
+    check(true,'Processes transfers a terminal from another workspace and another browser view');
+    await go('processes');targetRow().querySelector('.process-row').click();
+    if(!targetRow().querySelector('.process-actions'))targetRow().querySelector('.process-row').click();
+    check([...targetRow().querySelectorAll('.process-actions button')].some(button=>button.textContent.startsWith('Interrupt')&&button.getAttribute('aria-disabled')==='false'),'the claimed process row exposes its guarded Interrupt action');
+    await workspaceActions.closeWorkspace(emptyWorkspace);
+    await until(()=>!state.workspaces.some(workspace=>workspace.id===emptyWorkspace),'empty fixture workspace removed');
+  }finally{watcher.close();}
+  await go('files');
+  check(document.querySelector('#files-content .files-empty:not([hidden]) h2')?.textContent==='No staged copies','Dropped files starts empty without sample rows');
+  const {stageDrop}=await import('/transfers.js'),{paneFor}=await import('/workspace.js');
+  await stageDrop(paneFor(target),[new File(['owned first upload'],'review-first.txt',{type:'text/plain'})]);
+  await until(()=>state.files.files.some(file=>file.name==='review-first.txt'),'first staged review fixture');
+  const firstFile=await until(()=>[...document.querySelectorAll('.files-name')].find(button=>button.textContent==='review-first.txt'),'staged file row');
+  firstFile.click();
+  const inspector=$('files-inspector');
+  await until(()=>!inspector.hidden&&inspector.querySelector('h2').textContent==='review-first.txt','staged file details');
+  inspector.querySelector('[data-action="remove"]').focus();
+  await stageDrop(paneFor(target),[new File(['owned second upload'],'review-second.txt',{type:'text/plain'})]);
+  await until(()=>state.files.files.length===2&&document.querySelectorAll('.files-row').length===2,'second upload refreshes the file list');
+  check(inspector.contains(document.activeElement)&&document.activeElement.dataset.action==='remove'&&inspector.querySelector('h2').textContent==='review-first.txt','incoming uploads preserve the selected details and keyboard focus');
+  for(const [width,height] of [[1280,720],[1920,1080]]){
+    await capture('files-inspector-'+width+'x'+height,width,true,height);
+    check(fits(inspector)&&[...inspector.querySelectorAll('button')].every(fits),'staged file details and actions fit at '+width+'x'+height);
+    const active=document.activeElement,box=active.getBoundingClientRect(),hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);
+    check(active===hit||active.contains(hit),'file details keyboard focus is not covered by notifications at '+width+'x'+height);
+  }
+  inspector.querySelector('[data-action="close"]').click();
+  check(inspector.hidden&&document.activeElement.closest('.files-row'),'closing details restores focus to the file list');
+  [...document.querySelectorAll('.files-name')].find(button=>button.textContent==='review-first.txt').click();
+  await until(()=>!inspector.hidden,'details reopen for removal');
+  inspector.querySelector('[data-action="remove"]').click();
+  const removal=await until(()=>[...document.querySelectorAll('dialog[open]')].find(dialog=>dialog.querySelector('h2')?.textContent==='Remove staged copy?'),'copy removal confirmation');
+  [...removal.querySelectorAll('.dlg-foot button')].find(button=>button.textContent==='Remove staged copy').click();
+  await until(()=>state.files.files.length===1&&!state.files.files.some(file=>file.name==='review-first.txt'),'exact staged copy removed');
+  check(state.files.files[0].name==='review-second.txt','removing a staged copy preserves the other copy');
+  const copy=state.files.files[0];
+  await(await import('/connection.js')).ask({op:'remove-copy',id:copy.id,epoch:state.snapshots.get(copy.session).epoch},message=>message.type==='copy-removed'&&message.id===copy.id);
+  await until(()=>state.files.files.length===0,'owned upload fixtures removed');
+  await go('workspace');
   const {problem,toasts}=await import('/ui.js');
   const terminalHeight=()=>focused().querySelector('[id$="terminal-scroll"]').clientHeight;
   async function toastBaseline(width,height){
@@ -203,7 +292,7 @@ async function main(){
     await until(()=>{const scroll=focused().querySelector('[id$="terminal-scroll"]');return scroll.scrollWidth<=scroll.clientWidth+1;},'terminal refits before '+width+'px toast baseline');
     return terminalHeight();
   }
-  const base320=await toastBaseline(320,480);
+  const base1280=await toastBaseline(1280,720);
   for(let index=0;index<3;index++)problem('Long error '+index,'A detailed local error with a long path: '+('C:\\nested\\folder\\'.repeat(180)));
   await Promise.all([...$('toasts').querySelectorAll('.toast')].flatMap(card=>card.getAnimations()).map(animation=>animation.finished.catch(()=>{})));
   const toastCheck=(label,baseline)=>{
@@ -215,9 +304,9 @@ async function main(){
     check(gap>first.bottom&&gap<second.top&&document.elementFromPoint(first.left+20,gap)!==$('toasts'),label+' passes pointer events between cards');
     check(terminalHeight()===baseline,label+' leaves terminal geometry unchanged');
   };
-  await capture('toast-three-long-320',320,true,480);toastCheck('320x480',base320);
-  const base390=await toastBaseline(390,520);
-  await capture('toast-three-long-390',390,true,520);toastCheck('390x520',base390);
+  await capture('toast-three-long-1280x720',1280,true,720);toastCheck('1280x720',base1280);
+  const base1366=await toastBaseline(1366,768);
+  await capture('toast-three-long-1366x768',1366,true,768);toastCheck('1366x768',base1366);
   for(const card of [...$('toasts').querySelectorAll('.toast')])toasts.hide(card);
   await capture('toast-restored',1440,false);
   check(window.__probeErrors.length===0,'no browser runtime errors');
@@ -234,7 +323,7 @@ try{
   const port=await freePort(),env={},settings=resolve(runRoot,'settings.json');
   for(const key of ['SystemRoot','WINDIR','PATH','PATHEXT','TEMP','TMP'])if(process.env[key])env[key]=process.env[key];
   child=spawn(resolve(runRoot,'webterminal.exe'),['--port',String(port),'--cwd',cwd,'--shell',quote(resolve(runRoot,'perf_fixture.exe')),'--config',settings],{cwd,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
-  await ready(port,child);proxy=await proxyFor(port,harness.replace('__CWD__',JSON.stringify(cwd)).replace('__CHILD__',JSON.stringify(childFolder)).replace('__LONG__',JSON.stringify(longFolder)));
+  await ready(port,child);proxy=await proxyFor(port,harness.replace('__CWD__',JSON.stringify(cwd)).replace('__CHILD__',JSON.stringify(childFolder)).replace('__LONG__',JSON.stringify(longFolder)),{uploads:true});
   const report=await chromeProbe(await findChrome(),'http://127.0.0.1:'+proxy.port+'/',resolve(runRoot,'chrome'),'workbenchStage',async({protocol,evaluate})=>{
     const capture=await evaluate('document.body?.dataset.capture||""');if(!capture||capture===lastCapture)return;
     lastCapture=capture;const {name,width,height,shot}=JSON.parse(capture);

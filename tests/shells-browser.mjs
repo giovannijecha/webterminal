@@ -45,7 +45,7 @@ async function openPicker(){
   check(!launcher().querySelector('[data-shell],select[name=shell],.directory-profile'),'launcher has no shell selection');
 }
 async function nativeKey(name){document.body.dataset.shellKey=name;await until(()=>document.body.dataset.shellKeyDone===name,'native key '+name);document.body.dataset.shellKey='';document.body.dataset.shellKeyDone='';}
-async function capture(name,width){document.body.dataset.shellCapture=JSON.stringify({name,width});await until(()=>document.body.dataset.shellCaptured===name,'capture '+name);}
+async function capture(name,width,height=900){document.body.dataset.shellCapture=JSON.stringify({name,width,height});await until(()=>document.body.dataset.shellCaptured===name,'capture '+name);}
 async function create(count){launcher().querySelector('.dlg-foot .btn.primary').focus();await nativeKey('Enter');await until(async()=>(await sessions()).length===count&&$(count===1?'pane':'pane'+count+'-pane').dataset.status==='Controlling','session '+count);activeIndex=count;activeId=(await sessions())[count-1].id;sessionStorage.setItem('shellActive',activeId);sessionStorage.setItem('shellIndex',String(count));return activeId;}
 async function switchTo(id){const all=await sessions();activeIndex=all.findIndex(session=>session.id===id)+1;activeId=id;sessionStorage.setItem('shellActive',id);sessionStorage.setItem('shellIndex',String(activeIndex));keyboard().focus();await until(()=>pane().classList.contains('focused')&&pane().dataset.status==='Controlling','focus '+id);}
 async function rejectedProfile(profile){
@@ -73,8 +73,8 @@ async function main(){
   check((await sessions()).length===0,'fresh isolated server has no terminals');
   await openPicker();
   check((await(await fetch('/api/info')).json()).shell==='powershell.exe -NoLogo -NoProfile','PowerShell is the server default');
-  await capture('picker-desktop',1280);await capture('picker-mobile',320);
-  const box=launcher().getBoundingClientRect();check(box.left>=0&&box.right<=innerWidth,'launcher fits at 320px');
+  await capture('picker-desktop',1280);await capture('picker-compact',1280,720);
+  const box=launcher().getBoundingClientRect();check(box.left>=0&&box.right<=innerWidth&&box.top>=0&&box.bottom<=innerHeight,'launcher fits at 1280x720');
   await capture('picker-restored',1280);
   const first=await create(1);await until(()=>screen().includes('PS ')&&screen().includes('>'),'PowerShell prompt');
   const firstMetadata=(await sessions()).find(session=>session.id===first);
@@ -123,7 +123,7 @@ try{
     const name=await evaluate('document.body.dataset.shellKey||""');
     if(name){await protocol('Input.dispatchKeyEvent',{type:'keyDown',key:name,code:name,windowsVirtualKeyCode:13,text:'\r'});await protocol('Input.dispatchKeyEvent',{type:'keyUp',key:name,code:name,windowsVirtualKeyCode:13});await evaluate('document.body.dataset.shellKeyDone='+JSON.stringify(name));}
     const capture=await evaluate('document.body.dataset.shellCapture||""');if(!capture||capture===lastCapture)return;lastCapture=capture;
-    const {name:label,width}=JSON.parse(capture);await protocol('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    const {name:label,width,height}=JSON.parse(capture);await protocol('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     const screenshot=(await protocol('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data;
     await writeFile(resolve(reports,label+'.png'),Buffer.from(screenshot,'base64'));await evaluate('document.body.dataset.shellCaptured='+JSON.stringify(label));
   });

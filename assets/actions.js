@@ -1,7 +1,7 @@
 // User actions on terminals, workspaces and the server, with their
 // confirmations and toast feedback. The server re-checks every action.
 import {ask, queueInput, send} from './connection.js';
-import {PANE_LIMIT, WORKSPACE_LIMIT, changed, control, go, showTerminal, state, terminalName, terminalPlace, workspaceById, workspaceLabel, workspaceOf} from './model.js';
+import {PANE_LIMIT, WORKSPACE_LIMIT, changed, control, go, sessionShell, showTerminal, state, terminalName, terminalPlace, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {el, plural} from './dom.js';
 import {dialogs, menu, notify, problem} from './ui.js';
 
@@ -198,45 +198,57 @@ export async function stopServer() {
   if (reply) { state.stopping = true; changed('connection'); notify('Server stopping', 'Start Webterminal again from its console to reconnect.'); }
 }
 
+// Menus name their target in a header, put the state action first and the
+// destructive action last, after a separator.
 export function workspaceMenu(id) {
   const workspace = workspaceById(id);
   if (!workspace) return [];
-  const full = workspace.sessions.length >= PANE_LIMIT;
+  const label = workspaceLabel(workspace), count = workspace.sessions.length, full = count >= PANE_LIMIT;
   return [
-    {label:'New terminal here', icon:'plus', disabled:full, hint:full ? 'Full' : '', action:() => hooks.launch({workspace:id})},
-    {label:'Rename workspace', icon:'pencil', action:() => renameWorkspaceDialog(id)},
+    {head:label, detail:`${count} of ${PANE_LIMIT} terminals`, avatar:[workspaceIndex(workspace), label]},
+    {label:'New terminal here', disabled:full, hint:full ? 'Full' : '', action:() => hooks.launch({workspace:id})},
+    {label:'Rename workspace…', action:() => renameWorkspaceDialog(id)},
     {separator:true},
-    {label:'Close workspace', icon:'trash-2', danger:true, action:() => closeWorkspace(id)},
+    {label:'Close workspace', danger:true, action:() => closeWorkspace(id)},
   ];
 }
+// Moves between workspaces, and earlier or later inside the current one, so
+// the keyboard reaches what pane-header dragging does.
 function moveMenu(id) {
-  const current = workspaceOf(id);
+  const current = workspaceOf(id), index = current ? current.sessions.indexOf(id) : -1, count = current?.sessions.length || 0;
   return [
+    ...count > 1 ? [
+      {label:'Earlier in this workspace', disabled:index <= 0, action:() => moveTerminal(id, current.id, index - 1)},
+      {label:'Later in this workspace', disabled:index >= count - 1, action:() => moveTerminal(id, current.id, index + 1)},
+      {separator:true},
+    ] : [],
     ...state.workspaces.map(workspace => ({
       label:workspaceLabel(workspace), hint:`${workspace.sessions.length}/${PANE_LIMIT}`, checked:workspace === current,
       disabled:workspace !== current && workspace.sessions.length >= PANE_LIMIT, action:() => moveTerminal(id, workspace.id),
     })),
     {separator:true},
-    {label:'New workspace', icon:'plus', disabled:state.workspaces.length >= WORKSPACE_LIMIT, action:async () => {
+    {label:'New workspace', disabled:state.workspaces.length >= WORKSPACE_LIMIT, action:async () => {
       const created = await createWorkspace({select:false});
       if (created) moveTerminal(id, created);
     }},
   ];
 }
-// The shared terminal menu for pane heads, cards and processes.
+// The shared terminal menu for pane heads, Overview rows and Processes.
 export function terminalMenu(id, {here = false} = {}) {
   if (!state.sessions.has(id)) return [];
-  const owner = control(id), shot = state.snapshots.get(id);
+  const owner = control(id), shot = state.snapshots.get(id), status = terminalStatus(id);
+  const claim = shot?.alive && !owner.mine && here;
   return [
-    {head:terminalName(id)},
-    here ? null : {label:'Open terminal', icon:'square-terminal', action:() => showTerminal(id)},
-    {label:'Rename…', icon:'pencil', action:() => renameTerminal(id)},
-    here ? {label:'Find in history', icon:'text-search', hint:'Ctrl Shift F', action:() => hooks.find(id)} : null,
-    here ? {label:'Copy all output', icon:'copy', action:() => hooks.copy(id)} : null,
-    {label:'Move to workspace', icon:'arrow-right-left', submenu:() => moveMenu(id)},
-    shot?.alive && !owner.mine && here ? {label:'Take control', icon:'hand', disabled:!state.connected, action:() => takeControl(id)} : null,
+    {head:terminalName(id), detail:`${sessionShell(state.sessions.get(id))} · ${status.label}`},
+    claim ? {label:'Take control', disabled:!state.connected, title:state.connected ? '' : 'Reconnect before taking control', action:() => takeControl(id)} : null,
+    claim ? {separator:true} : null,
+    here ? null : {label:'Open terminal', action:() => showTerminal(id)},
+    {label:'Rename…', action:() => renameTerminal(id)},
+    here ? {label:'Find in history', hint:'Ctrl Shift F', action:() => hooks.find(id)} : null,
+    here ? {label:'Copy all output', action:() => hooks.copy(id)} : null,
+    {label:'Move to workspace', submenu:() => moveMenu(id)},
     {separator:true},
-    {label:'Close terminal', icon:'square-x', danger:true, action:() => closeTerminals([id])},
+    {label:'Close terminal', danger:true, action:() => closeTerminals([id])},
   ].filter(Boolean);
 }
-export function showTerminalMenu(id, anchor, options) { menu.toggle(anchor, () => terminalMenu(id, options), {label:'Terminal actions', back:'Back to terminal actions'}); }
+export function showTerminalMenu(id, anchor, options) { menu.toggle(anchor, () => terminalMenu(id, options), {label:'Terminal actions'}); }

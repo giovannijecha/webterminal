@@ -1,0 +1,51 @@
+/* Dropped files: the list of staged copies and uploads, with details beside it. */
+:root{--files-inspector-width:320px}
+.files-layout{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.files-main{flex:999 1 520px;min-width:0}
+.files-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px 12px;padding-bottom:10px}
+.files-search{flex:1 1 220px;max-width:320px}
+.files-search .field{width:100%}
+.files-summary{margin-left:auto;color:var(--muted);font-size:13px;line-height:18px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.files-columns,.files-row{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1.3fr) 110px 56px;align-items:center;gap:12px;padding:0 8px 0 14px}
+.files-columns{min-height:34px;color:var(--muted);font-size:12px;line-height:16px;font-weight:700}
+.files-list{display:grid;gap:2px;list-style:none}
+.files-row{min-height:60px;border-radius:var(--radius-control);cursor:pointer}
+.files-row:hover{background:var(--frame)}
+.files-row[data-selected="true"]{background:var(--selected)}
+.files-identity{display:grid;min-width:0}
+.files-name{justify-self:start;max-width:100%;color:var(--text);font-size:14px;line-height:20px;font-weight:700;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files-row[data-selected="true"] .files-name{color:var(--ink)}
+.files-name:hover{text-decoration:underline;text-underline-offset:3px}
+.files-sub{display:flex;align-items:center;gap:10px;min-width:0;color:var(--muted);font-size:12px;line-height:18px}
+.files-sub>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files-row[data-selected="true"] .files-sub{color:var(--text)}
+.files-row[data-state="failed"] .files-sub{color:var(--red)}
+.files-place{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;line-height:18px}
+.files-place>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files-row-actions{display:flex;justify-content:flex-end}
+.files-progress{flex:1;max-width:220px;height:4px;border:0;border-radius:2px;background:var(--toolbar);overflow:hidden;appearance:none}
+.files-progress::-webkit-progress-bar{border-radius:2px;background:var(--toolbar)}
+.files-progress::-webkit-progress-value{border-radius:2px;background:var(--focus)}
+.files-progress::-moz-progress-bar{border-radius:2px;background:var(--focus)}
+/* Details of the selected row. */
+.files-inspector{position:sticky;top:0;flex:0 0 var(--files-inspector-width);min-width:0;max-height:calc(100dvh - 120px);overflow:auto;border:1px solid var(--overlay-line);border-radius:var(--radius-container);background:var(--frame);scrollbar-width:thin;scrollbar-color:var(--field-edge) transparent}
+/* Keep notifications beside the inspector so they cannot cover its actions. */
+body:has(#page-files:not([hidden]) .files-inspector:not([hidden])) .toasts{right:calc(var(--files-inspector-width) + 40px)}
+.files-inspector>header{display:flex;align-items:flex-start;gap:8px;padding:16px 8px 12px 18px}
+.files-inspector>header>div{display:grid;gap:2px;flex:1;min-width:0}
+.files-inspector h2{color:var(--ink);font-size:18px;line-height:24px;font-weight:800;overflow-wrap:anywhere}
+.files-inspector header p{color:var(--muted);font-size:12px;line-height:16px}
+.files-staged-path,.files-notice{display:grid;gap:4px;margin:0 18px 4px;padding:10px 12px;border-radius:var(--radius-control);background:var(--container);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.files-staged-path>span:first-child{color:var(--muted);font-weight:700}
+.files-path-text{white-space:normal;overflow-wrap:anywhere;line-height:18px}
+.files-notice{gap:8px;color:var(--muted)}
+.files-notice .files-progress{max-width:none}
+.files-notice[data-state="failed"]{color:var(--red)}
+.files-facts{grid-template-columns:110px minmax(0,1fr);gap:10px 14px;padding:12px 18px 16px;font-size:13px;line-height:18px}
+.files-facts dt{font-size:13px;line-height:18px;font-weight:600}
+.files-detail-actions{display:grid;gap:8px;padding:14px 18px 18px;border-top:1px solid var(--divider)}
+.files-detail-pair{display:flex;flex-wrap:wrap;gap:8px}
+.files-detail-pair>.btn{flex:1}
+.files-detail-actions .help{margin:0}
+.files-remove-target{display:grid;gap:6px;min-width:0;overflow-wrap:anywhere}
+.files-remove-target>span{color:var(--muted);font-size:12px;line-height:18px}

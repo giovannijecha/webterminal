@@ -32,9 +32,6 @@ export function icon(name, className = '') {
   return svg;
 }
 
-// One generic terminal glyph for every program; never a provider logo.
-export function programTile() { return el('span', {class:'tile program-identity', 'aria-hidden':'true'}, icon('program')); }
-
 export function badge(label, tone = 'neutral', extra = {}) {
   return el('span', {class:'status-badge', 'data-tone':tone, ...extra}, el('span', {class:'status-label', text:label}));
 }
@@ -59,10 +56,11 @@ export function ago(ms, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// "up 2h 14m", read after a status such as "Connected · ".
 export function uptime(ms) {
   const minutes = Math.floor(Math.max(0, ms) / 60000), hours = Math.floor(minutes / 60);
-  if (hours >= 48) return `Up ${Math.floor(hours / 24)}d ${hours % 24}h`;
-  return hours ? `Up ${hours}h ${minutes % 60}m` : `Up ${minutes}m`;
+  if (hours >= 48) return `up ${Math.floor(hours / 24)}d ${hours % 24}h`;
+  return hours ? `up ${hours}h ${minutes % 60}m` : `up ${minutes}m`;
 }
 
 export function clock(ms) {

@@ -1,7 +1,6 @@
-// Nest overlays: menus, modal dialogs and the owned combobox.
-import {el, icon} from './dom.js';
+/// Nest overlays: menus, modal dialogs and the owned combobox.
+import {avatar, el, icon} from './dom.js';
 
-const compact = matchMedia('(max-width:620px)');
 let nextId = 0;
 const uid = prefix => `${prefix}-${++nextId}`;
 const host = anchor => anchor?.closest?.('dialog[open]') || document.body;
@@ -20,8 +19,16 @@ function place(node, anchor, {side = 'below', gap = 6} = {}) {
   node.style.top = `${Math.max(8, Math.min(top, innerHeight - height - 8))}px`;
 }
 
-// Items: {label, icon, hint, danger, disabled, checked, action, submenu} |
-// {head:'text'} | {separator:true}. `submenu` may be a function.
+// A context header names what the menu acts on:
+// {head, detail, avatar:[family, label]} or {head, detail, tone} for a status dot.
+function header(item) {
+  return el('div', {class:'menu-head', role:'presentation'},
+    item.avatar ? avatar(item.avatar[0], item.avatar[1]) : item.tone ? el('span', {class:'dot', 'data-tone':item.tone}) : null,
+    el('div', {class:'menu-head-text'}, el('b', {text:item.head}), item.detail ? el('span', {text:item.detail}) : null));
+}
+
+// Text-only items: {label, hint, danger, disabled, checked, action, submenu,
+// title} | {head, …} | {separator:true}. `submenu` may be a function.
 export class Menu {
   constructor() {
     this.levels = [];
@@ -31,46 +38,38 @@ export class Menu {
   }
   get open() { return this.levels.length > 0; }
   toggle(anchor, items, options) { if (this.anchor === anchor && this.open) this.close(); else this.show(anchor, items, options); }
-  show(anchor, items, {label = 'Actions', back = 'Back'} = {}) {
+  show(anchor, items, {label = 'Actions'} = {}) {
     this.close(false);
     this.anchor = anchor;
-    this.back = back;
     anchor.setAttribute('aria-expanded', 'true');
     this.push(items, anchor, label, 'below');
   }
   push(items, anchor, label, side) {
     const node = el('div', {class:'menu', role:'menu', 'aria-label':label, tabindex:'-1'});
     const level = {node, items, anchor};
-    if (compact.matches && this.levels.length) {
-      const parent = this.levels.at(-1);
-      parent.node.hidden = true;
-      node.append(this.item({label:this.back, icon:'chevron-right', iconClass:'flip', action:() => this.pop(true)}, level, true));
-      side = 'replace';
-    }
     for (const item of typeof items === 'function' ? items() : items) node.append(this.item(item, level));
     node.addEventListener('keydown', event => this.key(event, level));
     host(this.anchor).append(node);
     this.levels.push(level);
-    if (side === 'replace') { const parent = this.levels.at(-2).node; node.style.left = parent.style.left; node.style.top = parent.style.top; }
-    else place(node, anchor, {side});
+    place(node, anchor, {side});
     this.focusItem(level, 0);
     return level;
   }
-  item(item, level, isBack = false) {
+  item(item, level) {
     if (item.separator) return el('div', {class:'menu-sep', role:'separator'});
-    if (item.head) return el('div', {class:'menu-head', role:'presentation', text:item.head});
+    if (item.head) return header(item);
     const disabled = Boolean(item.disabled);
-    const button = el('button', {class:`menu-item${item.danger ? ' danger' : ''}`, type:'button', role:item.checked === undefined ? 'menuitem' : 'menuitemradio', 'aria-checked':item.checked === undefined ? undefined : String(Boolean(item.checked)), 'aria-disabled':disabled ? 'true' : undefined, 'aria-haspopup':item.submenu ? 'menu' : undefined, title:item.title, tabindex:'-1'},
-      item.icon ? icon(item.icon, item.iconClass || '') : null, el('span', {text:item.label}), item.hint ? el('span', {class:'hint', text:item.hint}) : null, item.submenu ? icon('chevron-right', 'sm') : null);
+    // A submenu keeps its popup semantics and arrow keys without a drawn arrow.
+    const button = el('button', {class:`menu-item${item.danger ? ' danger' : ''}`, type:'button', role:item.checked === undefined ? 'menuitem' : 'menuitemradio', 'aria-checked':item.checked === undefined ? undefined : String(Boolean(item.checked)), 'aria-disabled':disabled ? 'true' : undefined, 'aria-haspopup':item.submenu ? 'menu' : undefined, 'aria-expanded':item.submenu ? 'false' : undefined, title:item.title, tabindex:'-1'},
+      el('span', {text:item.label}), item.hint ? el('span', {class:'hint', text:item.hint}) : item.checked ? icon('check', 'sm') : null);
     button.addEventListener('click', () => {
       if (disabled) return;
       if (item.submenu) { this.openSubmenu(level, button, item); return; }
-      if (isBack) { item.action(); return; }
       this.close(true);
       item.action?.();
     });
     button.addEventListener('pointerenter', () => {
-      if (disabled || compact.matches) return;
+      if (disabled) return;
       button.focus();
       const index = this.levels.indexOf(level);
       if (item.submenu) this.openSubmenu(level, button, item, false);
@@ -85,15 +84,14 @@ export class Menu {
     button.setAttribute('aria-expanded', 'true');
     const child = this.push(item.submenu, button, item.label, 'right');
     if (!focus) button.focus();
-    else this.focusItem(child, compact.matches ? 1 : 0);
+    else this.focusItem(child, 0);
   }
   pop(focus) {
     const level = this.levels.pop();
     if (!level) return;
     level.node.remove();
     level.anchor.setAttribute('aria-expanded', 'false');
-    const parent = this.levels.at(-1);
-    if (parent) { parent.node.hidden = false; if (focus) level.anchor.focus(); }
+    if (focus && this.levels.length) level.anchor.focus();
   }
   enabled(level) { return [...level.node.querySelectorAll('.menu-item')]; }
   focusItem(level, index) { const items = this.enabled(level); items[(index + items.length) % items.length]?.focus(); }

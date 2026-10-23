@@ -1,18 +1,15 @@
 // Dropped files: the staged copies the server keeps for each terminal plus
-// this view's uploads in flight or failed. Details open only on selection:
-// a side panel on wide screens, a dialog on narrow ones.
-import {$, ago, bytes, clock, el, icon, pathText, plural} from './dom.js';
-import {changed, control, noteCopied, showTerminal, state, terminalName, workspaceLabel, workspaceOf} from './model.js';
+// this view's uploads in flight or failed. Each row carries its one direct
+// action; selecting a row opens its details beside the list.
+import {$, ago, avatar, badge, bytes, clock, el, icon, pathText, plural} from './dom.js';
+import {changed, control, showTerminal, state, terminalName, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {ask} from './connection.js';
-import {dialogs, menu, notify, problem} from './ui.js';
+import {dialogs, notify, problem} from './ui.js';
 import {cancelUpload, dismissUpload, forgetCopy, retryUpload, transfers} from './transfers.js';
 
 const FILTERS = [['all', 'All'], ['staged', 'Staged'], ['uploading', 'Uploading'], ['failed', 'Failed']];
 const TOPICS = ['page', 'files', 'transfers', 'sessions', 'connection'];
-const wide = matchMedia('(min-width:901px)');
-const view = {filter:'all', query:'', selected:null, target:undefined, nodes:null, rows:new Map(), removed:new Set(), dialog:null};
-
-wide.addEventListener('change', () => { if (state.page === 'files') changed('files'); });
+const view = {filter:'all', query:'', selected:null, target:undefined, nodes:null, rows:new Map(), removed:new Set()};
 
 const stagedRow = copy => ({key:`c:${copy.id}`, state:'staged', name:copy.original || copy.name, session:copy.session, size:copy.size, at:copy.created, copy});
 
@@ -32,8 +29,9 @@ function rows() {
 }
 
 function place(row) {
-  const open = state.sessions.has(row.session);
-  return {open, terminal:open ? terminalName(row.session) : 'Closed terminal', workspace:open ? workspaceLabel(workspaceOf(row.session)) : 'No longer available', own:control(row.session)};
+  const open = state.sessions.has(row.session), workspace = open ? workspaceOf(row.session) : null;
+  return {open, terminal:open ? terminalName(row.session) : 'Closed terminal', workspace:open ? workspaceLabel(workspace) : 'No longer available',
+    family:workspace ? workspaceIndex(workspace) : null, own:control(row.session)};
 }
 
 function matches(row, query) {
@@ -42,12 +40,14 @@ function matches(row, query) {
   return [row.name, row.copy?.name, row.copy?.path, terminal, workspace].some(text => text?.toLowerCase().includes(query));
 }
 
+// What the row says under the name: size and time, progress, or the error.
 function status(row) {
-  if (row.state === 'failed') return `Not uploaded · ${row.record.error}`;
-  if (row.state === 'uploading') return row.record.state === 'queued' ? 'Waiting to upload' : `Uploading · ${row.record.percent}%`;
-  return '';
+  if (row.state === 'failed') return row.record.error;
+  if (row.state === 'uploading') return row.record.state === 'queued' ? `${bytes(row.size)} · waiting to upload` : `${bytes(row.size)} · ${row.record.percent}%`;
+  const renamed = row.copy.name !== row.name ? ` · staged as ${row.copy.name}` : '';
+  return `${bytes(row.size)} · dropped ${ago(row.at)}${renamed}`;
 }
-const stateLabel = row => row.state === 'staged' ? 'Staged' : row.state === 'failed' ? 'Not uploaded' : row.record.state === 'queued' ? 'Waiting to upload' : 'Uploading';
+const stateLabel = row => row.state === 'staged' ? 'Staged' : row.state === 'failed' ? 'Failed' : row.record.state === 'queued' ? 'Waiting' : 'Uploading';
 
 function removeBlock(row) {
   if (row.state !== 'staged') return 'Only a staged copy can be removed.';
@@ -69,7 +69,6 @@ async function copyPath(row) {
   if (!path) return;
   try {
     await navigator.clipboard.writeText(path);
-    noteCopied(path);
     notify('Staged path copied', row.name, null, 'files-copy');
   } catch {
     const field = el('textarea', {class:'field', readonly:true, rows:3, 'aria-label':'Staged path', value:path, onfocus:event => event.target.select()});
@@ -114,7 +113,7 @@ async function retry(row) {
   if (!view.nodes.inspector.contains(document.activeElement)) restoreFocus(view.nodes.list.querySelector(`[data-key="${CSS.escape(row.key)}"]`), 'cancel');
 }
 
-function act(action, row, anchor) {
+function act(action, row) {
   if (action === 'select') select(row);
   else if (action === 'close') close();
   else if (action === 'terminal') { if (state.sessions.has(row.session)) showTerminal(row.session); }
@@ -123,23 +122,9 @@ function act(action, row, anchor) {
   else if (action === 'cancel') { if (cancelUpload(row.record.key)) notify('Upload cancelled', `${row.name} · no path was pasted.`, null, 'upload'); }
   else if (action === 'retry') retry(row);
   else if (action === 'dismiss') { dismissUpload(row.record.key); notify('Failed upload dismissed', row.name, null, 'upload'); }
-  else if (action === 'menu') menu.toggle(anchor, () => menuItems(row), {label:`${row.name} actions`});
-}
-
-function menuItems(row) {
-  const open = state.sessions.has(row.session);
-  const items = [{label:'Details', icon:'info', action:() => select(row)}];
-  if (row.state === 'staged') items.push({label:'Copy staged path', icon:'copy', action:() => copyPath(row)});
-  if (row.state === 'failed') { const block = retryBlock(row); items.push({label:'Retry upload', icon:'refresh', disabled:Boolean(block), title:block || undefined, action:() => retry(row)}); }
-  if (open) items.push({label:'Open terminal', icon:'square-terminal', action:() => showTerminal(row.session)});
-  items.push({separator:true});
-  if (row.state === 'staged') { const block = removeBlock(row); items.push({label:'Remove staged copy…', icon:'square-x', danger:true, disabled:Boolean(block), hint:block ? control(row.session).label : undefined, title:block || undefined, action:() => removeCopy(row)}); }
-  else items.push({label:'Dismiss failed upload', icon:'x', action:() => act('dismiss', row)});
-  return items;
 }
 
 function select(row) {
-  if (!wide.matches) { openDialog(row); return; }
   view.selected = view.selected === row.key ? null : row.key;
   paint();
   if (view.selected) view.nodes.inspector.querySelector('h2')?.focus();
@@ -152,24 +137,12 @@ function close() {
 }
 
 // Rendering
-const iconButton = (name, label, action) => el('button', {class:'icon-btn ghost', type:'button', 'aria-label':label, title:label, dataset:{action}}, icon(name));
-const fact = (label, value) => el('div', {}, el('dt', {text:label}), el('dd', {}, value));
+const iconButton = (name, label, action, title = label) => el('button', {class:'icon-btn ghost', type:'button', 'aria-label':label, title, dataset:{action}}, icon(name));
 
-function rowNode(row) {
-  const {open, terminal, workspace, own} = place(row), selected = view.selected === row.key, text = status(row);
-  const name = el('button', {class:'files-name', type:'button', title:'Show details', dataset:{action:'select'}, 'aria-expanded':wide.matches ? String(selected) : undefined, 'aria-controls':wide.matches ? 'files-inspector' : undefined, 'aria-haspopup':wide.matches ? undefined : 'dialog'},
-    el('span', {class:'files-name-text', text:row.name}), el('span', {class:'files-mini-size', text:bytes(row.size)}));
-  const source = open
-    ? el('button', {class:'files-source', type:'button', title:'Open terminal', dataset:{action:'terminal'}}, el('span', {text:terminal}), el('span', {class:'files-workspace', text:own.mine ? workspace : `${workspace} · ${own.label}`}))
-    : el('span', {class:'files-source'}, el('span', {text:terminal}), el('span', {class:'files-workspace', text:workspace}));
-  const actions = el('div', {class:'files-row-actions'});
-  if (row.state === 'staged') actions.append(iconButton('copy', `Copy staged path for ${row.name}`, 'copy'), iconButton('ellipsis', `More actions for ${row.name}`, 'menu'));
-  else if (row.state === 'uploading') actions.append(iconButton('x', `Cancel upload of ${row.name}`, 'cancel'));
-  else actions.append(iconButton('refresh', `Retry upload of ${row.name}`, 'retry'), iconButton('ellipsis', `More actions for ${row.name}`, 'menu'));
-  if (row.state === 'failed' && retryBlock(row)) Object.assign(actions.firstChild, {disabled:true, title:retryBlock(row)});
-  return el('li', {class:'files-row', dataset:{key:row.key, state:row.state, selected:String(selected)}},
-    el('div', {class:'files-identity'}, name, text ? el('span', {class:'files-row-status', dataset:{status:''}, text}) : null),
-    el('span', {class:'files-size', text:bytes(row.size)}), source, actions, progressNode(row));
+function placeNode(row) {
+  const {open, terminal, workspace, family} = place(row);
+  return el('span', {class:'files-place', title:open ? `${terminal} · ${workspace}` : 'Its terminal was closed'},
+    family === null ? null : avatar(family, workspace, 'xs'), el('span', {text:terminal}));
 }
 
 function progressNode(row) {
@@ -177,96 +150,80 @@ function progressNode(row) {
   return el('progress', {class:'files-progress', max:100, value:row.record.percent, 'aria-label':`Upload progress for ${row.name}`});
 }
 
+function rowNode(row) {
+  const selected = view.selected === row.key;
+  const name = el('button', {class:'files-name', type:'button', dataset:{action:'select'}, 'aria-expanded':String(selected), 'aria-controls':'files-inspector', text:row.name});
+  const sub = el('span', {class:'files-sub'}, progressNode(row), el('span', {dataset:{status:''}, text:status(row)}));
+  let action;
+  if (row.state === 'staged') action = iconButton('copy', `Copy staged path for ${row.name}`, 'copy', 'Copy staged path');
+  else if (row.state === 'uploading') action = iconButton('x', `Cancel upload of ${row.name}`, 'cancel', 'Cancel upload');
+  else {
+    const block = retryBlock(row);
+    action = el('button', {class:'btn sm', type:'button', dataset:{action:'retry'}, 'aria-label':`Retry upload of ${row.name}`, disabled:Boolean(block), title:block || undefined, text:'Retry'});
+  }
+  return el('li', {class:'files-row', dataset:{key:row.key, state:row.state, selected:String(selected)}},
+    el('div', {class:'files-identity'}, name, sub),
+    placeNode(row),
+    el('span', {}, badge(stateLabel(row), row.state === 'failed' ? 'red' : 'neutral')),
+    el('div', {class:'files-row-actions'}, action));
+}
+
 // Progress changes update text in place so focus and scroll stay put.
 function updateProgress(node, row) {
   if (row.state !== 'uploading') return;
-  const bar = node.querySelector('.files-progress'), text = node.querySelector('[data-status]');
+  const bar = node.querySelector('.files-progress'), label = node.querySelector('[data-status]');
   if (bar) bar.value = row.record.percent;
-  if (text) text.textContent = status(row);
+  if (label) text(label, status(row));
 }
 // Unchanged text is left alone so live regions do not announce it again.
 function text(node, value) { if (node.textContent !== value) node.textContent = value; }
 
 function details(row) {
-  const {open, terminal, workspace, own} = place(row), wrap = el('div', {class:'files-detail-body'});
-  if (row.state !== 'staged') wrap.append(el('div', {class:'files-notice', dataset:{state:row.state}, role:'status'}, el('span', {dataset:{status:''}, text:status(row)}), progressNode(row)));
-  wrap.append(el('dl', {class:'files-facts'},
-    fact('State', stateLabel(row)),
-    fact('Original name', row.name),
-    row.copy ? fact('Staged as', row.copy.name === row.name ? 'Same name' : row.copy.name) : null,
-    fact('Size', bytes(row.size)),
-    fact('Terminal', open ? `${terminal} · ${workspace}` : 'Closed terminal'),
-    open ? fact('Control', own.label) : null,
-    row.copy ? fact('Staged path', pathText(row.copy.path, 'mono files-path-text')) : null,
-    fact(row.state === 'staged' ? 'Staged' : 'Dropped', `${clock(row.at)} · ${ago(row.at)}`)));
+  const {open, terminal, workspace, family, own} = place(row);
+  const fact = (label, value) => [el('dt', {text:label}), el('dd', {}, value)];
   const buttons = el('div', {class:'files-detail-actions'}), reasons = [];
-  const button = (label, action, cls = 'btn sm', disabled = '') => {
-    if (disabled) reasons.push(disabled);
-    return el('button', {class:cls, type:'button', dataset:{action}, disabled:Boolean(disabled)}, label);
+  const button = (label, action, kind = '', block = '') => {
+    if (block) reasons.push(block);
+    return el('button', {class:`btn${kind}`, type:'button', dataset:{action}, disabled:Boolean(block), text:label});
   };
-  if (row.state === 'staged') buttons.append(button('Copy path', 'copy'), open ? button('Open terminal', 'terminal') : null, button('Remove copy', 'remove', 'btn sm danger', removeBlock(row)));
-  else if (row.state === 'uploading') buttons.append(button('Cancel upload', 'cancel'), open ? button('Open terminal', 'terminal') : null);
-  else buttons.append(button('Retry', 'retry', 'btn sm', retryBlock(row)), button('Dismiss', 'dismiss'), open ? button('Open terminal', 'terminal') : null);
-  wrap.append(buttons, ...reasons.map(reason => el('p', {class:'help', text:reason})));
-  if (row.state === 'staged') wrap.append(el('p', {class:'help', text:'This copy is removed when its terminal closes. The original stays untouched.'}));
-  return wrap;
+  const terminalButton = open ? button('Open terminal', 'terminal') : null;
+  if (row.state === 'staged') buttons.append(el('div', {class:'files-detail-pair'}, button('Copy staged path', 'copy', ' primary'), terminalButton), button('Remove staged copy…', 'remove', ' danger', removeBlock(row)));
+  else if (row.state === 'uploading') buttons.append(el('div', {class:'files-detail-pair'}, button('Cancel upload', 'cancel'), terminalButton));
+  else buttons.append(el('div', {class:'files-detail-pair'}, button('Retry upload', 'retry', ' primary', retryBlock(row)), button('Dismiss', 'dismiss')), terminalButton);
+  buttons.append(...reasons.map(reason => el('p', {class:'help', text:reason})));
+  if (row.state === 'staged') buttons.append(el('p', {class:'help', text:'This copy is removed when its terminal closes. The original stays untouched.'}));
+  return [
+    row.copy ? el('div', {class:'files-staged-path'}, el('span', {text:'Staged path'}), pathText(row.copy.path, 'mono files-path-text'))
+      : el('div', {class:'files-notice', dataset:{state:row.state}, role:'status'}, progressNode(row), el('span', {dataset:{status:''}, text:row.state === 'failed' ? `Not uploaded · ${row.record.error}` : status(row)})),
+    el('dl', {class:'facts files-facts'},
+      fact('State', stateLabel(row)),
+      fact('Original name', row.name),
+      row.copy ? fact('Staged as', row.copy.name === row.name ? 'Same name' : row.copy.name) : null,
+      fact('Terminal', terminal),
+      fact('Workspace', el('span', {class:'files-place'}, family === null ? null : avatar(family, workspace, 'xs'), el('span', {text:workspace}))),
+      open && !own.mine ? fact('Control', own.label) : null),
+    buttons,
+  ];
 }
 
 function inspectorNode(row) {
-  return [el('header', {}, el('h2', {tabindex:'-1', text:row.name}), iconButton('x', 'Close file details', 'close')), details(row)];
-}
-
-function openDialog(row) {
-  const body = details(row);
-  body.addEventListener('click', event => {
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    const current = view.rows.get(view.dialog?.key);
-    if (!action || event.target.closest('button')?.disabled) return;
-    if (!current) return;
-    view.dialog = null;
-    dialogs.current?.close();
-    act(action, current, null);
-  });
-  view.dialog = {key:row.key, body, signature:signature(row), record:row.record || null};
-  dialogs.show({title:row.name, description:stateLabel(row), body, action:'Done', cancel:false}).then(() => { if (view.dialog?.body === body) view.dialog = null; });
-}
-
-function refreshDialog() {
-  const dialog = view.dialog;
-  if (!dialog) return;
-  // A completed transfer changes from a temporary row to its staged-copy ID.
-  const key = dialog.record?.copy ? `c:${dialog.record.copy.id}` : dialog.key;
-  const row = view.rows.get(key) || view.rows.get(dialog.key);
-  const caption = dialog.body.closest?.('dialog')?.querySelector('.dlg-head p');
-  if (caption) text(caption, row ? stateLabel(row) : 'No longer available');
-  const next = row ? signature(row) : 'unavailable';
-  if (next === dialog.signature) { if (row) updateProgress(dialog.body, row); return; }
-  const focused = dialog.body.contains(document.activeElement), action = document.activeElement?.dataset?.action;
-  if (row) {
-    const fresh = details(row);
-    dialog.body.replaceChildren(...fresh.childNodes);
-    dialog.key = row.key;
-  } else {
-    dialog.body.replaceChildren(el('div', {class:'files-notice', role:'status', text:'This file is no longer available.'}));
-  }
-  dialog.signature = next;
-  if (focused) {
-    const nextFocus = (action && [...dialog.body.querySelectorAll(`[data-action="${CSS.escape(action)}"]`)].find(button => !button.disabled))
-      || dialog.body.querySelector('button') || dialogs.current?.querySelector('.dlg-foot button');
-    nextFocus?.focus({preventScroll:true});
-  }
+  return [
+    el('header', {}, el('div', {}, el('h2', {tabindex:'-1', text:row.name}), el('p', {text:`${bytes(row.size)} · ${row.state === 'staged' ? 'dropped' : 'started'} at ${clock(row.at)}`})),
+      iconButton('x', 'Close file details', 'close')),
+    ...details(row),
+  ];
 }
 
 function signature(row) {
-  const {terminal, workspace, own} = place(row);
-  return [row.state, row.record?.state, Boolean(row.record?.file), row.name, row.size, row.copy?.path, terminal, workspace, own.label, row.record?.error, view.selected === row.key, wide.matches, state.connected].join('\u0001');
+  const {terminal, workspace, family, own} = place(row);
+  return [row.state, row.record?.state, Boolean(row.record?.file), row.name, row.size, row.copy?.path, row.copy?.name, terminal, workspace, family, own.label, row.record?.error, view.selected === row.key, state.connected, Math.floor((Date.now() - row.at) / 60000)].join('\u0001');
 }
 
 function build() {
   const search = el('input', {class:'field', type:'search', id:'files-search', placeholder:'Search files or terminals', autocomplete:'off', spellcheck:'false', 'aria-label':'Search dropped files', value:view.query});
   search.addEventListener('input', () => { view.query = search.value; paint(); });
   const filters = el('div', {class:'segment files-filter', role:'group', 'aria-label':'Show files'},
-    FILTERS.map(([key, label]) => el('button', {class:'btn sm', type:'button', dataset:{filter:key}, 'aria-pressed':String(view.filter === key)}, el('span', {text:label}), el('span', {class:'files-count', dataset:{count:key}, text:'0'}))));
+    FILTERS.map(([key, label]) => el('button', {type:'button', dataset:{filter:key}, 'aria-pressed':String(view.filter === key)}, el('span', {text:label}), el('span', {class:'count', dataset:{count:key}, text:'0'}))));
   filters.addEventListener('click', event => {
     const key = event.target.closest('[data-filter]')?.dataset.filter;
     if (key) { view.filter = key; paint(); }
@@ -278,16 +235,22 @@ function build() {
     if (!target || target.disabled) return;
     const key = area === list ? target.closest('.files-row')?.dataset.key : view.selected;
     const row = view.rows.get(key);
-    if (row || target.dataset.action === 'close') act(target.dataset.action, row, target);
+    if (row || target.dataset.action === 'close') act(target.dataset.action, row);
+  });
+  // A click on the row outside its controls selects it, like the name.
+  list.addEventListener('click', event => {
+    if (event.target.closest('button, a, input')) return;
+    const row = view.rows.get(event.target.closest('.files-row')?.dataset.key);
+    if (row) select(row);
   });
   inspector.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); close(); } });
   const frame = el('div', {class:'files-list-frame'},
-    el('div', {class:'files-columns', 'aria-hidden':'true'}, el('span', {text:'File'}), el('span', {text:'Size'}), el('span', {text:'Terminal / workspace'}), el('span', {text:'Actions'})), list);
+    el('div', {class:'files-columns', 'aria-hidden':'true'}, el('span', {text:'File'}), el('span', {text:'Terminal'}), el('span', {text:'State'}), el('span')), list);
   const empty = el('div', {class:'state files-empty', hidden:true});
   const summary = el('p', {class:'files-summary', role:'status'});
-  const layout = el('div', {class:'files-layout'}, el('div', {class:'files-main'}, frame, empty), inspector);
-  $('files-content').replaceChildren(el('div', {class:'files-root'},
-    el('div', {class:'files-tools'}, el('label', {class:'search-field files-search'}, icon('search'), search), filters, summary), layout));
+  const layout = el('div', {class:'files-layout'}, el('div', {class:'files-main'},
+    el('div', {class:'files-tools'}, el('div', {class:'search-field files-search'}, icon('search'), search), filters, summary), frame, empty), inspector);
+  $('files-content').replaceChildren(layout);
   view.nodes = {search, filters, list, inspector, frame, empty, summary, layout};
 }
 
@@ -313,8 +276,7 @@ function paint() {
   const selectedIndex = [...list.children].findIndex(node => node.dataset.key === view.selected);
   const existing = new Map([...list.children].map(node => [node.dataset.key, node]));
   const wanted = visible.map(row => {
-    let node = existing.get(row.key);
-    const sig = signature(row);
+    const node = existing.get(row.key), sig = signature(row);
     if (node?.dataset.sig === sig) { updateProgress(node, row); return node; }
     const fresh = rowNode(row);
     fresh.dataset.sig = sig;
@@ -331,7 +293,7 @@ function paint() {
     if (same) restoreFocus(same, focusAction); else settleFocus(focusIndex);
   }
 
-  const selected = wide.matches && view.selected ? view.rows.get(view.selected) : null;
+  const selected = view.selected ? view.rows.get(view.selected) : null;
   layout.dataset.inspecting = String(Boolean(selected));
   inspector.hidden = !selected;
   if (selected) {
@@ -343,7 +305,6 @@ function paint() {
     } else updateProgress(inspector, selected);
   } else inspector.dataset.sig = '';
   if (inspectorFocus && !selected) settleFocus(selectedIndex);
-  refreshDialog();
 }
 
 function restoreFocus(container, action, fallback = '.files-name') {
@@ -354,8 +315,8 @@ function restoreFocus(container, action, fallback = '.files-name') {
 
 // A row that left the list hands focus to its neighbour, never to the page body.
 function settleFocus(index) {
-  const {list, empty, search} = view.nodes, rows = list.children;
-  const target = rows.length ? rows[Math.min(Math.max(index, 0), rows.length - 1)].querySelector('.files-name') : (!empty.hidden && empty.querySelector('button')) || search;
+  const {list, empty, search} = view.nodes, items = list.children;
+  const target = items.length ? items[Math.min(Math.max(index, 0), items.length - 1)].querySelector('.files-name') : (!empty.hidden && empty.querySelector('button')) || search;
   target?.focus({preventScroll:true});
 }
 
@@ -364,7 +325,8 @@ function paintEmpty(empty, total) {
   if (empty.dataset.key === key) return;
   empty.dataset.key = key;
   if (!total) {
-    empty.replaceChildren(el('h2', {text:'No staged copies'}), el('p', {text:'Drop files on a terminal you control. Webterminal stages a copy, pastes its path and keeps it listed here.'}));
+    empty.replaceChildren(el('h2', {text:'No staged copies'}),
+      el('p', {text:'Drop files on a terminal you control. Webterminal stages a copy, pastes its path and keeps it listed here.'}));
     return;
   }
   const clear = el('button', {class:'btn', type:'button', text:'Clear search and filter'});
@@ -384,6 +346,9 @@ function apply(target) {
   if (FILTERS.some(([key]) => key === target?.filter)) view.filter = target.filter;
   if (target?.copy) view.selected = `c:${target.copy}`;
 }
+
+// Ages move on without a server message while the page is visible.
+setInterval(() => { if (view.nodes && state.page === 'files') paint(); }, 30000);
 
 export function show(target) { apply(target); }
 

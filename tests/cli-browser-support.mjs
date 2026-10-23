@@ -59,7 +59,13 @@ export async function proxyFor(backendPort,source,extra={}) {
       response.end(body);return;
     }
     let settled=false;
-    const upstream=httpRequest({hostname:'127.0.0.1',port:backendPort,path:request.url,method:'GET',headers:{Host:'127.0.0.1:'+backendPort,Connection:'close'},agent:false},upstreamResponse=>{
+    const upload=extra.uploads&&request.method==='POST'&&request.url.startsWith('/api/upload?');
+    const requestHeaders={Host:'127.0.0.1:'+backendPort,Connection:'close'};
+    if(upload){
+      requestHeaders.Origin=backendOrigin;
+      for(const name of ['content-type','content-length'])if(request.headers[name])requestHeaders[name]=request.headers[name];
+    }
+    const upstream=httpRequest({hostname:'127.0.0.1',port:backendPort,path:request.url,method:upload?'POST':'GET',headers:requestHeaders,agent:false},upstreamResponse=>{
       const chunks=[];
       upstreamResponse.on('data',chunk=>chunks.push(chunk));
       upstreamResponse.on('error',failed);
@@ -86,9 +92,9 @@ export async function proxyFor(backendPort,source,extra={}) {
     }
     request.on('aborted',browserAborted);
     response.on('close',()=>{if(!response.writableEnded)browserAborted();});
-    upstream.setTimeout(5000,()=>upstream.destroy(new Error('Backend GET timeout')));
+    upstream.setTimeout(5000,()=>upstream.destroy(new Error('Backend request timeout')));
     upstream.on('error',failed);
-    upstream.end();
+    if(upload)request.pipe(upstream);else upstream.end();
   });
   server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
   server.on('upgrade',(browser,socket,head)=>{

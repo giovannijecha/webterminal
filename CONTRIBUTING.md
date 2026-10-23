@@ -22,7 +22,7 @@ cargo build --locked --offline
 cargo fmt --all -- --check
 cargo clippy --locked --offline --all-targets -- -D warnings
 cargo test --locked --offline
-node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs tests/workbench-flows.mjs
+node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs tests/workbench-flows.mjs
 node --test tests/attribution.mjs
 node scripts/check-attribution.mjs --history
 ```

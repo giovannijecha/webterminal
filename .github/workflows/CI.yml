@@ -67,7 +67,7 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked --offline --quiet
       - name: Run JavaScript module tests
-        run: node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs
+        run: node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs
       - name: Run Workbench flow tests
         run: node --test tests/workbench-flows.mjs
       - name: Run Chrome terminal acceptance

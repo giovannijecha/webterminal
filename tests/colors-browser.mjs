@@ -94,7 +94,7 @@ async function shot(name,row){
 }
 // Two steps through Settings, saved like a user would, then back to the terminal.
 async function resizeFont(label){
-  const cols=current().terminal.cols,page=name=>document.querySelector('.navigation-item[data-page="'+name+'"]').click();
+  const cols=current().terminal.cols,page=name=>document.querySelector(name==='workspace'?'#navigation-projects .navigation-workspace-row .navigation-item[aria-current], #navigation-projects .navigation-workspace-row .navigation-item':'#sidebar [data-page="'+name+'"]').click();
   page('settings');await until(()=>$('settings-tab-terminal'),'settings');$('settings-tab-terminal').click();
   const step=document.querySelector('#settings-panel-terminal [aria-label="'+label+' terminal text"]');step.click();step.click();
   const footer=document.querySelector('#page-settings .prefs-footer');await until(()=>!footer.hidden,'unsaved settings');
@@ -126,6 +126,9 @@ async function main(){
   $('new').click();await until(()=>document.querySelector('dialog.launcher[open]'),'launcher');document.querySelector('dialog.launcher[open] .dlg-foot .btn.primary').click();
   await until(()=>$('pane').dataset.status==='Controlling'&&painted()&&$('terminal-lines').textContent.includes('PAINT_END'),'color fixture');
   check($('terminal-lines').textContent.includes('COLOR_ENABLED=true'),'CLI-style color detection ignores the redirected host');
+  // The fixture's workspace name has no break opportunities.
+  const row=document.querySelector('#navigation-projects .navigation-workspace-row'),name=row.querySelector('.navigation-name');
+  check(row.getBoundingClientRect().right<=$('sidebar').getBoundingClientRect().right&&name.scrollWidth>name.clientWidth,'a long workspace name truncates inside the sidebar');
   verifyColors('initial');await paintAndWait('scroll');verifyColors('scrollback update');
   check(current().terminal.history.length>0,'colored output remains in bounded history');
   await resizeFont('Larger');verifyBands('narrowed history',current().terminal.history.length-2);await paintAndWait('paint');verifyColors('resized');

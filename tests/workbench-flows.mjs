@@ -29,7 +29,7 @@ function node(tag, props = {}, ...children) {
   };
 }
 
-test('OSC 52 records terminal provenance only after an approved clipboard write', async () => {
+test('OSC 52 writes the clipboard only after the user approves it', async () => {
   const calls = [], sockets = {};
   let approved = false, writeFails = false;
   const pane = {id:'s1'};
@@ -37,24 +37,87 @@ test('OSC 52 records terminal provenance only after an approved clipboard write'
     $:() => ({addEventListener() {}}), avatar() {}, el:node, plural:(count, word) => `${count} ${word}s`, storage:() => ({set() {}}),
     displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed() {}, currentWorkspace() {}, focusedId() {}, go() {},
     state:{socket:sockets}, terminalName:() => 'Terminal 1', workspaceIndex() {}, workspaceLabel() {}, createPanes:() => [pane], discardInput() {}, nextRequest() {}, queueInput() {}, send() {}, mergeUpdate() {},
-    dialogs:{show:async () => approved}, menu:{}, notify() {}, problem() {}, configureActions() {}, moveTerminal() {}, renameTerminal() {}, renameWorkspace() {}, showTerminalMenu() {}, takeControl() {}, workspaceMenu() {},
+    dialogs:{show:async () => approved}, menu:{}, notify:title => calls.push(['notify', title]), problem:title => calls.push(['problem', title]),
+    configureActions() {}, moveTerminal() {}, renameTerminal() {}, renameWorkspace() {}, showTerminalMenu() {}, takeControl() {}, workspaceMenu() {},
     configureLauncher() {}, openLauncher() {}, showSplitMenu() {}, stageDrop() {}, matchMedia:() => ({addEventListener() {}}),
     document:{addEventListener() {}, fonts:{ready:new Promise(() => {})}}, addEventListener() {}, navigator:{clipboard:{writeText:async text => { calls.push(['write', text]); if (writeFails) throw new Error('denied'); }}},
-  }, ['configureWorkspace', 'handleTerminal']);
-  api.configureWorkspace({clipboard:(text, id) => calls.push(['early', text, id]), copied:(text, id) => calls.push(['copied', text, id])});
+  }, ['handleTerminal']);
   const text = '# Terminal answer\nThis is a meaningful document.';
   const frame = {type:'clipboard', id:'s1', data:Buffer.from(text).toString('base64')};
   api.handleTerminal(frame);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, [], 'denied clipboard request records no provenance');
+  assert.deepEqual(calls, [], 'a declined request leaves the clipboard alone');
   approved = true;
   api.handleTerminal(frame);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, [['write', text], ['copied', text, 's1']], 'approved write records its source once');
+  assert.deepEqual(calls, [['write', text], ['notify', 'Copied to clipboard']], 'an approved request writes once');
   writeFails = true;
+  calls.length = 0;
   api.handleTerminal(frame);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, [['write', text], ['copied', text, 's1'], ['write', text]], 'failed browser write records no new source');
+  assert.deepEqual(calls, [['write', text], ['problem', 'Copy failed']], 'a refused browser write is reported');
+});
+
+test('a Processes claim waits for the attached, visible terminal and runs once', () => {
+  const frames = [], claims = [];
+  let focused = 's1';
+  const pane = {id:'s1', visible:true, input:{reset() {}}, renderer:{clear() {}}};
+  const state = {
+    page:'workspace', target:{focus:'s1', claim:true}, selected:'w1', connected:true, view:'me', socket:{},
+    workspaces:[{id:'w1', sessions:['s1', 's2']}], sessions:new Map(), snapshots:new Map(),
+    attachments:new Map([['s1', {request:7, acked:false, ready:false}]]),
+  };
+  const api = moduleUnderTest('workspace', {
+    $:() => ({addEventListener() {}}), avatar() {}, el:node, plural() {}, storage:() => ({set() {}}),
+    displayPath:value => value, editInline() {}, PANE_LIMIT:4, canInput() {}, changed() {}, currentWorkspace:() => state.workspaces[0], focusedId:() => focused, go() {},
+    ready:id => Boolean(state.attachments.get(id)?.ready), state, terminalName() {}, workspaceIndex() {}, workspaceLabel() {},
+    createPanes:() => [pane], discardInput() {}, nextRequest() {}, queueInput() {}, send() {}, mergeUpdate() {},
+    dialogs:{}, menu:{}, notify() {}, problem() {}, configureActions() {}, moveTerminal() {}, renameTerminal() {},
+    renameWorkspace() {}, showTerminalMenu() {}, takeControl:id => claims.push(id), workspaceMenu() {},
+    configureLauncher() {}, openLauncher() {}, showSplitMenu() {}, stageDrop() {},
+    requestAnimationFrame:callback => { frames.push(callback); return frames.length; },
+    document:{addEventListener() {}, fonts:{ready:new Promise(() => {})}}, addEventListener() {},
+  }, ['handleTerminal', 'disconnected']);
+  api.handleTerminal({type:'attached', id:'s1', request:7});
+  frames.pop()();
+  assert.deepEqual(claims, [], 'the acknowledgement alone cannot claim');
+  api.handleTerminal({type:'snapshot', id:'s1', seq:1, epoch:1, alive:true, controller:'peer', viewers:2, terminal:{}});
+  pane.visible = false;
+  frames.pop()();
+  assert.deepEqual(claims, [], 'a hidden pane cannot supply geometry');
+  pane.visible = true;
+  api.handleTerminal({type:'snapshot', id:'s1', seq:2, epoch:1, alive:true, controller:'peer', viewers:2, terminal:{}});
+  frames.pop()();
+  assert.deepEqual(claims, ['s1']);
+  assert.equal(state.target.claim, false);
+  api.handleTerminal({type:'snapshot', id:'s1', seq:3, epoch:1, alive:true, controller:'peer', viewers:2, terminal:{}});
+  assert.deepEqual(claims, ['s1'], 'later snapshots never repeat the claim');
+  focused = 's2';
+  state.target = {focus:'s1', claim:true};
+  api.handleTerminal({type:'snapshot', id:'s1', seq:4, epoch:1, alive:true, controller:'peer', viewers:2, terminal:{}});
+  frames.pop()();
+  assert.deepEqual(claims, ['s1'], 'choosing another pane cancels the previous claim');
+  assert.equal(state.target.claim, false);
+  focused = 's1';
+  state.target = {focus:'s1', claim:true};
+  state.page = 'overview';
+  api.handleTerminal({type:'snapshot', id:'s1', seq:5, epoch:1, alive:true, controller:'peer', viewers:2, terminal:{}});
+  frames.pop()();
+  assert.deepEqual(claims, ['s1'], 'leaving the workspace cancels the claim');
+  assert.equal(state.target.claim, false);
+  state.page = 'workspace';
+  state.target = {focus:'s1', claim:true};
+  api.disconnected();
+  assert.equal(state.target.claim, false, 'disconnect cancels a pending claim');
+});
+
+test('opening a terminal keeps the ordinary navigation default', () => {
+  const api = moduleUnderTest('model', {requestAnimationFrame:() => 1}, ['showTerminal', 'state']);
+  api.state.workspaces = [{id:'w1', sessions:['s1']}];
+  api.showTerminal('s1');
+  assert.deepEqual({...api.state.target}, {focus:'s1', claim:false});
+  api.showTerminal('s1', {claim:true});
+  assert.deepEqual({...api.state.target}, {focus:'s1', claim:true});
 });
 
 test('joining and leaving observers refreshes workspace chrome without repainting unchanged metadata', () => {
@@ -339,47 +402,50 @@ test('a toast action runs once and closes its toast', () => {
   assert.deepEqual(titles(), []);
 });
 
-test('mobile file details track upload failure and successful retry', () => {
+test('file details beside the list track upload failure and successful retry', () => {
   const record = {key:'u1', state:'uploading', name:'notes.txt', size:12, session:'s1', at:1, percent:30, error:'', file:{}};
   let records = [record];
   const state = {connected:true, files:{files:[]}, sessions:new Map([['s1', {id:'s1'}]]), snapshots:new Map([['s1', {epoch:1}]])};
   const api = moduleUnderTest('files', {
-    $:() => node('host'), ago:() => 'just now', bytes:value => `${value} B`, clock:() => '10:00', el:node, icon:() => node('svg'),
+    $:() => node('host'), ago:() => 'just now', avatar:() => node('avatar'), badge:(label, tone) => node('badge', {text:label, dataset:{tone}}),
+    bytes:value => `${value} B`, clock:() => '10:00', el:node, icon:() => node('svg'),
     pathText:value => node('path', {text:value}), plural:(count, word) => `${count} ${word}s`, changed() {},
-    control:() => ({mine:true, label:'You have control'}), noteCopied() {}, showTerminal() {}, state,
-    terminalName:() => 'Terminal 1', workspaceLabel:() => 'Workspace 1', workspaceOf:() => ({id:'w1'}),
-    ask() {}, dialogs:{show:() => new Promise(() => {})}, menu:{}, notify() {}, problem() {},
+    control:() => ({mine:true, label:'You have control'}), showTerminal() {}, state,
+    terminalName:() => 'Terminal 1', workspaceIndex:() => 0, workspaceLabel:() => 'Workspace 1', workspaceOf:() => ({id:'w1'}),
+    ask() {}, dialogs:{show:() => new Promise(() => {})}, notify() {}, problem() {},
     cancelUpload() {}, dismissUpload() {}, forgetCopy() {}, retryUpload() {}, transfers:() => records,
-    matchMedia:() => ({matches:false, addEventListener() {}}), document:{activeElement:null},
-  }, ['paint', 'openDialog', 'view']);
-  api.view.nodes = {
-    filters:node('filters'), list:node('list'), inspector:node('inspector'), frame:node('frame'),
-    empty:node('empty'), summary:node('summary'), layout:node('layout'), search:node('search'),
-  };
-  api.paint();
-  api.openDialog(api.view.rows.get('t:u1'));
-  const caption = {textContent:'Uploading'};
-  api.view.dialog.body.closest = () => ({querySelector:() => caption});
+    document:{activeElement:null}, setInterval:() => 0,
+  }, ['paint', 'view']);
   const words = item => typeof item === 'string' ? item : [item?.props?.text || '', ...(item?.children || []).flatMap(words)].join(' ');
-  assert.match(words(api.view.dialog.body), /Uploading/);
+  api.paint();
+  const {list, inspector} = api.view.nodes;
+  assert.equal(inspector.hidden, true, 'details stay closed until a row is selected');
+  assert.match(words(list), /12 B · 30%/);
+  api.view.selected = 't:u1';
+  api.paint();
+  assert.equal(inspector.hidden, false);
+  assert.match(words({children:inspector.children}), /Uploading/);
+  assert.match(words({children:inspector.children}), /Cancel upload/);
 
   record.state = 'failed';
   record.error = 'Disk unavailable';
   api.paint();
-  assert.match(words(api.view.dialog.body), /Disk unavailable/);
-  assert.match(words(api.view.dialog.body), /Retry/);
-  assert.equal(caption.textContent, 'Not uploaded');
+  assert.match(words({children:inspector.children}), /Not uploaded · Disk unavailable/);
+  assert.match(words({children:inspector.children}), /Retry upload/);
+  assert.match(words(list), /Retry/);
+  assert.match(words(list), /Failed/);
 
   record.state = 'done';
-  record.copy = {id:'c1', session:'s1', original:'notes.txt', name:'notes.txt', path:'C:\\staged\\notes.txt', created:2, size:12};
+  record.copy = {id:'c1', session:'s1', original:'notes.txt', name:'notes.txt', path:'C:\staged\notes.txt', created:2, size:12};
   state.files.files = [record.copy];
   api.paint();
-  assert.equal(api.view.dialog.key, 'c:c1');
-  assert.match(words(api.view.dialog.body), /Staged path/);
-  assert.equal(caption.textContent, 'Staged');
+  assert.equal(api.view.selected, 'c:c1', 'the selection follows the upload to its staged copy');
+  assert.match(words({children:inspector.children}), /Staged path/);
+  assert.match(words({children:inspector.children}), /Copy staged path/);
+  assert.match(words(list), /Staged/);
   records = [];
   state.files.files = [];
   api.paint();
-  assert.match(words(api.view.dialog.body), /no longer available/);
-  assert.equal(caption.textContent, 'No longer available');
+  assert.equal(api.view.selected, null, 'a removed copy closes its details');
+  assert.equal(inspector.hidden, true);
 });

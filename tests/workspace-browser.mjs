@@ -53,13 +53,16 @@ async function main(){
     await select(data.workspaces[0].id);
     await until(()=>pane(1).dataset.status==='Controlling'&&lines(1).textContent.includes('PERF_READY'),'first workspace after reload');
     await probe(1,'RELOADED');
-    await capture('workspace-mobile',390);
-    check(!$('pane-tabs').hidden&&$('pane-tabs').querySelectorAll('button').length===3,'narrow layout lists three terminal panes');
-    $('pane-tabs').querySelectorAll('button')[1].click();
-    await until(()=>pane(2).dataset.status==='Controlling'&&visible(pane(2))&&!visible(pane(1)),'narrow switcher selects second terminal');
-    await probe(2,'MOBILE');
-    check(fits($('new'))&&fits($('pane2-pane-menu')),'mobile terminal controls fit');
-    await capture('workspace-mobile-selected',390);
+    await capture('workspace-compact',1280);
+    check([1,2,3].every(index=>visible(pane(index))&&fits(pane(index))),'the smallest desktop shows all three terminal panes');
+    // A full click; a press alone holds the renderer still for a text selection.
+    const click=id=>{for(const type of ['pointerdown','pointerup'])$(id).dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,button:0}));};
+    click('terminal-scroll');
+    click('pane2-terminal-scroll');
+    await until(()=>pane(2).dataset.status==='Controlling'&&pane(2).classList.contains('focused')&&!pane(1).classList.contains('focused'),'a click focuses the second terminal');
+    await probe(2,'COMPACT');
+    check(fits($('new'))&&fits($('pane2-pane-menu')),'compact terminal controls fit');
+    await capture('workspace-compact-selected',1280);
     await capture('workspace-desktop-restored',1280);
     check(window.__probeErrors.length===0,'no browser exceptions or invalid updates');
     publish({pass:true,checks,sessions:data.sessions.map(item=>item.id),errors:window.__probeErrors});return;
