@@ -1,10 +1,10 @@
-// One draft of the server settings, shared by Settings and Themes & Appearance.
+// One draft of the server settings, edited on the Settings page.
 // The server owns the saved values and their revision; this module edits a
 // copy until Save, and never changes running terminals before the server
 // confirms (app.js applies saved settings when they arrive).
 import {ask} from './connection.js';
 import {changed, go, state, subscribe} from './model.js';
-import {el, icon} from './dom.js';
+import {el, plural} from './dom.js';
 import {displayPath} from './common.js';
 import {notify, pageHeading, toasts} from './ui.js';
 
@@ -17,7 +17,7 @@ export const FIELDS = {
   terminalTheme:{label:'Terminal colors', text:value => value === 'light' ? 'Light' : 'Dark'},
 };
 const KEYS = Object.keys(FIELDS);
-const PAGES = new Set(['settings', 'appearance']);
+const PAGES = new Set(['settings']);
 
 // phase: idle | saving | invalid | error | conflict. `latest` holds saved
 // values from another view that arrived while this draft had changes.
@@ -166,7 +166,7 @@ export function saveBar(page) {
   const button = (text, kind, run) => el('button', {class:`btn${kind}`, type:'button', text, onclick:event => { if (event.currentTarget.getAttribute('aria-disabled') !== 'true') run(); }});
   const load = button('Load saved values', '', discard);
   const keep = button('Keep my changes', ' primary', () => keepMine(draft.phase === 'conflict'));
-  const drop = button('Discard', '', discard);
+  const drop = button('Discard', ' ghost', discard);
   const submit = button('Save changes', ' primary', save);
   const actions = el('div', {class:'prefs-save-actions'}, load, keep, drop, submit);
   const node = el('footer', {class:'prefs-footer', 'aria-labelledby':title.id, hidden:true}, el('div', {class:'prefs-footer-text', role:'status'}, title, detail), actions);
@@ -176,7 +176,8 @@ export function saveBar(page) {
     node.hidden = !ready() || !(dirty() || conflict || draft.phase === 'error');
     if (node.hidden) { if (hadFocus) pageHeading()?.focus(); return; }
     const other = draft.latest ? differences(draft.latest.settings, draft.base).map(key => describe(key, read(draft.latest.settings, key))) : [];
-    let heading = 'Unsaved changes', text = changedKeys().map(key => FIELDS[key].label).join(', ');
+    const pending = changedKeys();
+    let heading = plural(pending.length, 'unsaved change'), text = pending.map(key => `${describe(key, read(draft.base, key))} → ${FIELDS[key].text(read(draft.value, key))}`).join(' · ');
     if (saving) [heading, text] = ['Saving…', text];
     else if (draft.phase === 'conflict') [heading, text] = ['Not saved. Another view saved settings first.', draft.latest ? `Saved now: ${other.join(' · ') || 'the same values'}.` : 'Loading the saved values…'];
     else if (draft.latest) [heading, text] = ['Another view saved settings. Your changes are kept.', `Saved now: ${other.join(' · ') || 'the same values'}.`];
@@ -201,24 +202,14 @@ export function saveBar(page) {
 }
 
 // Shared controls; `update()` reads the draft without rebuilding them.
-function minus() {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'icon sm');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(svg.namespaceURI, 'path');
-  path.setAttribute('d', 'M5 12h14');
-  svg.append(path);
-  return svg;
-}
 export function fontStepper(id) {
   const output = el('output', {id:`${id}-value`, 'aria-live':'polite'});
   const step = delta => {
     const size = (draft.value?.fontSize ?? APPEARANCE_DEFAULTS.fontSize) + delta;
     if (size >= FONT_MIN && size <= FONT_MAX) edit('fontSize', size);
   };
-  const smaller = el('button', {class:'btn', type:'button', 'aria-label':'Smaller terminal text', title:'Smaller', onclick:() => step(-1)}, minus());
-  const larger = el('button', {class:'btn', type:'button', 'aria-label':'Larger terminal text', title:'Larger', onclick:() => step(1)}, icon('plus', 'sm'));
+  const smaller = el('button', {class:'stepper-btn', type:'button', 'aria-label':'Smaller terminal text', title:'Smaller', text:'−', onclick:() => step(-1)});
+  const larger = el('button', {class:'stepper-btn', type:'button', 'aria-label':'Larger terminal text', title:'Larger', text:'+', onclick:() => step(1)});
   const node = el('div', {class:'stepper', role:'group', 'aria-label':`Terminal font size, ${FONT_MIN} to ${FONT_MAX} px`}, smaller, output, larger);
   function update() {
     const size = draft.value?.fontSize ?? APPEARANCE_DEFAULTS.fontSize;
@@ -229,9 +220,10 @@ export function fontStepper(id) {
   }
   return {node, update};
 }
+// Each choice shows a swatch of its terminal background.
 export function themeSegment(id) {
-  const buttons = ['dark', 'light'].map(theme => el('button', {class:'btn', type:'button', id:`${id}-${theme}`, onclick:() => edit('terminalTheme', theme)},
-    icon(theme === 'dark' ? 'moon' : 'sun', 'sm'), el('span', {text:theme === 'dark' ? 'Dark' : 'Light'})));
+  const buttons = ['dark', 'light'].map(theme => el('button', {type:'button', id:`${id}-${theme}`, onclick:() => edit('terminalTheme', theme)},
+    el('span', {class:'swatch', 'data-theme':theme, 'aria-hidden':'true'}), el('span', {text:FIELDS.terminalTheme.text(theme)})));
   const node = el('div', {class:'segment', role:'group', 'aria-label':'Terminal colors'}, buttons);
   const update = () => buttons.forEach((button, index) => button.setAttribute('aria-pressed', String((draft.value?.terminalTheme || 'dark') === ['dark', 'light'][index])));
   return {node, update};
@@ -278,7 +270,7 @@ export function terminalPreview(label) {
 export function problemBanner() {
   const text = el('p');
   const repair = el('button', {class:'btn sm', type:'button', text:'Save a new settings file', onclick:() => { if (repair.getAttribute('aria-disabled') !== 'true') save(); }});
-  const node = el('div', {class:'prefs-problem', role:'alert', hidden:true}, icon('warning'), el('div', {}, el('h2', {text:'Saved settings could not be read'}), text, repair));
+  const node = el('div', {class:'prefs-problem', role:'alert', hidden:true}, el('div', {}, el('h2', {text:'Saved settings could not be read'}), text, repair));
   const update = () => {
     const problem = state.settings?.problem;
     node.hidden = !problem;
@@ -288,7 +280,7 @@ export function problemBanner() {
   return {node, update};
 }
 
-// Leaving both preference pages with changes keeps the draft and says so.
+// Leaving Settings with changes keeps the draft and says so.
 let lastPage = state.page;
 subscribe(topics => {
   if (topics.has('settings') || topics.has('connection')) sync();

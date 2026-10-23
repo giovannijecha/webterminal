@@ -66,7 +66,7 @@ export function openLauncher({workspace = state.selected, cwd = splitFolder()} =
   if (state.sessions.size >= SESSION_LIMIT) { problem('Limit reached', `Webterminal runs up to ${SESSION_LIMIT} terminals. Close one to open another.`); return; }
   const folder = el('input', {class:'field mono', id:'launch-folder', value:displayPath(cwd), autocomplete:'off', spellcheck:'false'});
   const recent = el('button', {type:'button', class:'btn ghost', 'aria-haspopup':'menu'}, el('span', {text:'Recent folders'}), icon('chevron-down', 'sm'));
-  const browse = el('button', {type:'button', class:'btn ghost'}, icon('folder-open'), el('span', {text:'Browse…'}));
+  const browse = el('button', {type:'button', class:'btn', text:'Browse…'});
   recent.addEventListener('click', () => menu.toggle(recent, recentFolders().map(path => ({label:displayPath(path), action:() => { folder.value = displayPath(path); folder.focus(); }})), {label:'Recent folders'}));
   browse.addEventListener('click', () => chooseFolder(path => { folder.value = displayPath(path); folder.focus(); }));
   const select = el('select', {id:'launch-workspace'});
@@ -107,10 +107,9 @@ export function splitMenu() {
   const workspace = currentWorkspace(), folder = splitFolder();
   const full = !workspace || workspace.sessions.length >= PANE_LIMIT;
   return [
-    {head:`Opens in ${displayPath(folder)}`},
-    {label:shellLabel(state.hello?.shell), icon:'square-terminal', disabled:full, action:() => createTerminal({cwd:folder, workspace:workspace?.id})},
-    {separator:true},
-    {label:'Choose folder…', icon:'folder-open', disabled:full, action:() => chooseFolder(path => createTerminal({cwd:path, workspace:workspace?.id}))},
+    {head:'New terminal beside this one', detail:`Opens in ${displayPath(folder)}`},
+    {label:shellLabel(state.hello?.shell), disabled:full, hint:full ? 'Full' : '', action:() => createTerminal({cwd:folder, workspace:workspace?.id})},
+    {label:'Choose folder…', disabled:full, action:() => chooseFolder(path => createTerminal({cwd:path, workspace:workspace?.id}))},
   ];
 }
 export function showSplitMenu(anchor) {

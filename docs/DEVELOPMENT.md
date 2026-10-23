@@ -31,7 +31,7 @@ root in PowerShell:
 
 ```powershell
 $env:WEBTERMINAL_TEST_BIN_DIR = "$PWD\target\debug"
-node --test tests/browser.mjs tests/reader.mjs tests/upload.mjs tests/workbench-flows.mjs
+node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs tests/workbench-flows.mjs
 node tests/browser-runtime.mjs
 node tests/browser-e2e.mjs
 node tests/workbench-browser.mjs
@@ -52,8 +52,9 @@ not a production CLI benchmark.
 Rust tests exercise terminal parsing, rendering state, sessions, ConPTY
 ownership and input encoding, transport, settings and file staging. The
 JavaScript and Chrome checks exercise browser input and rendering, workspaces,
-the launcher, reader, settings, file views and narrow layouts. These checks use
-owned fixtures; they do not prove authenticated CLI use.
+the launcher, settings, Overview, Processes, file views and desktop sizes from
+1280 x 720 to 1920 x 1080. These checks use owned fixtures; they do not prove
+authenticated CLI use.
 
 ## Optional installed-CLI probes
 
@@ -109,16 +110,22 @@ directory. Uploads require the controlling view and its current control epoch;
 closing a session removes its copies. Startup cleanup removes only staging
 directories marked and owned by Webterminal. Originals are never modified.
 
-The Windows checks recorded on 2026-10-19 used Rust 1.95.0, Node 24.18.0 and
-headless Chrome 155 on Windows 11 build 26300. Cargo checks, JavaScript module
-tests and the listed browser suites passed with local fixtures, including the
-reduced-motion run. With disposable profiles, the CLI probes passed for Jecode
-0.1.0, Codex CLI 0.163.0 and Claude Code 2.1.303, the last two against the
-owned loopback API, and the drop probe passed in all three variants.
+The Windows checks recorded on 2026-10-19, before the desktop redesign, used
+Rust 1.95.0, Node 24.18.0 and headless Chrome 155 on Windows 11 build 26300.
+Cargo checks, JavaScript module tests and the listed browser suites passed
+with local fixtures, including the reduced-motion run. With disposable
+profiles, the CLI probes passed for Jecode 0.1.0, Codex CLI 0.163.0 and
+Claude Code 2.1.303, the last two against the owned loopback API, and the
+drop probe passed in all three variants.
 The review regressions cover an idle workspace changed by another view,
 immediate launcher reopening and three long error toasts at 320×480 and
 390×520 without changing terminal geometry. Native input probes wait for
 fixture readiness before sending input.
+
+On 2026-10-23, after the desktop redesign and with the same versions, the
+Cargo checks, JavaScript module tests and listed browser suites passed again,
+including the reduced-motion run, at 1280×720, 1366×768, 1440×900 and
+1920×1080. The CLI and drop probes have not been rerun since the redesign.
 Authenticated provider sessions, Jecode prompt submission, Edge, Firefox,
 physical IME input and browser clipboard permission prompts remain unverified.
 Known ConPTY color-query and paste behavior is in [TERMINAL.md](TERMINAL.md).

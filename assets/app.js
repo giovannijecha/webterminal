@@ -2,14 +2,14 @@
 // loads on first visit and renders only while shown, so a failing page never
 // takes the terminals down with it.
 import {$, el} from './dom.js';
-import {changed, noteCopied, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
+import {changed, go, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
 import {configure, connect, resetInput, settle} from './connection.js';
 import {problem} from './ui.js';
 import {renderSidebar, configureSidebar} from './sidebar.js';
-import {configureWorkspace, connected, disconnected, forget, handleTerminal, renderWorkspace, restoreSelection, setFontSize, synchronize} from './workspace.js';
+import {connected, disconnected, forget, handleTerminal, renderWorkspace, restoreSelection, setFontSize, synchronize} from './workspace.js';
 import {PAGES, openPalette, showShortcuts} from './palette.js';
 
-const MODULES = {overview:'./overview.js', reader:'./reader.js', processes:'./processes.js', files:'./files.js', settings:'./settings.js', appearance:'./appearance.js'};
+const MODULES = {overview:'./overview.js', processes:'./processes.js', files:'./files.js', settings:'./settings.js'};
 const loaded = new Map();
 let shown = null;
 
@@ -70,7 +70,6 @@ configure({
   problem(text) { problem('Not sent', text, null, 'connection'); },
 });
 configureSidebar({shortcuts:showShortcuts, palette:openPalette});
-configureWorkspace({copied:(text, id) => noteCopied(text, id)});
 
 // Page switching: sections stay in the document, so a page keeps its scroll
 // and draft state while hidden.
@@ -91,6 +90,8 @@ async function module(page) {
   return loaded.get(page);
 }
 async function show(page, topics) {
+  // A page this version does not have, such as a retired one, falls back to the terminals.
+  if (!$(`page-${page}`)) { go('workspace'); return; }
   const changedPage = shown !== page;
   if (changedPage) {
     for (const section of document.querySelectorAll('#main > .page')) section.hidden = section.dataset.page !== page;

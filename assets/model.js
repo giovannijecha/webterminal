@@ -7,23 +7,23 @@ export const PANE_LIMIT = 4, WORKSPACE_LIMIT = 16, SESSION_LIMIT = 32;
 export const state = {
   socket:null, view:null, connected:false, hello:null, listed:false,
   sessions:new Map(), workspaces:[], snapshots:new Map(), attachments:new Map(),
-  selected:null, focus:new Map(), maximized:new Set(), expanded:new Set(),
+  selected:null, focus:new Map(), maximized:new Set(),
   files:{files:[], limit:0}, settings:null,
-  page:'workspace', target:null, stopping:false, copies:[],
+  page:'workspace', target:null, stopping:false,
 };
 
-// Navigation: pages read `state.target` (for example a Reader document) once shown.
+// Navigation: pages read `state.target` (for example the terminal to focus) once shown.
 export function go(page, target = null) {
   state.page = page;
   state.target = target;
   changed('page');
 }
-export function showTerminal(id) {
+export function showTerminal(id, {claim = false} = {}) {
   const workspace = workspaceOf(id);
   if (!workspace) return;
   state.selected = workspace.id;
   state.focus.set(workspace.id, id);
-  go('workspace', {focus:id});
+  go('workspace', {focus:id, claim});
 }
 
 // Subscribers render at most once per frame with the set of changed topics.
@@ -108,11 +108,3 @@ export function control(id) {
 
 export function totalSessions() { return state.sessions.size; }
 export function orderedSessions() { return state.workspaces.flatMap(workspace => workspace.sessions.filter(id => state.sessions.has(id))); }
-
-// Text Webterminal itself put on the clipboard, newest last, so a clipboard
-// follower can tell it apart and name the terminal it came from.
-export function noteCopied(text, id = null) {
-  if (!text) return;
-  state.copies.push({text, id, at:Date.now()});
-  if (state.copies.length > 20) state.copies.shift();
-}

@@ -77,13 +77,13 @@ async function create(count) {
 // A saved font size change refits the terminal, so ConPTY resizes natively.
 async function resize(label) {
   const size=$('pane-status').title;
-  document.querySelector('.navigation-item[data-page="settings"]').click();
+  document.querySelector('#sidebar [data-page="settings"]').click();
   (await until(()=>$('settings-tab-terminal'),'settings tabs')).click();
   $('settings-panel-terminal').querySelector('[aria-label="'+label+'"]').click();
   const footer=await until(()=>{const node=document.querySelector('#page-settings .prefs-footer');return node&&!node.hidden&&node;},'unsaved font size');
   [...footer.querySelectorAll('button')].find(button=>button.textContent==='Save changes').click();
   await until(()=>footer.hidden,'saved font size');
-  document.querySelector('.navigation-item[data-page="workspace"]').click();
+  document.querySelector('#navigation-projects .navigation-workspace-row .navigation-item[aria-current], #navigation-projects .navigation-workspace-row .navigation-item').click();
   await until(()=>!$('page-workspace').hidden&&$('pane-status').title!==size,'terminal resize');
   $('keyboard').focus();
 }

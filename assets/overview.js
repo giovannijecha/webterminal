@@ -1,12 +1,12 @@
-// Overview: a real summary of this server and the terminal inventory (Stack).
+// Overview: a real summary of this server and the terminal inventory.
 // Search, filter, sort, selection and scroll survive live updates; bulk close
 // always targets the exact selected IDs that still exist.
-import {$, ago, avatar, badge, el, icon, patch, pathText, plural, programTile} from './dom.js';
-import {SESSION_LIMIT, WORKSPACE_LIMIT, failedSessions, go, orderedSessions, sessionShell, showTerminal, state, terminalName, terminalStatus, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {$, ago, avatar, badge, el, icon, patch, plural} from './dom.js';
+import {PANE_LIMIT, SESSION_LIMIT, WORKSPACE_LIMIT, failedSessions, orderedSessions, sessionShell, showTerminal, state, terminalName, terminalStatus, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {displayPath} from './common.js';
 import {closeTerminals, showTerminalMenu} from './actions.js';
 import {openLauncher} from './launcher.js';
-import {choice} from './overlays.js';
+import {menu} from './ui.js';
 
 const FILTERS = [
   {id:'all', label:'All', test:() => true},
@@ -48,7 +48,9 @@ function sorted(list) {
   return [...list].sort(compare);
 }
 const filterOf = id => FILTERS.find(filter => filter.id === id) || FILTERS[0];
-function filtered() { return Boolean(view.query.trim()) || view.filter !== 'all'; }
+const sortLabel = () => SORTS.find(([id]) => id === view.sort)[1];
+// Grouping follows the workspace order only; other sorts mix workspaces.
+const grouped = () => view.sort === 'workspace';
 function clearFilters() {
   view.query = '';
   view.filter = 'all';
@@ -58,72 +60,72 @@ function clearFilters() {
 
 // Built once; later renders patch it in place so focus and drafts survive.
 function build() {
-  ui = {};
+  ui = {groups:new Map(), rows:new Map()};
   ui.summary = el('section', {class:'overview-summary', 'aria-label':'Summary'});
-  ui.search = el('input', {type:'search', class:'field', id:'inventory-search', placeholder:'Name, shell, folder…', autocomplete:'off', spellcheck:'false',
+  ui.search = el('input', {type:'search', class:'field', id:'inventory-search', placeholder:'Name, shell, folder…', autocomplete:'off', spellcheck:'false', 'aria-label':'Search terminals',
     oninput:event => { view.query = event.target.value; update(); }});
-  const select = el('select', {id:'inventory-sort', onchange:event => { view.sort = event.target.value; update(); }},
-    SORTS.map(([value, label]) => el('option', {value, text:label})));
-  select.value = view.sort;
-  ui.filters = el('div', {class:'inventory-filters', role:'group', 'aria-label':'Filter terminals by status'},
-    FILTERS.map(filter => el('button', {class:'btn sm', type:'button', 'aria-pressed':'false', dataset:{filter:filter.id},
-      onclick:() => { view.filter = filter.id; update(); }}, el('span', {text:filter.label}), el('span', {class:'inventory-filter-count', text:'0'}))));
+  ui.filters = el('div', {class:'segment inventory-filters', role:'group', 'aria-label':'Filter terminals by status'},
+    FILTERS.map(filter => el('button', {type:'button', 'aria-pressed':'false', dataset:{filter:filter.id}, onclick:() => { view.filter = filter.id; update(); }},
+      el('span', {text:filter.label}), el('span', {class:'count', text:'0'}))));
+  ui.sort = el('button', {class:'btn ghost inventory-sort', type:'button', id:'inventory-sort', 'aria-haspopup':'menu', 'aria-expanded':'false',
+    onclick:() => menu.toggle(ui.sort, SORTS.map(([id, label]) => ({label, checked:id === view.sort, action:() => { view.sort = id; update(); }})), {label:'Sort terminals'})});
+  ui.result = el('p', {class:'sr-only', role:'status', 'aria-live':'polite'});
+  ui.tools = el('div', {class:'inventory-tools'}, el('div', {class:'search-field inventory-search'}, icon('search'), ui.search), ui.filters, ui.sort, ui.result);
   ui.all = el('input', {type:'checkbox', class:'check', id:'inventory-select-all', 'aria-label':'Select all visible terminals',
     onchange:event => { for (const id of ui.visible) { if (event.target.checked) view.selected.add(id); else view.selected.delete(id); } update(); }});
-  ui.result = el('p', {class:'inventory-result-text', role:'status', 'aria-live':'polite'});
-  ui.clear = el('button', {class:'btn ghost sm', type:'button', text:'Clear filters', onclick:() => { clearFilters(); ui.search.focus(); }});
-  ui.tools = el('div', {class:'inventory-tools'},
-    el('div', {class:'inventory-fields'},
-      el('div', {class:'inventory-search'}, el('label', {class:'lbl', for:'inventory-search', text:'Search terminals'}), el('div', {class:'search-field'}, icon('search'), ui.search)),
-      el('div', {class:'inventory-sort'}, el('span', {class:'lbl', id:'inventory-sort-label', text:'Sort by'}), select)),
-    ui.filters,
-    el('div', {class:'inventory-result'}, el('label', {class:'inventory-select-all'}, el('span', {class:'inventory-check'}, ui.all), el('span', {text:'Select visible'})), ui.result, ui.clear));
   ui.body = el('tbody');
   ui.table = el('table', {class:'inventory-table'},
     el('caption', {class:'sr-only', text:'Terminals in every workspace'}),
     el('thead', {}, el('tr', {},
-      el('th', {scope:'col', class:'inventory-cell-select'}, el('span', {class:'sr-only', text:'Selected'})),
+      el('th', {scope:'col', class:'inventory-cell-select'}, ui.all),
       el('th', {scope:'col', class:'inventory-cell-identity', text:'Terminal'}),
       el('th', {scope:'col', class:'inventory-cell-workspace', text:'Workspace'}),
       el('th', {scope:'col', class:'inventory-cell-status', text:'Status'}),
       el('th', {scope:'col', class:'inventory-cell-created', text:'Created'}),
-      el('th', {scope:'col', class:'inventory-cell-meta', text:'Details'}),
       el('th', {scope:'col', class:'inventory-cell-actions'}, el('span', {class:'sr-only', text:'Actions'})))),
     ui.body);
+  ui.hidden = el('div', {class:'inventory-hidden', hidden:true});
   ui.empty = el('div', {class:'inventory-empty'});
   ui.bulk = el('div', {class:'inventory-bulk', role:'region', 'aria-label':'Selected terminals', hidden:true});
-  ui.count = el('span', {class:'inventory-count'});
   ui.panel = el('section', {class:'inventory', 'aria-labelledby':'inventory-title'},
-    el('header', {class:'inventory-head'}, el('h2', {id:'inventory-title', tabindex:'-1', text:'Terminals'}), ui.count),
-    ui.tools, ui.table, ui.empty, ui.bulk);
+    el('h2', {class:'sr-only', id:'inventory-title', tabindex:'-1', text:'Terminals'}), ui.tools, ui.bulk, ui.table, ui.hidden, ui.empty);
   $('overview-content').replaceChildren(el('div', {class:'overview'}, ui.summary, ui.panel));
-  choice(select, 'Sort terminals').trigger.setAttribute('aria-labelledby', 'inventory-sort-label');
-  $('overview-actions').replaceChildren(el('button', {class:'btn primary', type:'button', 'aria-label':'Open terminal', onclick:() => openLauncher()}, icon('plus'), el('span', {class:'label', text:'Open terminal'})));
-  ui.rows = new Map();
+  $('overview-actions').replaceChildren(el('button', {class:'btn primary', type:'button', onclick:() => openLauncher()}, icon('plus'), 'New terminal'));
 }
 
-// The summary keeps capacity and outcomes as separate counts.
+// Capacity and outcomes as separate cards; each opens the matching list.
 function summary() {
-  const total = state.sessions.size, spaces = state.workspaces.length, failures = failedSessions().length;
-  const running = [...state.sessions.values()].filter(session => session.alive).length;
-  const tiles = [
-    {value:total, label:total === 1 ? 'Terminal' : 'Terminals', note:`of ${SESSION_LIMIT} · ${Math.max(0, SESSION_LIMIT - total)} free`, action:'Show the list', run:() => showList('all')},
-    {value:spaces, label:spaces === 1 ? 'Workspace' : 'Workspaces', note:`of ${WORKSPACE_LIMIT}`, action:'Open Terminals', run:() => go('workspace')},
-    {value:running, label:'Running', note:running ? 'Shell or program alive' : 'Nothing running', action:'Show running terminals', run:() => showList('running')},
-    {value:failures, label:failures === 1 ? 'Failed terminal' : 'Failed terminals', tone:failures ? 'red' : null,
-      note:failures ? 'Exited with an error' : 'No failures', action:'Show failed terminals', run:() => showList('failed')},
+  const total = state.sessions.size, spaces = state.workspaces.length, failures = failedSessions();
+  const running = [...state.sessions.values()].filter(session => session.alive).length, exited = total - running - failures.length;
+  const first = failures[0];
+  const cards = [
+    {label:'Terminals', value:total, limit:SESSION_LIMIT, action:'Show every terminal', run:() => showList('all')},
+    {label:'Workspaces', value:spaces, limit:WORKSPACE_LIMIT, action:'Show every terminal', run:() => showList('all')},
+    {label:'Running', value:running, note:exited ? `${exited} exited` : running ? 'None exited' : 'Nothing running', action:'Show running terminals', run:() => showList('running')},
+    {label:'Failed', value:failures.length, tone:failures.length ? 'red' : null,
+      note:failures.length === 1 ? `${terminalName(first.id)} · exit ${first.exitCode}` : failures.length ? `${failures.length} exited with an error` : 'No failures',
+      action:'Show failed terminals', run:() => showList('failed')},
   ];
   const focused = [...ui.summary.children].indexOf(document.activeElement);
-  patch(ui.summary, JSON.stringify(tiles.map(({value, label, note, tone}) => [value, label, note, tone])), () => tiles.map(tile =>
-    el('button', {class:'overview-stat', type:'button', 'data-tone':tile.tone, 'aria-label':`${tile.value} ${tile.label}, ${tile.note}. ${tile.action}`, onclick:tile.run},
-      el('b', {text:String(tile.value)}), el('span', {class:'overview-stat-label', text:tile.label}), el('small', {text:tile.note}))));
+  patch(ui.summary, JSON.stringify(cards.map(({label, value, note, tone}) => [label, value, note, tone])), () => cards.map(card =>
+    el('button', {class:'overview-stat', type:'button', 'data-tone':card.tone,
+      'aria-label':`${card.label}: ${card.value}${card.limit ? ` of ${card.limit}` : ''}${card.note ? `, ${card.note}` : ''}. ${card.action}`, onclick:card.run},
+    el('span', {class:'overview-stat-label', text:card.label}),
+    el('b', {}, String(card.value), card.limit ? el('span', {text:` of ${card.limit}`}) : null),
+    card.limit ? meter(card.value / card.limit) : el('small', {text:card.note}))));
   if (focused >= 0 && !ui.summary.contains(document.activeElement)) ui.summary.children[focused]?.focus({preventScroll:true});
+}
+// The style policy forbids style attributes, so the width goes through CSSOM.
+function meter(share) {
+  const fill = el('i');
+  fill.style.width = `${Math.min(100, share * 100)}%`;
+  return el('span', {class:'overview-stat-meter', 'aria-hidden':'true'}, fill);
 }
 function showList(filter) {
   if (view.filter !== filter) { view.filter = filter; update(); }
   // Only the page content scrolls, so the top bar stays in place.
   const content = $('overview-content');
-  content.scrollTop += ui.panel.getBoundingClientRect().top - content.getBoundingClientRect().top - 16;
+  content.scrollTop += ui.tools.getBoundingClientRect().top - content.getBoundingClientRect().top - 8;
   $('inventory-title').focus({preventScroll:true});
 }
 
@@ -131,24 +133,36 @@ function showList(filter) {
 function rowNode(row) {
   const select = el('input', {type:'checkbox', class:'check', 'aria-label':`Select ${row.name} in ${row.place}`, checked:view.selected.has(row.id), dataset:{focus:'select'},
     onchange:event => { if (event.target.checked) view.selected.add(row.id); else view.selected.delete(row.id); update(); }});
-  const status = () => badge(row.status.label, row.status.tone);
-  const place = () => el('span', {class:'inventory-workspace'}, row.workspace ? avatar(workspaceIndex(row.workspace), row.place, 'xs') : null, el('span', {text:row.place}));
-  const age = () => el('span', {class:'inventory-time', title:row.created ? new Date(row.created).toLocaleString() : undefined, dataset:{created:String(row.created)}, text:row.created ? ago(row.created) : ''});
-  const menuButton = el('button', {class:'icon-btn ghost', type:'button', 'aria-label':`Actions for ${row.name}`, 'aria-haspopup':'menu', dataset:{focus:'menu'},
+  const menuButton = el('button', {class:'icon-btn ghost', type:'button', 'aria-label':`Actions for ${row.name}`, 'aria-haspopup':'menu', 'aria-expanded':'false', dataset:{focus:'menu'},
     onclick:event => showTerminalMenu(row.id, event.currentTarget)}, icon('ellipsis'));
   return el('tr', {class:'inventory-row', dataset:{id:row.id}, 'data-selected':String(view.selected.has(row.id)),
     onclick:event => { if (!event.target.closest('button, input, label, a, .inventory-cell-select, .inventory-cell-actions')) showTerminal(row.id); }},
-  el('td', {class:'inventory-cell-select'}, el('label', {class:'inventory-check'}, select)),
-  el('td', {class:'inventory-cell-identity'}, el('div', {class:'inventory-identity'}, programTile(),
-    el('div', {}, el('button', {class:'inventory-name', type:'button', dataset:{focus:'open'}, title:`Open ${row.name}`, text:row.name, onclick:() => showTerminal(row.id)}),
-      el('span', {class:'inventory-program', text:row.program}), el('span', {class:'inventory-folder'}, pathText(row.cwd, ''))))),
-  el('td', {class:'inventory-cell-workspace'}, place()),
-  el('td', {class:'inventory-cell-status'}, status()),
-  el('td', {class:'inventory-cell-created'}, age()),
-  el('td', {class:'inventory-cell-meta'}, el('div', {}, place(), status(), age())),
+  el('td', {class:'inventory-cell-select'}, select),
+  el('td', {class:'inventory-cell-identity'},
+    el('button', {class:'inventory-name', type:'button', dataset:{focus:'open'}, title:`Open ${row.name}`, text:row.name, onclick:() => showTerminal(row.id)}),
+    // One truncated line: Chrome breaks at <wbr> even under nowrap.
+    el('span', {class:'inventory-sub'}, `${row.program} · `, el('span', {class:'mono', title:row.cwd, text:row.cwd}))),
+  el('td', {class:'inventory-cell-workspace'}, el('span', {class:'inventory-workspace'}, row.workspace ? avatar(workspaceIndex(row.workspace), row.place, 'xs') : null, el('span', {text:row.place}))),
+  el('td', {class:'inventory-cell-status'}, badge(row.status.label, row.status.tone)),
+  el('td', {class:'inventory-cell-created'}, el('span', {class:'inventory-time', title:row.created ? new Date(row.created).toLocaleString() : undefined, dataset:{created:String(row.created)}, text:row.created ? ago(row.created) : ''})),
   el('td', {class:'inventory-cell-actions'}, menuButton));
 }
 const rowKey = row => JSON.stringify([row.name, row.program, row.cwd, row.place, row.workspace ? workspaceIndex(row.workspace) : -1, row.status.label, row.status.tone, row.created, view.selected.has(row.id)]);
+
+// A workspace heading in grouped order: avatar, name and how many are shown.
+// It spans the five visible columns; grouped order hides Workspace, and a
+// sixth span would add an empty fixed-layout column.
+function groupNode(workspace, shown) {
+  const label = workspace ? workspaceLabel(workspace) : 'No workspace', count = workspace?.sessions.length || shown;
+  const text = shown < count ? `${shown} of ${count} shown` : `${count} of ${PANE_LIMIT}`;
+  const key = JSON.stringify([label, workspace ? workspaceIndex(workspace) : -1, text]);
+  const id = workspace?.id || '', old = ui.groups.get(id);
+  if (old?.dataset.key === key) return old;
+  const node = el('tr', {class:'inventory-group', dataset:{key}},
+    el('th', {scope:'colgroup', colspan:'5'}, el('span', {}, workspace ? avatar(workspaceIndex(workspace), label, 'xs') : null, el('span', {class:'inventory-group-name', text:label}), el('span', {text:`· ${text}`}))));
+  ui.groups.set(id, node);
+  return node;
+}
 
 // Restores keyboard focus to the same control of the same row after a row
 // was rebuilt or moved.
@@ -165,17 +179,39 @@ function renderRows(visible) {
   keepFocus(ui.body, () => {
     const ids = new Set(visible.map(row => row.id));
     for (const [id, node] of ui.rows) if (!ids.has(id)) { node.remove(); ui.rows.delete(id); }
+    const wanted = [];
+    let current;
     for (const row of visible) {
+      if (grouped() && row.workspace !== current) {
+        current = row.workspace;
+        wanted.push(groupNode(current, visible.filter(item => item.workspace === current).length));
+      }
       const key = rowKey(row), old = ui.rows.get(row.id);
-      if (old?.dataset.key === key) continue;
-      const node = rowNode(row);
-      node.dataset.key = key;
-      if (old) old.replaceWith(node);
-      ui.rows.set(row.id, node);
+      if (old?.dataset.key !== key) {
+        const node = rowNode(row);
+        node.dataset.key = key;
+        if (old) old.replaceWith(node);
+        ui.rows.set(row.id, node);
+      }
+      wanted.push(ui.rows.get(row.id));
     }
-    const wanted = visible.map(row => ui.rows.get(row.id));
+    const keep = new Set(wanted);
+    for (const node of [...ui.body.children]) if (!keep.has(node)) node.remove();
     if (wanted.some((node, index) => ui.body.children[index] !== node)) ui.body.append(...wanted);
   });
+  ui.table.dataset.grouped = String(grouped());
+}
+
+// Rows a search or filter hides are counted, never silently dropped.
+function renderHidden(all, visible) {
+  const hidden = all.length - visible.length, query = Boolean(view.query.trim()), filter = view.filter !== 'all';
+  ui.hidden.hidden = !hidden || !visible.length;
+  if (ui.hidden.hidden) { delete ui.hidden.dataset.key; return; }
+  const by = query && filter ? 'the search and filter' : query ? 'the search' : 'the filter';
+  patch(ui.hidden, `${hidden}:${by}`, () => [
+    el('span', {text:`${plural(hidden, 'terminal')} ${hidden === 1 ? 'is' : 'are'} hidden by ${by}.`}),
+    el('button', {class:'btn ghost sm', type:'button', text:'Show all', onclick:() => { clearFilters(); ui.search.focus(); }}),
+  ]);
 }
 
 function renderEmpty(all, visible) {
@@ -185,9 +221,9 @@ function renderEmpty(all, visible) {
     build = () => el('div', {class:'state', role:'status'}, el('span', {class:'spinner', 'aria-hidden':'true'}), el('h2', {text:'Loading terminals…'}), el('p', {text:'Waiting for the local server.'}));
   } else if (!all.length) {
     key = 'none';
-    build = () => el('div', {class:'state'}, el('span', {class:'tile', 'aria-hidden':'true'}, icon('square-terminal')), el('h2', {text:'No terminals yet'}),
+    build = () => el('div', {class:'state'}, el('span', {class:'state-mark', 'aria-hidden':'true'}, icon('square-terminal')), el('h2', {text:'No terminals yet'}),
       el('p', {text:'Open a terminal to start working. Terminals keep running when you close the browser.'}),
-      el('button', {class:'btn primary', type:'button', onclick:() => openLauncher()}, icon('plus'), 'Open terminal'));
+      el('button', {class:'btn primary', type:'button', onclick:() => openLauncher()}, icon('plus'), 'New terminal'));
   } else if (!visible.length) {
     key = `none-matching:${view.query}:${view.filter}`;
     const query = view.query.trim();
@@ -208,12 +244,12 @@ function renderBulk(visible) {
   if (!ids.length) { delete ui.bulk.dataset.key; return; }
   const restore = ui.bulk.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
   const changed = patch(ui.bulk, `${ids.length}:${hidden}`, () => [
-    el('div', {class:'inventory-bulk-text'}, el('b', {text:`${ids.length} selected`}),
-      el('p', {text:hidden ? `${hidden} of them ${hidden === 1 ? 'is' : 'are'} hidden by the current filter. Closing includes ${hidden === 1 ? 'it' : 'them'}.` : 'All selected terminals are visible.'})),
+    el('b', {text:`${ids.length} selected`}),
+    el('span', {class:'inventory-bulk-detail', text:hidden ? `${hidden} hidden by the filter; closing includes ${hidden === 1 ? 'it' : 'them'}` : ids.length === 1 ? 'visible' : ids.length === 2 ? 'both visible' : 'all visible'}),
     el('div', {class:'inventory-bulk-actions'},
       hidden ? el('button', {class:'btn ghost sm', type:'button', dataset:{focus:'show'}, text:'Show all', onclick:clearFilters}) : null,
-      el('button', {class:'btn sm', type:'button', dataset:{focus:'clear'}, text:'Clear', 'aria-label':'Clear selection', onclick:() => { view.selected.clear(); update(); ui.search.focus(); }}),
-      el('button', {class:'btn danger sm', type:'button', dataset:{focus:'close'}, onclick:closeSelected}, icon('square-x'), `Close ${plural(ids.length, 'terminal')}`)),
+      el('button', {class:'btn ghost sm', type:'button', dataset:{focus:'clear'}, text:'Clear', 'aria-label':'Clear selection', onclick:() => { view.selected.clear(); update(); ui.search.focus(); }}),
+      el('button', {class:'btn danger sm', type:'button', dataset:{focus:'close'}, text:`Close ${plural(ids.length, 'terminal')}…`, onclick:closeSelected})),
   ]);
   if (changed && restore) ui.bulk.querySelector(`[data-focus="${restore}"]`)?.focus({preventScroll:true});
 }
@@ -231,9 +267,7 @@ function update() {
   const all = rows(), found = matching(all), filter = filterOf(view.filter), visible = sorted(found.filter(filter.test));
   ui.visible = visible.map(row => row.id);
   summary();
-  const total = state.sessions.size;
-  $('overview-subtitle').textContent = state.listed ? `${plural(total, 'terminal')} across ${plural(state.workspaces.length, 'workspace')}` : 'Connecting to the local server…';
-  ui.count.textContent = state.listed ? `${total} of ${SESSION_LIMIT}` : '';
+  $('overview-subtitle').textContent = state.listed ? 'Every terminal on this server' : 'Connecting to the local server…';
   ui.tools.hidden = !all.length;
   for (const button of ui.filters.children) {
     const item = filterOf(button.dataset.filter), count = found.filter(item.test).length;
@@ -241,14 +275,15 @@ function update() {
     button.setAttribute('aria-label', `${item.label}, ${count}`);
     button.lastChild.textContent = String(count);
   }
-  const result = filtered() ? `Showing ${visible.length} of ${plural(all.length, 'terminal')}` : `${plural(all.length, 'terminal')}`;
+  if (ui.sort.textContent !== `Sort: ${sortLabel()}`) ui.sort.textContent = `Sort: ${sortLabel()}`;
+  const result = visible.length < all.length ? `Showing ${visible.length} of ${plural(all.length, 'terminal')}` : plural(all.length, 'terminal');
   if (ui.result.textContent !== result) ui.result.textContent = result;
-  ui.clear.hidden = !filtered();
   const chosen = visible.filter(row => view.selected.has(row.id)).length;
   ui.all.checked = Boolean(visible.length) && chosen === visible.length;
   ui.all.indeterminate = chosen > 0 && chosen < visible.length;
   ui.all.disabled = !visible.length;
   renderRows(visible);
+  renderHidden(all, visible);
   renderEmpty(all, visible);
   renderBulk(visible);
 }
@@ -260,7 +295,6 @@ setInterval(() => {
     const created = Number(node.dataset.created);
     if (created) node.textContent = ago(created);
   }
-  summary();
 }, 30000);
 
 export function show() {

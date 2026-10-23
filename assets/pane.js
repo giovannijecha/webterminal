@@ -177,6 +177,7 @@ export class TerminalPane {
     const fresh = this.mark === null ? 0 : Math.max(0, this.rowCount() - this.mark);
     const text = !state.connected ? 'Output paused' : atBottom ? 'Following output' : fresh ? plural(fresh, 'new row') : 'History';
     setText(this.ui.follow, text);
+    this.ui.follow.dataset.live = String(state.connected && atBottom);
     this.ui.latest.hidden = atBottom;
   }
   scrollToLatest() {

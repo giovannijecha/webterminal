@@ -1,22 +1,17 @@
 // Command palette, keyboard shortcut help and the few documented global keys.
 // Keys typed inside a terminal reach the program, except the "Anywhere" ones.
-import {avatar, badge, el, icon, plural, programTile} from './dom.js';
+import {avatar, badge, el, icon, plural} from './dom.js';
 import {displayPath} from './common.js';
 import {go, orderedSessions, sessionShell, shellLabel, showTerminal, state, terminalName, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {dialogs, menu} from './ui.js';
 import {createWorkspace} from './actions.js';
 import {createTerminal, openLauncher, splitFolder} from './launcher.js';
-import {closeDrawer} from './sidebar.js';
 
 export const PAGES = [
-  {page:'overview', label:'Overview', icon:'layout-dashboard'},
-  {page:'workspace', label:'Terminals', icon:'square-terminal'},
-
-  {page:'reader', label:'Reader', icon:'book-open-text'},
-  {page:'processes', label:'Processes', icon:'cpu'},
-  {page:'files', label:'Dropped files', icon:'paperclip'},
-  {page:'settings', label:'Settings', icon:'settings'},
-  {page:'appearance', label:'Themes & Appearance', icon:'palette'},
+  {page:'overview', label:'Overview'},
+  {page:'processes', label:'Processes'},
+  {page:'files', label:'Dropped files'},
+  {page:'settings', label:'Settings'},
 ];
 
 function items(query) {
@@ -24,27 +19,26 @@ function items(query) {
   const match = text => words.every(word => text.toLowerCase().includes(word));
   const terminals = orderedSessions().map(id => {
     const session = state.sessions.get(id), workspace = workspaceOf(id), status = terminalStatus(id);
-    return {group:'Terminals', tile:true, status, title:terminalName(id), sub:`${sessionShell(session)} in ${workspaceLabel(workspace)}, ${displayPath(session.cwd)}`, run:() => showTerminal(id)};
+    return {group:'Terminals', status, title:terminalName(id), sub:`${sessionShell(session)} in ${workspaceLabel(workspace)}, ${displayPath(session.cwd)}`, run:() => showTerminal(id)};
   });
   const workspaces = state.workspaces.map(workspace => ({group:'Workspaces', workspace, title:workspaceLabel(workspace), sub:plural(workspace.sessions.length, 'terminal'),
     run:() => { state.selected = workspace.id; go('workspace'); }}));
   const here = state.page === 'workspace' ? workspaceById(state.selected) : null, folder = splitFolder();
   const actions = [
-    {icon:'plus', title:'New terminal', sub:'Choose a folder and a workspace', run:() => openLauncher({workspace:state.selected})},
+    {title:'New terminal', sub:'Choose a folder and a workspace', run:() => openLauncher({workspace:state.selected})},
     ...(here && here.sessions.length < 4 ? [
-      {icon:'square-terminal', title:`New ${shellLabel(state.hello?.shell)} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, workspace:here.id})},
+      {title:`New ${shellLabel(state.hello?.shell)} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, workspace:here.id})},
     ] : []),
-    {icon:'layers', title:'New workspace', sub:'An empty workspace for up to four terminals', run:() => createWorkspace()},
-    {icon:'keyboard', title:'Keyboard shortcuts', sub:'', run:() => showShortcuts()},
+    {title:'New workspace', sub:'An empty workspace for up to four terminals', run:() => createWorkspace()},
+    {title:'Keyboard shortcuts', sub:'', run:() => showShortcuts()},
   ].map(item => ({group:'Actions', ...item}));
-  const pages = PAGES.map(page => ({group:'Go to', icon:page.icon, title:page.label, sub:'', run:() => go(page.page)}));
+  const pages = PAGES.map(page => ({group:'Go to', title:page.label, sub:'', run:() => go(page.page)}));
   return [...terminals, ...workspaces, ...actions, ...pages].filter(item => !words.length || match(`${item.title} ${item.sub}`));
 }
 
 let palette = null;
 export function openPalette() {
   if (palette?.open) { palette.querySelector('input').select(); return; }
-  closeDrawer(false);
   menu.close(false);
   const origin = document.activeElement;
   const input = el('input', {type:'text', id:'palette-input', autocomplete:'off', spellcheck:'false', placeholder:'Search terminals, workspaces, folders and actions', 'aria-label':'Search terminals, workspaces, folders and actions',
@@ -65,7 +59,7 @@ export function openPalette() {
     const nodes = [];
     results.forEach((item, index) => {
       if (item.group !== group) { group = item.group; nodes.push(el('div', {class:'pal-group', role:'presentation', text:group})); }
-      const mark = item.tile ? programTile() : item.workspace ? avatar(workspaceIndex(item.workspace), item.title) : icon(item.icon);
+      const mark = item.workspace ? avatar(workspaceIndex(item.workspace), item.title, 'xs') : null;
       nodes.push(el('button', {class:'pal-item', type:'button', role:'option', id:`palette-item-${index}`, tabindex:'-1', 'aria-selected':String(index === active),
         onpointermove:() => { if (active !== index) { active = index; highlight(); } }, onclick:() => run(index)},
       mark, el('span', {class:'t'}, el('b', {text:item.title}), item.sub ? el('span', {text:item.sub}) : null),
@@ -109,11 +103,9 @@ export function openPalette() {
 
 const SHORTCUTS = [
   ['Anywhere', [['Search and commands', 'Ctrl', 'Shift', 'P']]],
-  ['Outside a terminal', [['Search', 'Ctrl', 'K'], ['Search', '/'], ['Keyboard shortcuts', '?'], ['New terminal', 'N'], ['Reorder a workspace in the sidebar', 'Alt', '↑ ↓']]],
-  ['In a terminal', [['Find in history', 'Ctrl', 'Shift', 'F'], ['Copy selection', 'Ctrl', 'Shift', 'C'], ['Paste', 'Ctrl', 'V'], ['Select text while an app uses the mouse', 'Shift', 'drag']]],
+  ['Outside a terminal', [['Search', 'Ctrl', 'K'], ['Search', '/'], ['Keyboard shortcuts', '?'], ['New terminal', 'N'], ['Reorder a workspace in the sidebar', 'Alt', '↑ ↓']]],  ['In a terminal', [['Find in history', 'Ctrl', 'Shift', 'F'], ['Copy selection', 'Ctrl', 'Shift', 'C'], ['Paste', 'Ctrl', 'V'], ['Select text while an app uses the mouse', 'Shift', 'drag']]],
 ];
 export function showShortcuts() {
-  closeDrawer(false);
   menu.close(false);
   return dialogs.show({
     title:'Keyboard shortcuts', description:'Outside a terminal. Inside one, keys go to the program.', action:'Done', cancel:false, className:'shortcuts',

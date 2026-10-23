@@ -22,8 +22,8 @@ than allowed to accumulate unbounded output; they can reconnect for a fresh
 snapshot.
 
 Rust owns workspace membership, workspace and pane order, and custom names.
-Each workspace shows up to four panes; narrow screens show one at a time with
-a pane switcher. Workspace selection is stored per browser tab in
+Each workspace shows up to four panes at once. Workspace selection is stored
+per browser tab in
 `sessionStorage`, and recent launcher folders in a Webterminal-specific
 `localStorage` key. Font size and terminal colors are server settings in
 `~/.webterminal/settings.json`. Server state, including workspaces, custom
@@ -41,14 +41,6 @@ reviewed again or refused for a retry, and Cancel leaves all sessions running.
 The busy check counts processes in the terminal's owned job. A PowerShell
 command running entirely inside the shell process, such as `Start-Sleep`, cannot
 be distinguished from an idle shell by this check.
-
-The Reader renders copied Markdown through DOM nodes, keeping at most 20 local
-documents of 512 KiB each in browser memory.
-After confirmation and a successful clipboard write, terminal text that looks
-like prose also becomes a Reader document.
-Follow clipboard reads only while enabled and the view is focused, and skips
-short single-line copies and text copied by Webterminal itself. Reader
-documents and the Follow choice disappear on reload.
 
 ## Text-terminal coverage
 

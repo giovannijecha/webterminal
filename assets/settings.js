@@ -1,12 +1,13 @@
 // Settings: General, Terminal and About tabs over the shared preferences
 // draft. Facts come from the running server, never from guesses.
-import {$, el, icon, pathText, storage, uptime} from './dom.js';
-import {go, state} from './model.js';
+import {$, el, pathText, storage, uptime} from './dom.js';
+import {state} from './model.js';
 import {displayPath} from './common.js';
 import {chooseFolder} from './launcher.js';
-import {FONT_MAX, FONT_MIN, draft, edit, fontStepper, problemBanner, ready, saveBar, terminalPreview, themeSegment} from './preferences.js';
+import {APPEARANCE_DEFAULTS, FIELDS, FONT_MAX, FONT_MIN, changedKeys, draft, edit, fontStepper, problemBanner, ready, saveBar, terminalPreview, themeSegment} from './preferences.js';
 
 const TABS = [['general', 'General'], ['terminal', 'Terminal'], ['about', 'About']];
+const LOOKS = ['fontSize', 'terminalTheme'], TAB_FIELDS = {general:['startFolder'], terminal:LOOKS, about:[]};
 const remembered = storage('session'), TAB_KEY = 'webterminal.settingsTab';
 let tab = TABS.some(([id]) => id === remembered.get(TAB_KEY)) ? remembered.get(TAB_KEY) : 'general';
 let view = null, info = null, invalidSeen = 0;
@@ -20,7 +21,7 @@ function row(label, help, control, {id = null, wide = false} = {}) {
 }
 const fact = (label, help, value) => row(label, help, el('span', {class:'prefs-fact-value'}, value));
 const section = (title, description, ...rows) => el('section', {class:'prefs-section', 'aria-label':title},
-  el('header', {class:'prefs-section-head'}, el('h2', {text:title}), description ? el('p', {text:description}) : null), el('div', {class:'prefs-rows'}, rows));
+  el('header', {class:'prefs-section-head'}, el('h2', {class:'sr-only', text:title}), description ? el('p', {text:description}) : null), el('div', {class:'prefs-rows'}, rows));
 
 // Choosing a starting folder uses the launcher's picker, which only returns the path.
 const chooseStart = done => chooseFolder(done, () => draft.value?.startFolder || state.hello?.serverCwd || '');
@@ -29,7 +30,7 @@ function general(updates) {
   const input = el('input', {class:'field mono', id:'settings-folder', type:'text', autocomplete:'off', spellcheck:'false', 'aria-describedby':'settings-folder-help settings-folder-error',
     oninput:() => edit('startFolder', input.value.trim() || null)});
   const error = el('p', {class:'error', id:'settings-folder-error', hidden:true});
-  const browse = el('button', {class:'btn', type:'button', onclick:() => chooseStart(path => { input.value = displayPath(path); edit('startFolder', input.value); input.focus(); })}, icon('folder-open'), el('span', {text:'Browse…'}));
+  const browse = el('button', {class:'btn', type:'button', onclick:() => chooseStart(path => { input.value = displayPath(path); edit('startFolder', input.value); input.focus(); }), text:'Browse…'});
   const reset = el('button', {class:'btn ghost', type:'button', text:'Use server folder', onclick:() => { if (reset.getAttribute('aria-disabled') === 'true') return; input.value = ''; edit('startFolder', null); input.focus(); }});
   const help = el('p', {class:'help', id:'settings-folder-help'});
   const address = el('span'), shell = el('span'), file = el('span');
@@ -56,18 +57,33 @@ function general(updates) {
     fact('Settings file', 'Saved settings for this server, shared by every browser view.', file));
 }
 
+// Terminal text and colors beside a preview of the draft. The preview has its
+// own colors and metrics, so running terminals change only when the server
+// confirms a save.
 function terminal(updates) {
   const stepper = fontStepper('settings-font'), colors = themeSegment('settings-colors'), preview = terminalPreview('Terminal preview');
   const history = el('span');
+  const restore = el('button', {class:'btn sm', type:'button', text:'Restore appearance defaults', onclick:() => {
+    if (restore.getAttribute('aria-disabled') === 'true') return;
+    for (const key of LOOKS) edit(key, APPEARANCE_DEFAULTS[key]);
+  }});
+  const caption = el('b', {id:'settings-preview-title'}), status = el('p', {class:'prefs-preview-status'});
   updates.push(stepper.update, colors.update, preview.update, () => {
     history.textContent = Number.isFinite(info?.history) ? `${info.history.toLocaleString('en-US')} rows` : 'Loading…';
+    const looks = changedKeys().filter(key => LOOKS.includes(key)), saved = state.settings?.settings;
+    caption.textContent = looks.length ? 'Preview · unsaved' : 'Preview';
+    status.textContent = looks.length && saved ? `Terminals use ${saved.fontSize} px, ${FIELDS.terminalTheme.text(saved.terminalTheme)} until you save.` : 'Matches your terminals.';
+    restore.setAttribute('aria-disabled', String(LOOKS.every(key => draft.value[key] === APPEARANCE_DEFAULTS[key])));
   });
-  return section('Terminal', 'Text size and colors for every terminal, applied when you save.',
+  const controls = section('Terminal', 'Text size and colors for every terminal, applied when you save.',
     row('Font size', `Cascadia Mono, ${FONT_MIN}–${FONT_MAX} px. The interface keeps its own size.`, stepper.node),
     row('Terminal colors', 'Independent of the dark interface. Program colors stay as programs send them.', colors.node),
-    el('div', {class:'prefs-row wide'}, preview.node),
     fact('History', 'Rows each terminal keeps in memory for scrolling back. Nothing is written to disk.', history),
-    el('div', {class:'prefs-row wide'}, el('button', {class:'btn ghost', type:'button', onclick:() => go('appearance')}, icon('palette'), el('span', {text:'Open Themes & Appearance'}))));
+    fact('Interface', 'The interface stays dark and uses Nunito; only terminals change.', 'Dark · Nunito'),
+    el('div', {class:'prefs-row wide'}, el('div', {class:'prefs-restore'}, restore,
+      el('p', {class:'help', text:`${APPEARANCE_DEFAULTS.fontSize} px, ${FIELDS.terminalTheme.text(APPEARANCE_DEFAULTS.terminalTheme)} colors. Save to apply.`}))));
+  return el('div', {class:'prefs-split'}, controls,
+    el('figure', {class:'prefs-preview', 'aria-labelledby':caption.id}, el('figcaption', {}, caption), preview.node, status));
 }
 
 function about(updates) {
@@ -85,17 +101,21 @@ function about(updates) {
 
 function build() {
   const updates = [], bar = saveBar('settings'), banner = problemBanner();
-  const tabs = TABS.map(([id, label]) => el('button', {class:'prefs-tab', id:`settings-tab-${id}`, type:'button', role:'tab', 'aria-controls':`settings-panel-${id}`, text:label, onclick:() => select(id),
+  const tabs = TABS.map(([id, label]) => el('button', {class:'prefs-tab', id:`settings-tab-${id}`, type:'button', role:'tab', 'aria-controls':`settings-panel-${id}`, onclick:() => select(id),
     onkeydown:event => {
       const index = TABS.findIndex(([item]) => item === id), last = TABS.length - 1;
       const next = {ArrowLeft:index - 1, ArrowRight:index + 1, Home:0, End:last}[event.key];
       if (next === undefined) return;
       event.preventDefault();
       select(TABS[(next + TABS.length) % TABS.length][0], true);
-    }}));
+    }}, label, el('span', {class:'prefs-tab-dot', hidden:true}, el('span', {class:'sr-only', text:', unsaved changes'}))));
   const builders = {general, terminal, about};
   const panels = TABS.map(([id]) => el('div', {class:'prefs-panel', id:`settings-panel-${id}`, role:'tabpanel', 'aria-labelledby':`settings-tab-${id}`}, builders[id](updates)));
-  updates.push(banner.update, bar.update);
+  // A tab with unsaved changes carries a dot.
+  updates.push(banner.update, bar.update, () => {
+    const pending = changedKeys();
+    TABS.forEach(([id], index) => { tabs[index].lastElementChild.hidden = !TAB_FIELDS[id].some(key => pending.includes(key)); });
+  });
   const root = el('form', {class:'prefs-root', novalidate:true, onsubmit:event => event.preventDefault()}, banner.node, el('div', {class:'prefs-tabs', role:'tablist', 'aria-label':'Settings sections'}, tabs), panels, bar.node);
   view = {root, tabs, panels, updates};
   $('settings-content').replaceChildren(root);

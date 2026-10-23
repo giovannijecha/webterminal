@@ -145,7 +145,7 @@ const ASSETS: &[(&str, &str, &[u8])] = assets![
     ("/terminal.css", STYLE, "terminal.css"),
     ("/overlays.css", STYLE, "overlays.css"),
     ("/inventory.css", STYLE, "inventory.css"),
-    ("/reader.css", STYLE, "reader.css"),
+    ("/files.css", STYLE, "files.css"),
     ("/system.css", STYLE, "system.css"),
     ("/favicon.svg", "image/svg+xml", "favicon.svg"),
     (
@@ -182,15 +182,11 @@ const ASSETS: &[(&str, &str, &[u8])] = assets![
     ("/common.js", SCRIPT, "common.js"),
     ("/upload.js", SCRIPT, "upload.js"),
     ("/directory.js", SCRIPT, "directory.js"),
-    ("/markdown.js", SCRIPT, "markdown.js"),
-    ("/reader.js", SCRIPT, "reader.js"),
-    ("/documents.js", SCRIPT, "documents.js"),
     ("/overview.js", SCRIPT, "overview.js"),
     ("/toasts.js", SCRIPT, "toasts.js"),
     ("/processes.js", SCRIPT, "processes.js"),
     ("/files.js", SCRIPT, "files.js"),
     ("/settings.js", SCRIPT, "settings.js"),
-    ("/appearance.js", SCRIPT, "appearance.js"),
     ("/preferences.js", SCRIPT, "preferences.js"),
 ];
 pub(super) fn serve(stream: &mut TcpStream, path: &str, context: &Context) -> io::Result<()> {

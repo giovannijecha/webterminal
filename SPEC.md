@@ -56,13 +56,14 @@ rendering details from measured behavior; do not add a framework or bundler.
   default label (workspaces).
 - A view is a browser attachment to one session. Browser tab closure,
   connection loss or refresh detaches the view without terminating the session.
-- The UI is a workbench: a sidebar lists the views (Overview, Terminals,
-  Reader, Processes, Dropped files, Settings, Themes & Appearance) and the
-  workspaces as a tree of their terminals; narrow screens use a drawer. The
-  Terminals view shows every session of the selected workspace at once, in a
-  layout derived from its count: one full pane, two side by side, three as one
-  large and two stacked, four as a grid. A pane can be maximized and restored.
-  Narrow screens show one pane at a time with a pane switcher. The selected
+- The UI is a desktop workbench with a dark interface. A sidebar holds the
+  server menu, search, the Overview, Processes and Dropped files pages, the
+  workspace list and, in its footer, the connection status and Settings
+  (General, Terminal and About tabs). The workspace page shows every session
+  of the selected workspace at once, in a layout derived from its count: one
+  full pane, two side by side, three as one large and two stacked, four as a
+  grid. A pane can be maximized and restored. An unknown page falls back to
+  the workspace page. The selected
   view, workspace and focused pane are view-local; each visible attachment
   keeps its own control and geometry fencing, and reading metadata never takes
   control.
@@ -85,15 +86,12 @@ rendering details from measured behavior; do not add a framework or bundler.
 - A workspace name is optional; new workspaces open with their default label.
 - A command palette, scoped menus and a shortcut list expose the same actions.
   None of them intercepts terminal keys while closed.
-- The Reader keeps Markdown documents, each with its exact source: pasted
-  text, terminal clipboard writes (OSC 52) that look like prose and, when the
-  user enables it, the browser clipboard polled while the view has focus. It
-  never collects program output on its own. It keeps a bounded
-  set of documents in browser memory only, never on the server, and renders
-  text through DOM nodes rather than HTML parsing.
 - Processes lists only processes in Webterminal-owned session jobs, from a
-  bounded snapshot. Its actions are Interrupt terminal, sent through the
-  controlling view's input path, and Close terminal; there is no per-PID kill.
+  bounded snapshot. A process search exposes matching descendants with their
+  parent context. Its actions are Interrupt terminal, sent through the
+  controlling view's input path, Take control, which opens and attaches the
+  owning terminal before transferring input and geometry, and Close terminal;
+  there is no per-PID kill.
 - At most one view controls input and geometry for a session. Other attached
   views observe; control transfer must not allow competing input or resize.
   The server rechecks control when an action runs. Input, interrupt, resize,
@@ -147,7 +145,8 @@ browser shows real progress, Retry for files it still holds and Cancel.
 
 Settings are shared by all views and stored atomically at
 `~/.webterminal/settings.json`: start folder for new terminals, terminal font
-size and terminal light/dark defaults. A save names
+size and terminal light/dark defaults. Terminal colors never change the dark
+interface. A save names
 the revision it edits; a save based on an older revision is refused so no
 view silently overwrites another. A malformed file falls back to defaults
 with a visible problem, and the next save keeps it as `settings.invalid.json`.
