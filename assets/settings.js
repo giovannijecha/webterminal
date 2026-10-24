@@ -77,7 +77,7 @@ function terminal(updates) {
   });
   const controls = section('Terminal', 'Text size and colors for every terminal, applied when you save.',
     row('Font size', `Cascadia Mono, ${FONT_MIN}–${FONT_MAX} px. The interface keeps its own size.`, stepper.node),
-    row('Terminal colors', 'Independent of the dark interface. Program colors stay as programs send them.', colors.node),
+    row('Terminal colors', 'Adjusts default and ANSI colors. Explicit RGB colors stay as programs send them.', colors.node),
     fact('History', 'Rows each terminal keeps in memory for scrolling back. Nothing is written to disk.', history),
     fact('Interface', 'The interface stays dark and uses Nunito; only terminals change.', 'Dark · Nunito'),
     el('div', {class:'prefs-row wide'}, el('div', {class:'prefs-restore'}, restore,

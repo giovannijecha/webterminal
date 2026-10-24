@@ -1,14 +1,10 @@
 use super::{
     Event, Modes, Terminal,
-    ops::color,
-    screen::{BG, FG, Style},
+    screen::{Color, Style},
 };
 
-fn rgb_reply(css: &str) -> String {
-    let r = &css[1..3];
-    let g = &css[3..5];
-    let b = &css[5..7];
-    format!("rgb:{r}{r}/{g}{g}/{b}{b}")
+fn rgb_reply([r, g, b]: [u8; 3]) -> String {
+    format!("rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}")
 }
 
 impl Terminal {
@@ -55,15 +51,23 @@ impl Terminal {
                     let Some(spec) = parts.next() else { break };
                     if index < 256 && spec == "?" {
                         response.extend_from_slice(
-                            format!("\x1b]4;{index};{}\x1b\\", rgb_reply(&color(index))).as_bytes(),
+                            format!(
+                                "\x1b]4;{index};{}\x1b\\",
+                                rgb_reply(self.palette.indexed(index as u8))
+                            )
+                            .as_bytes(),
                         );
                     }
                 }
             }
             "10" | "11" | "12" if payload == "?" => {
-                let css = if command == "11" { BG } else { FG };
+                let rgb = if command == "11" {
+                    self.palette.background
+                } else {
+                    self.palette.foreground
+                };
                 response.extend_from_slice(
-                    format!("\x1b]{command};{}\x1b\\", rgb_reply(css)).as_bytes(),
+                    format!("\x1b]{command};{}\x1b\\", rgb_reply(rgb)).as_bytes(),
                 );
             }
             _ => {}
@@ -114,11 +118,17 @@ impl Terminal {
                 p.push(code.to_string());
             }
         }
-        if self.style.fg != FG {
-            p.push(format!("38;2;{}", rgb_components(&self.style.fg)));
+        if self.style.fg != Color::Default {
+            p.push(format!(
+                "38;2;{}",
+                rgb_components(self.style.fg, self.palette)
+            ));
         }
-        if self.style.bg != BG {
-            p.push(format!("48;2;{}", rgb_components(&self.style.bg)));
+        if self.style.bg != Color::Default {
+            p.push(format!(
+                "48;2;{}",
+                rgb_components(self.style.bg, self.palette)
+            ));
         }
         format!("{}m", p.join(";"))
     }
@@ -147,9 +157,10 @@ impl Terminal {
     }
 }
 
-fn rgb_components(css: &str) -> String {
-    let r = u8::from_str_radix(&css[1..3], 16).unwrap_or(0);
-    let g = u8::from_str_radix(&css[3..5], 16).unwrap_or(0);
-    let b = u8::from_str_radix(&css[5..7], 16).unwrap_or(0);
+fn rgb_components(color: Color, palette: super::TerminalPalette) -> String {
+    let [r, g, b] = match color {
+        Color::Indexed(index) => palette.indexed(index),
+        other => other.rgb(palette.foreground),
+    };
     format!("{r};{g};{b}")
 }

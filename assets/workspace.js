@@ -30,6 +30,10 @@ const panes = createPanes(PANE_LIMIT, {
 });
 export function paneFor(id) { return panes.find(pane => pane.id && pane.id === id) || null; }
 export function focusedPane() { return paneFor(focusedId()); }
+function dimensions(pane) {
+  const limits = state.hello?.limits;
+  return pane.renderer.dimensions(limits?.cols, limits?.rows);
+}
 
 async function copyOutput(id) {
   const pane = paneFor(id), text = pane?.outputText() || '';
@@ -38,7 +42,7 @@ async function copyOutput(id) {
   catch { problem('Copy failed', 'Clipboard access was denied by the browser.'); }
 }
 configureActions({
-  geometry:id => { const pane = paneFor(id); return pane?.visible ? pane.renderer.dimensions() : null; },
+  geometry:id => { const pane = paneFor(id); return pane?.visible ? dimensions(pane) : null; },
   find:id => { if (state.page !== 'workspace') go('workspace'); requestAnimationFrame(() => paneFor(id)?.showFind(true)); },
   copy:copyOutput,
   launch:options => openLauncher(options),
@@ -49,7 +53,7 @@ function attach(pane) {
   if (!pane.id || !state.connected) return;
   const request = nextRequest();
   state.attachments.set(pane.id, {request, acked:false, ready:false});
-  send({op:'attach', id:pane.id, request, updates:true, ...pane.renderer.dimensions()}, {quiet:true});
+  send({op:'attach', id:pane.id, request, updates:true, ...dimensions(pane)}, {quiet:true});
 }
 
 function scheduleClaim() {
@@ -112,7 +116,9 @@ function estimateSize(count) {
   metrics.measure();
   const columns = count < 2 ? 1 : 2, rows = count > 2 ? 2 : 1;
   const width = (box.width || innerWidth - 320) / columns - 36, height = (box.height || innerHeight - 200) / rows - 140;
-  return {cols:Math.max(20, Math.min(300, Math.floor(width / metrics.cellWidth))), rows:Math.max(5, Math.min(120, Math.floor(height / metrics.lineHeight)))};
+  const limits = state.hello?.limits;
+  return {cols:Math.min(limits?.cols || 300, Math.max(2, Math.floor(width / metrics.cellWidth))),
+    rows:Math.min(limits?.rows || 120, Math.max(1, Math.floor(height / metrics.lineHeight)))};
 }
 // A terminal this view created is attached and shown at once.
 function adopt(reply, {cwd}) {
@@ -163,12 +169,13 @@ export function handleTerminal(message) {
     if (attachment?.acked) attachment.ready = true;
     const session = state.sessions.get(message.id);
     if (session) {
-      const next = {...session, title:message.terminal?.title || session.title, alive:message.alive, controller:message.controller, exitCode:message.exitCode};
-      const visible = next.title !== session.title || next.alive !== session.alive || next.controller !== session.controller || next.exitCode !== session.exitCode;
-      state.sessions.set(message.id, next);
-      if (visible) changed('sessions');
+      const next = {...session, alive:message.alive, controller:message.controller, exitCode:message.exitCode};
+      const visible = next.alive !== session.alive || next.controller !== session.controller || next.exitCode !== session.exitCode;
+      if (visible) { state.sessions.set(message.id, next); changed('sessions'); }
     }
-    if (previous?.viewers !== message.viewers) changed('focus');
+    if (previous?.viewers !== message.viewers ||
+      previous?.terminal?.cols !== message.terminal?.cols ||
+      previous?.terminal?.rows !== message.terminal?.rows) changed('focus');
     const pane = paneFor(message.id);
     if (pane) pane.dirty = true;
     scheduleFrame();
@@ -217,8 +224,6 @@ function scheduleFrame() {
         if (shot) pane.render(shot);
       }
     }
-    scheduleResize();
-    renderPanes();
   });
 }
 function scheduleResize() {
@@ -229,7 +234,7 @@ function scheduleResize() {
     resizeTimer = 0;
     for (const pane of panes) {
       if (!pane.id || !pane.visible || !canInput(pane.id)) continue;
-      const shot = state.snapshots.get(pane.id), size = pane.renderer.dimensions();
+      const shot = state.snapshots.get(pane.id), size = dimensions(pane);
       if (size.cols !== shot.terminal.cols || size.rows !== shot.terminal.rows) send({op:'resize', id:pane.id, epoch:shot.epoch, ...size}, {quiet:true});
     }
   }, 50);
@@ -238,6 +243,7 @@ export function setFontSize(size) {
   document.documentElement.style.setProperty('--font-size', `${size}px`);
   document.documentElement.style.setProperty('--line-height', `${Math.ceil(size * 1.2)}px`);
   for (const pane of panes) { pane.renderer.measure(); pane.dirty = Boolean(pane.id); }
+  scheduleResize();
   scheduleFrame();
 }
 

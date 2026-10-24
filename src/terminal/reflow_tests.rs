@@ -25,10 +25,10 @@ fn text(line: &Line) -> String {
 #[test]
 fn reflow_keeps_styled_blank_bands_in_history_without_extra_rows() {
     fn paint(line: &super::cells::Line) -> String {
-        let marks = line.cells.iter().map(|c| match c.style.bg.as_str() {
-            super::cells::BG => '.',
-            "#303030" => 'g',
-            "#0000a0" => 'b',
+        let marks = line.cells.iter().map(|c| match c.style.bg {
+            super::cells::Color::Default => '.',
+            super::cells::Color::Rgb(48, 48, 48) => 'g',
+            super::cells::Color::Rgb(0, 0, 160) => 'b',
             _ => '?',
         });
         marks.collect()

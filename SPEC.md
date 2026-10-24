@@ -113,6 +113,9 @@ rendering details from measured behavior; do not add a framework or bundler.
   terminal, take focus or catch the pointer outside their cards. Successes
   expire after about four seconds and toasts with an action after about eight;
   errors stay until dismissed, and hovering or focusing a toast holds it.
+  The tray scrolls beyond three cards, coalesces repeated errors and retains
+  64 distinct errors. Any older details replaced at that bound remain accounted
+  for in a persistent overflow summary.
   Field validation and save conflicts stay in their forms. Webterminal sends
   no browser or system notifications.
 

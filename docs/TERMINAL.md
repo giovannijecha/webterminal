@@ -53,6 +53,10 @@ be distinguished from an idle shell by this check.
 - Standard, 256-color, and RGB appearance; text attributes, cursor visibility
   and shape, DEC special graphics, terminal titles, safe OSC 8 hyperlinks,
   status/cursor/mode/size replies, and selected DECRQSS replies.
+  Default colors and ANSI 0–15 follow the terminal theme, including Settings
+  previews and color-query replies. Indexed colors 16–255 and explicit RGB
+  retain their values. CSI `21t` title reporting is ignored so output-controlled
+  titles cannot be returned as program input.
 - Unicode 17.0.0 grapheme segmentation and cell-width policy. East Asian
   Wide/Fullwidth and emoji presentation occupy two cells; ambiguous characters
   occupy one. Combining marks and emoji sequences follow the policy in
@@ -125,7 +129,7 @@ An earlier probe of the same
 sequences under Windows Terminal 1.24.12741.0 received color replies. An
 isolated Codex 0.163.0 run in Webterminal lacked gray user-message and
 composer bands; that these missing replies cause it is likely but unverified.
-`cargo test --locked --offline --test native_input observe_color_queries -- --nocapture`
+`cargo test --locked --offline --features fixtures --test native_input observe_color_queries -- --nocapture`
 reproduces the observation.
 
 For programs that read console key records, such as Codex 0.163.0, ConPTY
@@ -141,7 +145,16 @@ The observed key-event behavior is consistent with
 and [the Windows input parser pinned by Codex](https://github.com/openai-oss-forks/crossterm/blob/ed1cdab335221515706178d68495bba2aed1924f/src/event/sys/windows/parse.rs).
 
 The browser asks for incremental updates. A missing or invalid update base
-disables input until a fresh attachment restores the projection. Legacy views
-without `updates:true` receive full snapshots. The transport and terminal
+disables input until a fresh attachment restores the projection. Diagnostic
+attachments without `updates:true` can receive full snapshots; the embedded UI
+always uses updates. Both forms carry immutable row revision IDs and style runs:
+`[foreground, background, attributes, hyperlink, payload]`. A color is `null`
+for a default, an integer for a palette index or a hex RGB string. Payload is
+an ASCII string or an array of `[grapheme, width]` pairs. The server captures
+shared immutable cells under the session lock and serializes after releasing
+it. Session lists are cached by revision; title-only list updates publish at
+most four times per second, while structural changes publish on the next tick.
+The browser defers offscreen row painting without removing selectable history.
+The transport and terminal
 implementations are in [`server.rs`](../src/server.rs),
 [`session.rs`](../src/session.rs), and [`terminal.rs`](../src/terminal.rs).

@@ -6,7 +6,11 @@ use crate::{
 };
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, mpsc::SyncSender};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+    mpsc::SyncSender,
+};
 use std::time::{Duration, Instant};
 
 pub(super) const INPUT_LIMIT: usize = 65_536;
@@ -19,6 +23,8 @@ pub struct Session {
     pub created: u64,
     pub(super) pty: Arc<native::Pty>,
     pub(super) input: SyncSender<Input>,
+    pub(super) list_revision: Arc<AtomicU64>,
+    pub(super) title_revision: Arc<AtomicU64>,
     pub(super) control: Mutex<()>,
     pub(super) state: Mutex<State>,
 }
@@ -49,6 +55,7 @@ impl Session {
         let resize = state.controller.is_none() && state.alive;
         if resize {
             state.transfer(Some(view));
+            self.list_revision.fetch_add(1, Ordering::Release);
         }
         state.revision += 1;
         drop(state);
@@ -67,6 +74,7 @@ impl Session {
             return Err("Attach to the session before taking control".into());
         }
         state.transfer(Some(view));
+        self.list_revision.fetch_add(1, Ordering::Release);
         drop(state);
         self.resize_locked(size)
     }
@@ -77,6 +85,7 @@ impl Session {
             return Err("This view does not control the terminal".into());
         }
         state.transfer(None);
+        self.list_revision.fetch_add(1, Ordering::Release);
         Ok(())
     }
     pub fn detach(&self, view: &str) {
@@ -88,6 +97,7 @@ impl Session {
         }
         if state.controller.as_deref() == Some(view) {
             state.transfer(None);
+            self.list_revision.fetch_add(1, Ordering::Release);
         }
     }
     /// Uploads follow the same control fence as input.
@@ -158,9 +168,17 @@ impl Session {
             return None;
         }
         let compact = baseline.is_some();
+        let projection = state.terminal.projection();
+        let revision = state.revision;
+        let epoch = state.epoch;
+        let controller = state.controller.clone();
+        let viewers = state.viewers.len();
+        let alive = state.alive;
+        let exit_code = state.exit_code;
+        drop(state);
         let terminal = match baseline {
-            Some(baseline) => state.terminal.snapshot_update(baseline),
-            None => state.terminal.snapshot_json(),
+            Some(baseline) => projection.snapshot_update(baseline),
+            None => projection.snapshot_json(),
         };
         let kind = if compact && after != 0 {
             "update"
@@ -175,15 +193,15 @@ impl Session {
         let json = format!(
             "{{\"type\":\"{kind}\"{base},\"id\":{},\"seq\":{},\"epoch\":{},\"controller\":{},\"viewers\":{},\"alive\":{},\"exitCode\":{},\"terminal\":{}}}",
             json::quote(&self.id),
-            state.revision,
-            state.epoch,
-            optional_string(&state.controller),
-            state.viewers.len(),
-            state.alive,
-            optional_code(state.exit_code),
+            revision,
+            epoch,
+            optional_string(&controller),
+            viewers,
+            alive,
+            optional_code(exit_code),
             terminal
         );
-        Some((state.revision, json))
+        Some((revision, json))
     }
     pub fn events(&self, after: u64) -> Vec<(u64, String)> {
         self.state
@@ -215,6 +233,7 @@ impl Session {
         state.alive = false;
         state.transfer(None);
         state.terminal.expire_sync();
+        self.list_revision.fetch_add(1, Ordering::Release);
     }
     /// A live terminal is busy while its job holds more than the shell process.
     pub fn busy(&self) -> bool {
@@ -228,12 +247,15 @@ impl Session {
         }
         self.pty.processes(limit)
     }
-    pub(super) fn stop(&self) {
+    pub(super) fn mark_closed(&self) {
         {
             let mut state = self.state.lock().unwrap();
             state.alive = false;
             state.transfer(None);
+            self.list_revision.fetch_add(1, Ordering::Release);
         }
+    }
+    pub(super) fn terminate(&self) {
         let _ = self.pty.terminate();
     }
     /// The `sessions` list entry for this terminal.

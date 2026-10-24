@@ -2,7 +2,7 @@
 // Keys typed inside a terminal reach the program, except the "Anywhere" ones.
 import {avatar, badge, el, icon, plural} from './dom.js';
 import {displayPath} from './common.js';
-import {go, orderedSessions, sessionShell, shellLabel, showTerminal, state, terminalName, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
+import {PANE_LIMIT, go, orderedSessions, sessionShell, shellLabel, showTerminal, state, terminalName, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {dialogs, menu} from './ui.js';
 import {createWorkspace} from './actions.js';
 import {createTerminal, openLauncher, splitFolder} from './launcher.js';
@@ -26,10 +26,10 @@ function items(query) {
   const here = state.page === 'workspace' ? workspaceById(state.selected) : null, folder = splitFolder();
   const actions = [
     {title:'New terminal', sub:'Choose a folder and a workspace', run:() => openLauncher({workspace:state.selected})},
-    ...(here && here.sessions.length < 4 ? [
+    ...(here && here.sessions.length < PANE_LIMIT ? [
       {title:`New ${shellLabel(state.hello?.shell)} terminal here`, sub:displayPath(folder), run:() => createTerminal({cwd:folder, workspace:here.id})},
     ] : []),
-    {title:'New workspace', sub:'An empty workspace for up to four terminals', run:() => createWorkspace()},
+    {title:'New workspace', sub:`An empty workspace for up to ${PANE_LIMIT} terminals`, run:() => createWorkspace()},
     {title:'Keyboard shortcuts', sub:'', run:() => showShortcuts()},
   ].map(item => ({group:'Actions', ...item}));
   const pages = PAGES.map(page => ({group:'Go to', title:page.label, sub:'', run:() => go(page.page)}));

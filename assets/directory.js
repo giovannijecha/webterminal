@@ -213,11 +213,15 @@ export class DirectoryPicker {
     const query = $('directory-filter').value.trim().toLocaleLowerCase();
     this.visible = directories.filter(directory => directory.name.toLocaleLowerCase().includes(query));
     const noun = this.data?.path === THIS_PC ? 'drive' : 'folder';
-    $('directory-message').textContent = query ? `${this.visible.length} of ${directories.length}` : `${directories.length} ${noun}${directories.length === 1 ? '' : 's'}`;
+    const count = query ? `${this.visible.length} of ${directories.length}` : `${directories.length} ${noun}${directories.length === 1 ? '' : 's'}`;
+    const notices = [];
+    if (this.data?.truncated) notices.push('More folders exist. Enter a full path in the address bar.');
+    if (this.data?.unreadable > 0) notices.push(`${this.data.unreadable} ${this.data.unreadable === 1 ? 'entry' : 'entries'} could not be read.`);
+    $('directory-message').textContent = [count, ...notices].join(' ');
     if (!this.visible.length) {
       const text = document.createElement('p');
       text.className = 'directory-empty';
-      text.textContent = query ? 'No matching folders.' : this.data?.path === THIS_PC ? 'No drives found.' : 'This folder has no subfolders.';
+      text.textContent = query ? (this.data?.truncated ? 'No match in the folders shown. Enter a full path in the address bar.' : 'No matching folders.') : this.data?.path === THIS_PC ? 'No drives found.' : 'This folder has no subfolders.';
       $('directory-list').replaceChildren(text);
     } else {
       $('directory-list').replaceChildren(...this.visible.map((directory, index) => {

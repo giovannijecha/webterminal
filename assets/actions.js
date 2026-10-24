@@ -3,16 +3,13 @@
 import {ask, queueInput, send} from './connection.js';
 import {PANE_LIMIT, WORKSPACE_LIMIT, changed, control, go, sessionShell, showTerminal, state, terminalName, terminalPlace, terminalStatus, workspaceById, workspaceIndex, workspaceLabel, workspaceOf} from './model.js';
 import {el, plural} from './dom.js';
+import {nameError} from './common.js';
 import {dialogs, menu, notify, problem} from './ui.js';
 
 const hooks = {geometry:() => null, find() {}, copy() {}, launch() {}};
 export function configureActions(next) { Object.assign(hooks, next); }
 
-export function nameProblem(name) {
-  if ([...name.trim()].length > 80) return 'Use 80 characters or fewer.';
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return 'Use a single line without control characters.';
-  return '';
-}
+export const nameProblem = nameError;
 function failure(title, error) { problem(title, error?.message || String(error || 'The server refused the request.')); }
 
 export async function createWorkspace({select = true} = {}) {

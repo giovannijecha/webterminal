@@ -1,80 +1,105 @@
 use super::{
     Terminal,
-    screen::{Cell, Line},
+    screen::{Cell, Color, Line},
 };
+use std::fmt::Write;
 
-pub fn string(out: &mut String, value: &str) {
-    out.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c < ' ' => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
+pub(super) trait JsonOut: Write {
+    fn push(&mut self, c: char) {
+        self.write_char(c).expect("JSON sink");
+    }
+    fn push_str(&mut self, s: &str) {
+        self.write_str(s).expect("JSON sink");
+    }
+}
+impl<T: Write> JsonOut for T {}
+
+#[derive(Default)]
+struct Count(usize);
+impl Write for Count {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0 += s.len();
+        Ok(())
+    }
+}
+
+pub(super) fn string(out: &mut impl JsonOut, value: &str) {
+    crate::json::write_string(out, value).expect("JSON sink");
+}
+
+fn color(out: &mut impl JsonOut, color: Color) {
+    match color {
+        Color::Default => out.push_str("null"),
+        Color::Indexed(index) => {
+            let _ = write!(out, "{index}");
+        }
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, "\"#{r:02x}{g:02x}{b:02x}\"");
         }
     }
-    out.push('"');
 }
 
-fn string_len(value: &str) -> usize {
-    2 + value
-        .chars()
-        .map(|ch| match ch {
-            '"' | '\\' | '\n' | '\r' | '\t' => 2,
-            c if c < ' ' => 6,
-            c => c.len_utf8(),
-        })
-        .sum::<usize>()
+pub(super) fn line_len(line: &Line) -> usize {
+    let mut out = Count::default();
+    self::line(&mut out, line);
+    out.0
 }
 
-pub(super) fn line_len(l: &Line) -> usize {
-    let mut len = if l.wrapped {
-        "{\"wrapped\":true,\"cells\":[".len()
-    } else {
-        "{\"wrapped\":false,\"cells\":[".len()
-    } + "]}".len();
-    for (i, c) in l.cells.iter().enumerate() {
-        len += usize::from(i != 0)
-            + 2 // brackets
-            + 5 // separators
-            + string_len(&c.text)
-            + c.width.to_string().len()
-            + string_len(&c.style.fg)
-            + string_len(&c.style.bg)
-            + c.style.attrs.to_string().len()
-            + string_len(&c.style.link);
-    }
-    len
+fn ascii(cell: &Cell) -> bool {
+    cell.width == 1 && cell.text.len() == 1 && (0x20..=0x7e).contains(&cell.text.as_bytes()[0])
 }
 
-fn cell(out: &mut String, c: &Cell) {
-    out.push('[');
-    string(out, &c.text);
-    out.push(',');
-    out.push_str(&c.width.to_string());
-    out.push(',');
-    string(out, &c.style.fg);
-    out.push(',');
-    string(out, &c.style.bg);
-    out.push(',');
-    out.push_str(&c.style.attrs.to_string());
-    out.push(',');
-    string(out, &c.style.link);
-    out.push(']');
-}
-
-pub(super) fn line(out: &mut String, l: &Line) {
-    out.push_str("{\"wrapped\":");
-    out.push_str(if l.wrapped { "true" } else { "false" });
-    out.push_str(",\"cells\":[");
-    for (i, c) in l.cells.iter().enumerate() {
-        if i > 0 {
+pub(super) fn line(out: &mut impl JsonOut, line: &Line) {
+    let _ = write!(
+        out,
+        "{{\"rev\":{},\"wrapped\":{},\"runs\":[",
+        line.revision, line.wrapped
+    );
+    let mut index = 0;
+    while index < line.cells.len() {
+        let style = &line.cells[index].style;
+        let simple = ascii(&line.cells[index]);
+        let start = index;
+        index += 1;
+        while index < line.cells.len()
+            && line.cells[index].style == *style
+            && ascii(&line.cells[index]) == simple
+        {
+            index += 1;
+        }
+        if start != 0 {
             out.push(',');
         }
-        cell(out, c);
+        out.push('[');
+        color(out, style.fg);
+        out.push(',');
+        color(out, style.bg);
+        let _ = write!(out, ",{},", style.attrs);
+        string(out, &style.link);
+        out.push(',');
+        if simple {
+            out.push('"');
+            for cell in &line.cells[start..index] {
+                match cell.text.as_bytes()[0] {
+                    b'"' => out.push_str("\\\""),
+                    b'\\' => out.push_str("\\\\"),
+                    c => out.push(c as char),
+                }
+            }
+            out.push('"');
+        } else {
+            out.push('[');
+            for (offset, cell) in line.cells[start..index].iter().enumerate() {
+                if offset != 0 {
+                    out.push(',');
+                }
+                out.push('[');
+                string(out, &cell.text);
+                let _ = write!(out, ",{}]", cell.width);
+            }
+            out.push(']');
+        }
+        out.push(']');
     }
     out.push_str("]}");
 }

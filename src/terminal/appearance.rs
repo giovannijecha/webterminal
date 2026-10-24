@@ -1,4 +1,8 @@
-use super::{Terminal, ops::color, screen::Style};
+use super::{
+    Terminal,
+    ops::color,
+    screen::{Color, Style},
+};
 
 impl Terminal {
     pub(super) fn sgr_bytes(&mut self, data: &[u8]) {
@@ -34,11 +38,10 @@ impl Terminal {
                             Some(5) if sub.len() >= 3 => Some(color(sub[2].min(255))),
                             Some(2) if sub.len() >= 5 => {
                                 let rgb = &sub[sub.len() - 3..];
-                                Some(format!(
-                                    "#{:02x}{:02x}{:02x}",
-                                    rgb[0].min(255),
-                                    rgb[1].min(255),
-                                    rgb[2].min(255)
+                                Some(Color::Rgb(
+                                    rgb[0].min(255) as u8,
+                                    rgb[1].min(255) as u8,
+                                    rgb[2].min(255) as u8,
                                 ))
                             }
                             _ => None,
@@ -105,11 +108,10 @@ impl Terminal {
                         i += 2;
                         Some(color(values[i].min(255)))
                     } else if values[i + 1] == 2 && i + 4 < values.len() {
-                        let s = format!(
-                            "#{:02x}{:02x}{:02x}",
-                            values[i + 2].min(255),
-                            values[i + 3].min(255),
-                            values[i + 4].min(255)
+                        let s = Color::Rgb(
+                            values[i + 2].min(255) as u8,
+                            values[i + 3].min(255) as u8,
+                            values[i + 4].min(255) as u8,
                         );
                         i += 4;
                         Some(s)

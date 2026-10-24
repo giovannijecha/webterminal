@@ -13,6 +13,70 @@ const CLIENTS: usize = 8;
 const REQUESTS_PER_CLIENT: usize = 30;
 const PATHS: [&str; 4] = ["/app.js", "/style.css", "/render.js", "/api/info"];
 
+#[test]
+fn embedded_assets_revalidate_without_stale_bytes() {
+    let app = Harness::new(shell("--hold", None));
+    let fresh = app.request("/style.css", "");
+    assert!(fresh.starts_with("HTTP/1.1 200 OK"));
+    assert!(fresh.contains("Cache-Control: private, no-cache\r\n"));
+    let tag = fresh
+        .lines()
+        .find_map(|line| line.strip_prefix("ETag: "))
+        .unwrap()
+        .trim();
+    let cached = app.request("/style.css", &format!("If-None-Match: {tag}\r\n"));
+    assert!(cached.starts_with("HTTP/1.1 304 Not Modified"));
+    assert!(cached.ends_with("\r\n\r\n"));
+    assert!(cached.contains(&format!(
+        "Content-Length: {}\r\n",
+        include_bytes!("../assets/style.css").len()
+    )));
+    for condition in [format!("W/{tag}"), format!("\"older\", {tag}"), "*".into()] {
+        assert!(
+            app.request("/style.css", &format!("If-None-Match: {condition}\r\n"))
+                .starts_with("HTTP/1.1 304 Not Modified")
+        );
+    }
+    let other = app.request("/app.js", &format!("If-None-Match: {tag}\r\n"));
+    assert!(other.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        app.request("/api/info", "")
+            .contains("Cache-Control: no-store")
+    );
+}
+
+#[test]
+fn directory_limit_counts_folders_and_reports_truncation() {
+    let app = Harness::new(shell("--hold", None));
+    for index in 0..4100 {
+        std::fs::File::create_new(app.cwd.join(format!("a-file-{index:04}"))).unwrap();
+    }
+    std::fs::create_dir(app.cwd.join("z-visible-folder")).unwrap();
+    let encoded: String = app
+        .cwd
+        .to_string_lossy()
+        .bytes()
+        .map(|byte| format!("%{byte:02X}"))
+        .collect();
+    let path = format!("/api/directories?path={encoded}");
+    let response = app.request(&path, "");
+    let body =
+        json::parse_limited(response.split_once("\r\n\r\n").unwrap().1, 4 * 1024 * 1024).unwrap();
+    assert_eq!(body.get("truncated"), Some(&json::Value::Bool(false)));
+    let directories = body.get("directories").unwrap().array().unwrap();
+    assert_eq!(directories.len(), 1);
+    assert_eq!(directories[0].field("name").unwrap(), "z-visible-folder");
+    for index in 0..4096 {
+        std::fs::create_dir(app.cwd.join(format!("z-folder-{index:04}"))).unwrap();
+    }
+    let response = app.request(&path, "");
+    // The command codec deliberately caps arrays below the folder browser's
+    // limit; inspect this owned response without widening inbound commands.
+    let body = response.split_once("\r\n\r\n").unwrap().1;
+    assert_eq!(body.matches("\"name\":").count(), 4096);
+    assert!(body.contains("\"truncated\":true,\"unreadable\":0"));
+}
+
 fn complete_get(port: u16, path: &str, delay: Duration) -> Result<(), String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))

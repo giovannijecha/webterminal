@@ -52,12 +52,22 @@ fn text_on_screen(value: &Value) -> String {
         return result;
     };
     for line in lines {
-        if let Some(Value::Array(cells)) = line.get("cells") {
-            for cell in cells {
-                if let Value::Array(parts) = cell
-                    && let Some(text) = parts.first().and_then(Value::string)
-                {
-                    result.push_str(text);
+        if let Some(Value::Array(runs)) = line.get("runs") {
+            for run in runs {
+                if let Value::Array(parts) = run {
+                    match parts.get(4) {
+                        Some(Value::String(text)) => result.push_str(text),
+                        Some(Value::Array(cells)) => {
+                            for cell in cells {
+                                if let Value::Array(parts) = cell
+                                    && let Some(text) = parts.first().and_then(Value::string)
+                                {
+                                    result.push_str(text);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

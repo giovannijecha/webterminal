@@ -30,10 +30,12 @@ export function pathList(paths, shell = 'powershell.exe') {
   return paths.map(path => powerShell ? `'${path.replaceAll("'", "''")}'` : `"${path}"`).join(' ');
 }
 
-export function dropProblem(files, shell = 'powershell.exe') {
-  if (files.length > DROP_LIMIT) return `Drop at most ${DROP_LIMIT} files at once.`;
-  const large = files.find(file => file.size > FILE_LIMIT);
-  if (large) return `${large.name} is larger than 1 GiB.`;
+export function dropProblem(files, shell = 'powershell.exe', limits = {}) {
+  const count = Number.isSafeInteger(limits.uploadFiles) && limits.uploadFiles > 0 ? limits.uploadFiles : DROP_LIMIT;
+  const size = Number.isSafeInteger(limits.uploadBytes) && limits.uploadBytes > 0 ? limits.uploadBytes : FILE_LIMIT;
+  if (files.length > count) return `Drop at most ${count} ${count === 1 ? 'file' : 'files'} at once.`;
+  const large = files.find(file => file.size > size);
+  if (large) return `${large.name} is larger than ${size === FILE_LIMIT ? '1 GiB' : `${size} bytes`}.`;
   return isCmd(shell) && files.some(file => cmdExpansion(file.name)) ? cmdExpansionProblem : null;
 }
 

@@ -47,6 +47,12 @@ function classicKey(event, modes) {
 // key, VT readers still get 0x0A between the markers.
 const PASTE_LINE_FEED = `${ESC}[74;36;10;1;8;1_${ESC}[74;36;10;0;8;1_`;
 
+export function pastePayload(text, modes = {}) {
+  const normalized = text.replace(/\r\n|\r/g, '\n');
+  if (!modes.bracketedPaste) return normalized.replace(/\n/g, '\r');
+  return `${ESC}[200~${modes.win32 ? normalized.replace(/\n/g, PASTE_LINE_FEED) : normalized}${ESC}[201~`;
+}
+
 function win32Key(event, down, pressed) {
   const virtualKey = event.keyCode || (event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : 0);
   const scan = SCANS[event.code] || 0;
@@ -83,8 +89,15 @@ export class TerminalInput {
     keyboard.addEventListener('keydown', event => this.keydown(event));
     keyboard.addEventListener('keyup', event => this.keyup(event));
     keyboard.addEventListener('beforeinput', event => this.beforeinput(event));
-    keyboard.addEventListener('compositionstart', () => { this.composing = true; this.cancelledComposition = false; this.discardedCompositionText = null; });
+    keyboard.addEventListener('compositionstart', () => {
+      this.positionCaret();
+      keyboard.classList?.add('composing');
+      this.composing = true;
+      this.cancelledComposition = false;
+      this.discardedCompositionText = null;
+    });
     keyboard.addEventListener('compositionend', event => {
+      keyboard.classList?.remove('composing');
       if (!this.composing) {
         this.discardedCompositionText = event.data || this.discardedCompositionText;
         keyboard.value = '';
@@ -97,7 +110,8 @@ export class TerminalInput {
     });
     keyboard.addEventListener('paste', event => this.paste(event));
     keyboard.addEventListener('blur', () => { this.focusReport(false); this.reset(); });
-    keyboard.addEventListener('focus', () => this.focusReport(true));
+    keyboard.addEventListener('focus', () => { this.positionCaret(); this.focusReport(true); });
+    scroll.addEventListener('scroll', () => this.positionCaret(), {passive:true});
     scroll.addEventListener('keydown', event => { if (this.canInput()) this.keydown(event); });
     scroll.addEventListener('pointerdown', event => this.pointerdown(event));
     scroll.addEventListener('pointerup', event => this.pointerup(event));
@@ -107,12 +121,26 @@ export class TerminalInput {
     scroll.addEventListener('click', event => { if (this.mouseEnabled() && !event.shiftKey && event.target.closest('a')) event.preventDefault(); });
   }
 
-  focus() { this.keyboard.focus({preventScroll:true}); }
+  focus() { this.positionCaret(); this.keyboard.focus({preventScroll:true}); }
+  positionCaret() {
+    const frame = this.keyboard.parentElement, lines = this.renderer.lines;
+    if (!frame || !lines) return;
+    const cursor = lines.querySelector('.term-cell.cursor'), term = this.snapshot()?.terminal;
+    if (!cursor && !term?.cursor) return;
+    const bounds = frame.getBoundingClientRect(), cell = cursor?.getBoundingClientRect();
+    const line = lines.getBoundingClientRect(), position = term?.cursor || [0, 0];
+    const history = term?.alternate ? 0 : (term?.history?.length || 0);
+    const x = (cell?.left ?? line.left + position[0] * this.renderer.cellWidth) - bounds.left;
+    const y = (cell?.top ?? line.top + (history + position[1]) * this.renderer.lineHeight) - bounds.top;
+    this.keyboard.style.setProperty('--terminal-caret-x', `${Math.max(0, Math.min(x, bounds.width - 1))}px`);
+    this.keyboard.style.setProperty('--terminal-caret-y', `${Math.max(0, Math.min(y, bounds.height - 1))}px`);
+  }
   reset() {
     this.cancelledComposition ||= this.composing;
     this.discardedCompositionText = this.pendingCompositionText || this.discardedCompositionText;
     this.pressed.clear();
     this.composing = false;
+    this.keyboard.classList?.remove('composing');
     this.pendingCompositionText = null;
     this.mouseButton = null;
     this.lastMotion = '';
@@ -178,9 +206,7 @@ export class TerminalInput {
   }
   pasteText(text) {
     if (!this.canInput() || !text) return;
-    const normalized = text.replace(/\r\n|\r/g, '\n'), modes = this.modes();
-    if (!modes.bracketedPaste) { this.sendText(normalized.replace(/\n/g, '\r')); return; }
-    this.sendText(`${ESC}[200~${modes.win32 ? normalized.replace(/\n/g, PASTE_LINE_FEED) : normalized}${ESC}[201~`);
+    this.sendText(pastePayload(text, this.modes()));
   }
   focusReport(focused) {
     if (this.canInput() && this.modes().focus) this.sendText(`${ESC}[${focused ? 'I' : 'O'}`);

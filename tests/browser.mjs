@@ -4,8 +4,16 @@ import {TerminalInput} from '../assets/input.js';
 import {TerminalRenderer, lineText} from '../assets/render.js';
 import {pathCrumbs} from '../assets/directory.js';
 import {mergeUpdate} from '../assets/updates.js';
+import {NAME_LIMIT, nameError} from '../assets/common.js';
+import {shellLabel} from '../assets/model.js';
 
 const ESC = '\x1b';
+
+test('names use Unicode character limits rather than UTF-16 units', () => {
+  assert.equal(nameError('\u{1f642}'.repeat(NAME_LIMIT)), '');
+  assert.notEqual(nameError('\u{1f642}'.repeat(NAME_LIMIT + 1)), '');
+  assert.notEqual(nameError('name\u001b'), '');
+});
 
 test('ordered updates preserve unchanged rows and the previous immutable projection', () => {
   const first={type:'snapshot',id:'s1',seq:5,epoch:1,terminal:{cols:4,rows:2,history:[{cells:[['a']]},{cells:[['b']]}],screen:[{cells:[['x']]},{cells:[['y']]}]}};
@@ -54,6 +62,12 @@ test('folder breadcrumbs keep a UNC share as the root navigation target', () => 
   assert.equal(crumbs[0].path, '\\\\?\\UNC\\fixture-server\\shared files\\');
   assert.equal(crumbs.at(-1).path, path);
   assert.equal(pathCrumbs('\\\\fixture-server\\shared files')[0].path, '\\\\fixture-server\\shared files');
+});
+
+test('shell label uses the executable basename after a quoted path', () => {
+  assert.equal(shellLabel('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile'), 'PowerShell');
+  assert.equal(shellLabel('C:\\Windows\\System32\\cmd.exe /Q'), 'Command Prompt');
+  assert.equal(shellLabel(''), 'Shell');
 });
 
 class EventSource {
@@ -212,6 +226,28 @@ test('composition commits Unicode once even when a final beforeinput follows', (
   assert.equal(finalInput.prevented, true);
 });
 
+test('IME field follows the visible cursor and stops showing composition after reset', () => {
+  const {input, keyboard, scroll} = inputFixture();
+  const vars = new Map(), classes = new Set();
+  keyboard.parentElement = {getBoundingClientRect:() => ({left:50, top:100, width:200, height:100})};
+  keyboard.style = {setProperty:(name, value) => vars.set(name, value)};
+  keyboard.classList = {add:name => classes.add(name), remove:name => classes.delete(name)};
+  let top = 140;
+  input.renderer.lines = {
+    querySelector:() => ({getBoundingClientRect:() => ({left:120, top})}),
+    getBoundingClientRect:() => ({left:64, top:108}),
+  };
+  keyboard.emit('compositionstart');
+  assert.equal(vars.get('--terminal-caret-x'), '70px');
+  assert.equal(vars.get('--terminal-caret-y'), '40px');
+  assert.equal(classes.has('composing'), true);
+  top = 900;
+  scroll.emit('scroll');
+  assert.equal(vars.get('--terminal-caret-y'), '99px');
+  input.reset();
+  assert.equal(classes.has('composing'), false);
+});
+
 test('late IME completion after a tab switch cannot enter the new session', () => {
   const {input, keyboard, sent} = inputFixture();
   keyboard.emit('compositionstart');
@@ -272,7 +308,7 @@ test('classic mouse stops at ConPTY UTF-8 boundary while SGR keeps column 96', (
 });
 
 test('wide grapheme cells omit continuation and selection joins wrapped rows', () => {
-  const line = {cells:[['e\u0301',1,'','','',''],['🙂',2,'','','',''],['',0,'','','',''],['続',2,'','','',''],['',0,'','','','']]};
+  const line = {runs:[[null,null,0,null,[['e\u0301',1],['🙂',2],['',0],['続',2],['',0]]]]};
   assert.equal(lineText(line), 'e\u0301🙂続');
   const rows = [
     {dataset:{index:'0',wrapped:'true'}},

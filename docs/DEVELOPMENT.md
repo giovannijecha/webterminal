@@ -16,13 +16,15 @@ linkage. Run:
 ```powershell
 cargo build --locked --offline
 cargo fmt --all -- --check
-cargo clippy --locked --offline --all-targets -- -D warnings
-cargo test --locked --offline
+cargo clippy --locked --offline --all-features --all-targets -- -D warnings
+cargo test --locked --offline --features fixtures
 cargo run --locked --offline -- --help
 ```
 
-The build creates `target/debug/webterminal.exe`; `--help` prints the options
-and exits. `--offline` does not install the toolchain or linker. See
+The default build creates only `target/debug/webterminal.exe`; `--help` prints
+the options and exits. `fixtures` enables the five owned development binaries
+and their native integration tests. Without that feature, `cargo test` runs
+the core and settings tests. `--offline` does not install the toolchain or linker. See
 [README.md](../README.md) to start the server and open a terminal.
 
 The browser checks use Node.js 24 and an installed Google Chrome. With
@@ -30,6 +32,7 @@ the executable and its fixture binaries built, run these from the repository
 root in PowerShell:
 
 ```powershell
+cargo build --locked --offline --features fixtures
 $env:WEBTERMINAL_TEST_BIN_DIR = "$PWD\target\debug"
 node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs tests/workbench-flows.mjs
 node tests/browser-runtime.mjs
@@ -47,7 +50,8 @@ write temporary files under ignored `target/` or `.tmp/`. Set
 testing an isolated build. `WEBTERMINAL_TEST_REDUCED_MOTION=1` makes
 `browser-runtime.mjs` also check its reduced-motion cursor behavior.
 `node tests/performance-browser.mjs` is an optional local fixture measurement,
-not a production CLI benchmark.
+not a production CLI benchmark. [Audit results](AUDIT.md) record the October 24
+corrections and comparable payload measurements.
 
 Rust tests exercise terminal parsing, rendering state, sessions, ConPTY
 ownership and input encoding, transport, settings and file staging. The

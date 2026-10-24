@@ -19,6 +19,8 @@ await copyFile(resolve(binaries,'webterminal.exe'),resolve(runRoot,'webterminal.
 await copyFile(resolve(binaries,'color_fixture.exe'),resolve(runRoot,'color_fixture.exe'));
 
 const harness=String.raw`
+import {cellsOf,lineText,terminalColor} from '/render.js';
+
 import {paneFor} from '/workspace.js';
 const $=id=>document.getElementById(id);
 const checks=[];
@@ -35,9 +37,9 @@ function painted(){
 function rows(){const term=current().terminal;return term.alternate?term.screen:[...term.history,...term.screen];}
 function cell(marker){
   for(const row of rows()){
-    const text=row.cells.filter(c=>c[1]!==0).map(c=>c[0]).join('');const start=text.indexOf(marker);
+    const text=cellsOf(row).filter(c=>c[1]!==0).map(c=>c[0]).join('');const start=text.indexOf(marker);
     if(start<0)continue;
-    let index=0;for(const c of row.cells){if(c[1]===0)continue;if(index===start)return c;index+=c[0].length;}
+    let index=0;for(const c of cellsOf(row)){if(c[1]===0)continue;if(index===start)return c;index+=c[0].length;}
   }
   throw new Error('Missing Rust color marker: '+marker);
 }
@@ -46,19 +48,19 @@ const palette=['#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a
 function verifyColors(label){
   for(let n=0;n<16;n++){
     const marker=(n<8?'NORMAL_':'BRIGHT_')+(n%8);const expected=palette[n];
-    check(cell(marker)[2]===expected,label+' Rust '+marker);
-    const node=element(marker);check(node&&node.style.color===rgb(expected),label+' browser '+marker);
+    check(cell(marker)[2]===n,label+' Rust '+marker);
+    const node=element(marker);check(node&&getComputedStyle(node).color===rgb(expected),label+' browser '+marker);
   }
-  check(cell('INDEXED_RED')[2]==='#ff0000',label+' indexed color');
+  check(cell('INDEXED_RED')[2]===196,label+' indexed color');
   check(cell('RGB_TEXT')[2]==='#112233',label+' RGB foreground');
   check(cell('RGB_BACKGROUND')[3]==='#1a2b3c',label+' RGB background');
   check(getComputedStyle(element('RGB_TEXT')).color==='rgb(17, 34, 51)',label+' computed foreground');
   check(getComputedStyle(element('RGB_BACKGROUND')).backgroundColor==='rgb(26, 43, 60)',label+' computed background');
   const inverse=cell('INVERSE_RED');
-  check(Boolean(inverse[4]&32)&&inverse[2]==='#cd3131',label+' inverse Rust state');
+  check(Boolean(inverse[4]&32)&&inverse[2]===1,label+' inverse Rust state');
   check(getComputedStyle(element('INVERSE_RED')).backgroundColor==='rgb(205, 49, 49)',label+' inverse browser state');
-  check(cell('UNICODE_')[2]==='#0dbc79',label+' Unicode foreground');
-  check(cell('DEFAULT_TEXT')[2]==='#cccccc'&&cell('DEFAULT_TEXT')[3]==='#1e1e1e',label+' default reset');
+  check(cell('UNICODE_')[2]===2,label+' Unicode foreground');
+  check(cell('DEFAULT_TEXT')[2]===null&&cell('DEFAULT_TEXT')[3]===null,label+' default reset');
   verifyAttributes(label);verifyBands(label);
 }
 function verifyAttributes(label){
@@ -77,10 +79,10 @@ function verifyBands(label,limit=Infinity){
   const gray=cells=>cells.every(c=>c[3]==='#303030');
   let bands=0;
   for(let index=0;index<Math.min(all.length,limit);index++){
-    if(!all[index].cells.map(c=>c[0]).join('').startsWith('BAND_TEXT'))continue;
-    bands++;const where=label+' band row '+index;const spaces=all[index+2].cells;
-    check(gray(all[index].cells)&&gray(all[index+1].cells),where+' Rust text and blank bands reach the edge');
-    check(gray(spaces.slice(0,17))&&spaces.slice(17).every(c=>c[3]==='#1e1e1e'),where+' Rust explicit spaces keep their extent');
+    if(!cellsOf(all[index]).map(c=>c[0]).join('').startsWith('BAND_TEXT'))continue;
+    bands++;const where=label+' band row '+index;const spaces=cellsOf(all[index+2]);
+    check(gray(cellsOf(all[index]))&&gray(cellsOf(all[index+1])),where+' Rust text and blank bands reach the edge');
+    check(gray(spaces.slice(0,17))&&spaces.slice(17).every(c=>c[3]===null),where+' Rust explicit spaces keep their extent');
     for(const row of [index,index+1]){
       const nodes=[...lines[row].querySelectorAll('.term-cell')];const width=nodes.reduce((sum,node)=>sum+node.getBoundingClientRect().width,0);
       check(nodes.length&&nodes.every(node=>getComputedStyle(node).backgroundColor==='rgb(48, 48, 48)')&&Math.abs(width-cols*unit)<1,where+' browser row '+row+' is gray to the edge');
@@ -103,7 +105,7 @@ async function resizeFont(label){
 }
 function rgb(hex){return 'rgb('+[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)).join(', ')+')';}
 function completed(){
-  const text=rows().map(row=>row.cells.filter(cell=>cell[1]!==0).map(cell=>cell[0]).join('')).join('\n');
+  const text=rows().map(row=>cellsOf(row).filter(cell=>cell[1]!==0).map(cell=>cell[0]).join('')).join('\n');
   return Math.max(-1,...[...text.matchAll(/COLOR_DONE:(\d+)/g)].map(match=>Number(match[1])));
 }
 async function paintAndWait(command){
@@ -131,9 +133,16 @@ async function main(){
   check(row.getBoundingClientRect().right<=$('sidebar').getBoundingClientRect().right&&name.scrollWidth>name.clientWidth,'a long workspace name truncates inside the sidebar');
   verifyColors('initial');await paintAndWait('scroll');verifyColors('scrollback update');
   check(current().terminal.history.length>0,'colored output remains in bounded history');
+  await until(()=>$('terminal-lines').firstElementChild.style.contentVisibility==='auto','offscreen history paint deferral');
+  const firstRow=$('terminal-lines').firstElementChild;
+  firstRow.scrollIntoView({block:'center'});
+  await until(()=>firstRow.style.contentVisibility==='visible','visible history permits overflowing ink');
+  $('terminal-scroll').scrollTop=$('terminal-scroll').scrollHeight;
+  await until(()=>firstRow.style.contentVisibility==='auto','history paint deferral after scrolling back');
+  check(true,'offscreen rows defer painting while visible history permits glyph overflow');
   await resizeFont('Larger');verifyBands('narrowed history',current().terminal.history.length-2);await paintAndWait('paint');verifyColors('resized');
   await resizeFont('Smaller');await resizeFont('Smaller');verifyBands('widened history',current().terminal.history.length-2);await paintAndWait('paint');verifyColors('widened');
-  await shot('widened-history',rows().findIndex(row=>row.cells.map(c=>c[0]).join('').startsWith('BAND_TEXT')));await shot('widened-screen');
+  await shot('widened-history',rows().findIndex(row=>cellsOf(row).map(c=>c[0]).join('').startsWith('BAND_TEXT')));await shot('widened-screen');
   await paintAndWait('alternate');check(current().terminal.alternate,'alternate buffer entered');verifyColors('alternate');
   await paintAndWait('primary');check(!current().terminal.alternate,'primary restored');verifyColors('primary restored');
   sessionStorage.setItem('colorSession',current().id);sessionStorage.setItem('colorStage','reconnect');

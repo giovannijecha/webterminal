@@ -1,3 +1,4 @@
+import {findChrome} from './cli-browser-support.mjs';
 // Test-only same-origin proxy: it injects one owned harness module and rewrites
 // Host/Origin toward the private backend. Product CSP is forwarded unchanged.
 // Direct Host/Origin rejection is covered by tests/transport.rs.
@@ -14,13 +15,7 @@ const target = resolve(root, 'target');
 const scratch = resolve(root, '.tmp');
 const runRoot = resolve(scratch, 'browser-e2e-' + process.pid + '-' + Date.now());
 if (!runRoot.startsWith(scratch + sep)) throw new Error('Test directory escaped scratchpad');
-const chromePaths = [
-  join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-  join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-];
-let chrome;
-for (const path of chromePaths) { try { await stat(path); chrome = path; break; } catch {} }
-if (!chrome) throw new Error('System Chrome was not found');
+const chrome = await findChrome();
 const binDirectory = resolve(process.env.WEBTERMINAL_TEST_BIN_DIR || resolve(root,'target/debug'));
 const binaries = {webterminal:resolve(binDirectory,'webterminal.exe'),fixture:resolve(binDirectory,'native_fixture.exe')};
 for (const path of Object.values(binaries)) await stat(path);
@@ -197,7 +192,7 @@ async function echo() {
   // Reused IDs and lower sequence numbers must never retain prior screen DOM.
   const fake={id:'s1',cwd:CWD,title:'Old session',alive:true,controller:'synthetic',exitCode:null};
   const frame=message=>window.__appSocket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(message)}));
-  const snapshot=(seq,text)=>({type:'snapshot',id:'s1',seq,epoch:1,controller:'synthetic',alive:true,exitCode:null,terminal:{cols:80,rows:1,cursor:[0,0,false,'block'],title:text,alternate:false,modes:{},history:[],screen:[{wrapped:false,cells:[...text].map(character=>[character,1,'#dce4ed','#10151c',0,''])}]}});
+  const snapshot=(seq,text)=>({type:'snapshot',id:'s1',seq,epoch:1,controller:'synthetic',alive:true,exitCode:null,terminal:{cols:80,rows:1,cursor:[0,0,false,'block'],title:text,alternate:false,modes:{},history:[],screen:[{rev:seq,wrapped:false,runs:[['#dce4ed','#10151c',0,'',text]]}]}});
   const workspace=activeWorkspace();
   frame({type:'sessions',sessions:[fake],workspaces:[{id:workspace,name:null,sessions:['s1']}]});
   frame(snapshot(9000,'OLD SCREEN'));

@@ -8,6 +8,105 @@ license = "MIT"
 authors = ["Giovanni Jecha"]
 publish = false
 default-run = "webterminal"
+autobins = false
+autotests = false
+
+[features]
+default = []
+fixtures = []
+
+[[bin]]
+name = "webterminal"
+path = "src/main.rs"
+
+[[bin]]
+name = "api_fixture"
+path = "src/bin/api_fixture.rs"
+required-features = ["fixtures"]
+
+[[bin]]
+name = "color_fixture"
+path = "src/bin/color_fixture.rs"
+required-features = ["fixtures"]
+
+[[bin]]
+name = "isolated_cli"
+path = "src/bin/isolated_cli.rs"
+required-features = ["fixtures"]
+
+[[bin]]
+name = "native_fixture"
+path = "src/bin/native_fixture.rs"
+required-features = ["fixtures"]
+
+[[bin]]
+name = "perf_fixture"
+path = "src/bin/perf_fixture.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "settings"
+path = "tests/settings.rs"
+
+[[test]]
+name = "colors"
+path = "tests/colors.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "http_stress"
+path = "tests/http_stress.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "isolation"
+path = "tests/isolation.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "native"
+path = "tests/native.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "native_input"
+path = "tests/native_input.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "powershell"
+path = "tests/powershell.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "session_organization"
+path = "tests/session_organization.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "transport"
+path = "tests/transport.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "updates"
+path = "tests/updates.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "upload_registry"
+path = "tests/upload_registry.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "uploads"
+path = "tests/uploads.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "views_api"
+path = "tests/views_api.rs"
+required-features = ["fixtures"]
 
 [dependencies]
 

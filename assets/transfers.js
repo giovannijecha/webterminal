@@ -6,8 +6,8 @@ import {queueInput} from './connection.js';
 import {canInput, changed, go, state, terminalName} from './model.js';
 import {notify, problem, toasts} from './ui.js';
 import {plural} from './dom.js';
+import {pastePayload} from './input.js';
 
-const ESC = '\x1b';
 const queue = new UploadQueue({changed:() => { changed('transfers'); progressNotice(); }});
 let notice = null;
 
@@ -18,8 +18,7 @@ const holds = target => state.view === target.view && state.snapshots.get(target
 // Same encoding as a keyboard paste when the drop pane no longer shows the terminal.
 function paste(id, text, pane) {
   if (pane?.id === id) { pane.input.pasteText(text); return ''; }
-  const bracketed = state.snapshots.get(id)?.terminal?.modes?.bracketedPaste;
-  return queueInput(id, bracketed ? `${ESC}[200~${text}${ESC}[201~` : text);
+  return queueInput(id, pastePayload(text, state.snapshots.get(id)?.terminal?.modes));
 }
 
 function deliver(record, copy) {
@@ -35,8 +34,13 @@ export function transfers() { return queue.prune(new Set(state.files.files.map(c
 export function stageDrop(pane, files) {
   if (!files.length) return;
   if (!canInput(pane.id)) { problem('Take control to drop files', 'Only the view that controls this terminal can paste file paths into it.'); return; }
-  const issue = dropProblem(files, shellOf(pane.id));
+  const issue = dropProblem(files, shellOf(pane.id), state.hello?.limits);
   if (issue) { problem('Files not dropped', issue); return; }
+  const copies = state.hello?.limits?.uploadCopies || state.files.limit;
+  if (copies && state.files.files.length + files.length > copies) {
+    problem('Staged copy limit', `Webterminal keeps up to ${copies} staged copies. Remove dropped files or drop fewer files.`);
+    return;
+  }
   return track(queue.add(files, current(pane.id), {deliver, extra:{pane}}));
 }
 

@@ -2,7 +2,7 @@
 // loads on first visit and renders only while shown, so a failing page never
 // takes the terminals down with it.
 import {$, el} from './dom.js';
-import {changed, go, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
+import {applyLimits, changed, go, state, subscribe, workspaceLabel, currentWorkspace} from './model.js';
 import {configure, connect, resetInput, settle} from './connection.js';
 import {problem} from './ui.js';
 import {renderSidebar, configureSidebar} from './sidebar.js';
@@ -12,12 +12,26 @@ import {PAGES, openPalette, showShortcuts} from './palette.js';
 const MODULES = {overview:'./overview.js', processes:'./processes.js', files:'./files.js', settings:'./settings.js'};
 const loaded = new Map();
 let shown = null;
+function applyPalettes(palettes) {
+  const color = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+  for (const theme of ['dark', 'light']) {
+    const palette = palettes?.[theme];
+    if (!palette || !color(palette.fg) || !color(palette.bg) || !Array.isArray(palette.ansi) ||
+      palette.ansi.length !== 16 || !palette.ansi.every(color)) continue;
+    const style = document.documentElement.style;
+    style.setProperty(`--palette-${theme}-fg`, palette.fg);
+    style.setProperty(`--palette-${theme}-bg`, palette.bg);
+    palette.ansi.forEach((value, index) => style.setProperty(`--palette-${theme}-ansi-${index}`, value));
+  }
+}
 
 function receive(message, answered) {
   if (handleTerminal(message)) return;
   switch (message.type) {
     case 'hello':
       state.hello = message;
+      applyPalettes(message.palettes);
+      applyLimits(message.limits);
       state.view = message.view;
       state.connected = true;
       resetInput();

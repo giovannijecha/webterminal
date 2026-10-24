@@ -7,9 +7,7 @@ use std::time::Duration;
 
 #[path = "../native/input_records.rs"]
 mod input_records;
-#[allow(dead_code)]
-#[path = "../native.rs"]
-mod native;
+use webterminal::native;
 
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {

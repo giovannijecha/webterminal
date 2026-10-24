@@ -1,7 +1,5 @@
 //! Owned color-detection fixture. No credential stores or network services.
-#![allow(dead_code)]
-#[path = "../native.rs"]
-mod native;
+use webterminal::native;
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::process::{Command, ExitCode};

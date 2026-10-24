@@ -22,6 +22,8 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const FILE_LIMIT: u64 = 1 << 30;
+/// Maximum files accepted from one browser drop.
+pub const DROP_LIMIT: usize = 64;
 /// Registered copies plus transfers in flight; removing copies frees room.
 pub const COPY_LIMIT: usize = 512;
 const ORIGINAL_LIMIT: usize = 1024;

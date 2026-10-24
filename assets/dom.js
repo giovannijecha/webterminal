@@ -1,5 +1,6 @@
 // Small DOM and formatting helpers shared by every workbench view.
 import {displayPath} from './common.js';
+export {icon} from './common.js';
 
 export const $ = id => document.getElementById(id);
 
@@ -20,16 +21,6 @@ export function el(tag, props = {}, ...children) {
   }
   node.append(...children.flat(Infinity).filter(child => child !== null && child !== undefined && child !== false));
   return node;
-}
-
-export function icon(name, className = '') {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', `icon${className ? ` ${className}` : ''}`);
-  svg.setAttribute('aria-hidden', 'true');
-  const use = document.createElementNS(svg.namespaceURI, 'use');
-  use.setAttribute('href', `#icon-${name}`);
-  svg.append(use);
-  return svg;
 }
 
 export function badge(label, tone = 'neutral', extra = {}) {
