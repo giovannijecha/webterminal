@@ -59,6 +59,27 @@ async function main(){
   check((await sessions()).length===0&&document.querySelectorAll('#navigation-projects .navigation-project[data-workspace]').length===1,'fresh server has one empty workspace');
   await capture('empty-desktop',1280);check(fits($('empty-new')),'desktop empty action fits');
 
+  const {state:connectionState}=await import('/model.js'), {renderSidebar}=await import('/sidebar.js');
+  const originalConnection={connected:connectionState.connected,hello:connectionState.hello,stopping:connectionState.stopping};
+  try{
+    for(const width of [1280,1920]){
+      Object.assign(connectionState,originalConnection);renderSidebar();await capture('footer-connected-'+width,width,false);
+      const baseline=$('sidebar').getBoundingClientRect(),mainLeft=$('main').getBoundingClientRect().left,footerHeight=document.querySelector('.sb-foot').getBoundingClientRect().height;
+      for(const [name,hello,stopping] of [['connecting',null,false],['reconnecting',originalConnection.hello,false],['stopped',originalConnection.hello,true]]){
+        Object.assign(connectionState,{connected:false,hello,stopping});renderSidebar();await capture('footer-'+name+'-'+width,width,true);
+        const sidebar=$('sidebar').getBoundingClientRect(),settings=$('settings-button').getBoundingClientRect();
+        check(Math.abs(sidebar.width-baseline.width)<.5,name+' keeps sidebar width at '+width+'px: '+sidebar.width+' vs '+baseline.width);
+        check(settings.right<=sidebar.right-1&&settings.left>=sidebar.left,name+' keeps Settings inside the sidebar');
+        check($('main').getBoundingClientRect().left===mainLeft&&noSideScroll(),name+' leaves the page position and width unchanged');
+        check(document.querySelector('.sb-foot').getBoundingClientRect().height===footerHeight,name+' keeps footer height stable');
+        check(document.querySelector('.server-text').title.includes($('uptime').textContent),name+' exposes the complete connection detail');
+      }
+    }
+  }finally{Object.assign(connectionState,originalConnection);renderSidebar();}
+  await capture('footer-restored',1280,false);
+
+  localStorage.setItem('webterminal.recentFolders',JSON.stringify(['\\\\?\\'+CWD,CWD,CWD.toLowerCase().replaceAll('\\','/')+'/',CHILD,'\\\\?\\'+CHILD,LONG]));
+
   $('empty-new').click();await until(launcher,'launcher');
   const {openLauncher:reopenLauncher}=await import('/launcher.js');
   const firstLauncher=launcher();
@@ -72,6 +93,18 @@ async function main(){
   check(!launcher(),'Cancel does not reveal an extra queued launcher');
   reopenLauncher();await until(launcher,'launcher after Cancel');
   check(same($('launch-folder').value,CWD),'launcher starts in the server folder');
+  launcher().querySelector('.folder-row > button:first-of-type').click();
+  const recents=document.querySelector('[role="menu"][aria-label="Recent folders"]');
+  const recentItems=[...recents.querySelectorAll('.menu-item')];
+  await capture('recent-folders-deduplicated',1280);
+  check(recentItems.length===3,'recent menu collapses saved verbatim, case and separator aliases');
+  check(fits(recents)&&recentItems.every(fits),'recent menu and every folder stay inside the viewport');
+  check(JSON.parse(localStorage.getItem('webterminal.recentFolders')).length===3,'reading recent folders repairs the saved history');
+  check(recentItems.every(item=>item.title&&item.textContent.endsWith(item.title)),'truncated recent paths expose their complete target');
+  check(recentItems.map(item=>item.textContent.split(' — ')[0]).join('|')==='sample-workspace|reports & notes|and-a-nested-segment','long recent paths show their distinguishing folder name first');
+  check(!recentItems.some(item=>item.title.startsWith('\\\\?\\')),'recent paths use ordinary Windows spelling');
+  enter(recents,'Home');document.activeElement.click();
+  check(same($('launch-folder').value,CWD),'a recent folder restores the complete input path');
   launcher().querySelector('.folder-row > button:last-child').click();
   await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'picker initial folder');
   check($('directory-breadcrumbs').lastElementChild.textContent==='sample-workspace'&&$('directory-path').hidden,'picker shows current folder as breadcrumbs');
@@ -95,6 +128,10 @@ async function main(){
   address(CHILD);await until(()=>$('directory-breadcrumbs').lastElementChild.textContent==='reports & notes'&&!$('directory-create').disabled,'typed valid address');
   $('directory-create').click();await until(()=>!$('directory-dialog').open,'picker closes');
   check(launcher()&&same($('launch-folder').value,CHILD),'picked folder returns to the launcher without opening a terminal');
+  launcher().querySelector('.folder-row > button:last-child').click();
+  await until(()=>$('directory-dialog').open&&!$('directory-create').disabled,'picker reopens at current input');
+  check($('directory-breadcrumbs').lastElementChild.textContent==='reports & notes','Browse reuses the folder currently in the launcher');
+  $('directory-dialog').querySelector('button[value="cancel"]').click();await until(()=>!$('directory-dialog').open,'picker returns to launcher');
   check((await sessions()).length===0,'choosing a folder alone starts nothing');
   await capture('launcher-desktop',1280);
   launcher().querySelector('.dlg-foot .btn.primary').click();

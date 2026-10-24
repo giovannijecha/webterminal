@@ -159,6 +159,8 @@ function renderServer() {
   $('connection-dot').dataset.tone = now.tone;
   setText($('connection-status'), now.label);
   setText($('uptime'), now.detail);
+  const status = `${now.label} · ${now.detail}`, text = $('connection-status').parentElement;
+  if (text.title !== status) text.title = status;
   setText($('brand-sub'), state.hello?.port ? `127.0.0.1:${state.hello.port}` : 'Local terminal server');
   // Segments: failed, running, then exited terminals.
   const total = state.sessions.size, failures = failedSessions().length;

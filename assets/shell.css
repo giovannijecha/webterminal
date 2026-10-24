@@ -1,6 +1,6 @@
 /* Inset shell: sidebar, page frame and toasts. Desktop layout; internal surfaces scroll. */
 #app{display:grid;grid-template-columns:var(--sidebar-width) minmax(0,1fr);gap:var(--gutter);height:100dvh;padding:var(--gutter);background:var(--canvas)}
-.sidebar{display:flex;flex-direction:column;gap:16px;min-height:0;padding:12px 10px 10px;border-radius:var(--radius-container);background:var(--container)}
+.sidebar{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;padding:12px 10px 10px;border-radius:var(--radius-container);background:var(--container)}
 /* Brand: opens the server menu */
 .brand{display:flex;align-items:center;gap:12px;min-width:0;padding:6px;border-radius:var(--radius-container);color:var(--text);text-align:left}
 .brand:hover,.brand[aria-expanded="true"]{background:var(--frame)}
@@ -35,17 +35,17 @@
 .navigation-project.drop-before{box-shadow:0 -2px 0 var(--focus)}
 .navigation-project.drop-after{box-shadow:0 2px 0 var(--focus)}
 /* Footer: capacity, connection and Settings */
-.sb-foot{display:grid;gap:10px}
+.sb-foot{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;min-width:0}
 .meter-label{display:flex;justify-content:space-between;gap:8px;padding:0 10px;font-size:12px;line-height:16px;color:var(--muted)}
 .meter{display:flex;gap:2px;height:4px;margin:0 10px;border-radius:2px;background:var(--toolbar);overflow:hidden}
 .meter i{display:block;height:100%}
 .meter i:nth-child(1){background:var(--red)}
 .meter i:nth-child(2){background:var(--neutral)}
 .meter i:nth-child(3){background:#6c6c75}
-.server-row{display:flex;align-items:center;gap:8px;padding:6px 4px 0 10px;border-top:1px solid var(--divider)}
+.server-row{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 4px 0 10px;border-top:1px solid var(--divider)}
 .server-text{flex:1;min-width:0;font-size:12px;line-height:18px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .server-text b{color:var(--text);font-weight:700}
-#settings-button{width:34px;height:34px}
+#settings-button{width:34px;height:34px;flex:none}
 #settings-button[aria-current="page"]{background:var(--selected);color:var(--ink)}
 /* Main frame and pages */
 .main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border-radius:var(--radius-container);background:var(--container)}

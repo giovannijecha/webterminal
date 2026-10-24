@@ -4,7 +4,7 @@
 import {ask} from './connection.js';
 import {PANE_LIMIT, SESSION_LIMIT, WORKSPACE_LIMIT, currentWorkspace, focusedId, shellLabel, state, workspaceById, workspaceLabel} from './model.js';
 import {el, icon, storage} from './dom.js';
-import {displayPath} from './common.js';
+import {displayPath, folderKey, folderName, folderPath} from './common.js';
 import {DirectoryPicker} from './directory.js';
 import {Dialogs, choice} from './overlays.js';
 import {dialogs, menu, problem} from './ui.js';
@@ -14,12 +14,29 @@ const hooks = {estimate:() => ({cols:120, rows:30}), created() {}};
 export function configureLauncher(next) { Object.assign(hooks, next); }
 
 const local = storage('local'), RECENT = 'webterminal.recentFolders';
-function recentFolders() {
-  let saved = [];
-  try { saved = JSON.parse(local.get(RECENT) || '[]'); } catch { /* Start empty. */ }
-  return [...new Set([...(Array.isArray(saved) ? saved : []), startFolder()].filter(path => typeof path === 'string' && path))].slice(0, 8);
+function distinctFolders(paths) {
+  const seen = new Set(), result = [];
+  for (const value of paths) {
+    if (typeof value !== 'string') continue;
+    const path = folderPath(value.trim());
+    if (!absolute(path) || path.includes('\0')) continue;
+    const key = folderKey(path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(path);
+    if (result.length === 8) break;
+  }
+  return result;
 }
-function remember(path) { local.set(RECENT, JSON.stringify([path, ...recentFolders().filter(item => item !== path)].slice(0, 8))); }
+function recentFolders() {
+  const raw = local.get(RECENT);
+  let saved = [];
+  try { saved = JSON.parse(raw || '[]'); } catch { /* Repair malformed history below. */ }
+  const clean = distinctFolders(Array.isArray(saved) ? saved : []), encoded = JSON.stringify(clean);
+  if (raw !== null && raw !== encoded) local.set(RECENT, encoded);
+  return distinctFolders([...clean, startFolder()]);
+}
+function remember(path) { local.set(RECENT, JSON.stringify(distinctFolders([path, ...recentFolders()]))); }
 
 export function startFolder() { return state.settings?.settings?.startFolder || state.hello?.cwd || ''; }
 export function splitFolder() { return state.sessions.get(focusedId())?.cwd || startFolder(); }
@@ -65,10 +82,10 @@ export function openLauncher({workspace = state.selected, cwd = splitFolder()} =
   if (!state.connected) { problem('Connection is unavailable', 'Reconnecting to the local server…'); return; }
   if (state.sessions.size >= SESSION_LIMIT) { problem('Limit reached', `Webterminal runs up to ${SESSION_LIMIT} terminals. Close one to open another.`); return; }
   const folder = el('input', {class:'field mono', id:'launch-folder', value:displayPath(cwd), autocomplete:'off', spellcheck:'false'});
-  const recent = el('button', {type:'button', class:'btn ghost', 'aria-haspopup':'menu'}, el('span', {text:'Recent folders'}), icon('chevron-down', 'sm'));
+  const recent = el('button', {type:'button', class:'btn ghost', 'aria-haspopup':'menu', disabled:!recentFolders().length}, el('span', {text:'Recent folders'}), icon('chevron-down', 'sm'));
   const browse = el('button', {type:'button', class:'btn', text:'Browse…'});
-  recent.addEventListener('click', () => menu.toggle(recent, recentFolders().map(path => ({label:displayPath(path), action:() => { folder.value = displayPath(path); folder.focus(); }})), {label:'Recent folders'}));
-  browse.addEventListener('click', () => chooseFolder(path => { folder.value = displayPath(path); folder.focus(); }));
+  recent.addEventListener('click', () => menu.toggle(recent, recentFolders().map(path => ({label:`${folderName(path)} — ${path}`, title:path, action:() => { folder.value = path; folder.focus(); }})), {label:'Recent folders'}));
+  browse.addEventListener('click', () => chooseFolder(path => { folder.value = displayPath(path); folder.focus(); }, () => folder.value.trim() || splitFolder()));
   const select = el('select', {id:'launch-workspace'});
   const preferred = workspaceById(workspace);
   for (const item of state.workspaces) {

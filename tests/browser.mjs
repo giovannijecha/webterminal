@@ -1,13 +1,83 @@
+import {moduleUnderTest} from './support/browser-module.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalInput} from '../assets/input.js';
 import {TerminalRenderer, lineText} from '../assets/render.js';
 import {pathCrumbs} from '../assets/directory.js';
 import {mergeUpdate} from '../assets/updates.js';
-import {NAME_LIMIT, nameError} from '../assets/common.js';
+import {NAME_LIMIT, displayPath, folderKey, folderName, folderPath, nameError} from '../assets/common.js';
 import {shellLabel} from '../assets/model.js';
 
+function recentFixture(saved, cwd = 'C:\\Work', ask = async () => ({id:'s1'})) {
+  const values = new Map([['webterminal.recentFolders', JSON.stringify(saved)]]);
+  const state = {hello:{cwd},sessions:new Map(),workspaces:[{id:'w1',sessions:[]}],selected:'w1'};
+  const api = moduleUnderTest('launcher', {
+    state, displayPath, folderKey, folderName, folderPath, DirectoryPicker:class {}, ask,
+    PANE_LIMIT:4, SESSION_LIMIT:32, workspaceById:id => state.workspaces.find(workspace => workspace.id === id),
+    storage:() => ({get:key => values.get(key) ?? null, set:(key,value) => values.set(key,value)}),
+  }, ['recentFolders', 'remember', 'launch']);
+  return {api, values};
+}
+
+test('recent folders merge Windows path aliases and repair saved duplicates', () => {
+  const {api, values} = recentFixture([
+    '\\\\?\\C:\\Work', 'C:\\Work', 'c:/work/', 'C:\\Work\\.', 'C:\\Work\\child\\..',
+    '\\\\?\\UNC\\server\\share\\team', '\\\\SERVER\\share\\TEAM\\', null, '', 'relative',
+  ], 'c:\\work\\');
+  const expected = ['C:\\Work', '\\\\server\\share\\team'];
+  assert.deepEqual(Array.from(api.recentFolders()), expected);
+  assert.deepEqual(JSON.parse(values.get('webterminal.recentFolders')), expected);
+  api.remember('C:/WORK/');
+  assert.deepEqual(Array.from(api.recentFolders()), ['C:\\WORK', '\\\\server\\share\\team']);
+});
+
+test('recent folders bound distinct entries and recover malformed saved data', () => {
+  const paths = Array.from({length:10}, (_,index) => `C:\\folder-${index}`);
+  const {api, values} = recentFixture(paths.flatMap(path => [path, '\\\\?\\' + path]));
+  assert.deepEqual(Array.from(api.recentFolders()), paths.slice(0,8));
+  api.remember(paths[6]);
+  assert.deepEqual(Array.from(api.recentFolders()), [paths[6], ...paths.slice(0,6), paths[7]]);
+  values.set('webterminal.recentFolders', '{broken');
+  assert.deepEqual(Array.from(api.recentFolders()), ['C:\\Work']);
+  assert.deepEqual(JSON.parse(values.get('webterminal.recentFolders')), []);
+});
+
+test('recent folders promote successful launches and leave failures out of history', async () => {
+  let fail = true;
+  const {api, values} = recentFixture(['C:\\Other', 'C:\\Work'], 'C:\\Work', async () => {
+    if (fail) throw new Error('Folder is unavailable');
+    return {id:'s1'};
+  });
+  const before = values.get('webterminal.recentFolders');
+  assert.equal(await api.launch({cwd:'C:\\missing'}), 'Folder is unavailable');
+  assert.equal(values.get('webterminal.recentFolders'), before);
+  fail = false;
+  assert.equal(await api.launch({cwd:'C:/WORK/'}), '');
+  assert.deepEqual(JSON.parse(values.get('webterminal.recentFolders')), ['C:\\WORK', 'C:\\Other']);
+});
+
 const ESC = '\x1b';
+
+test('folder identity preserves drive and share boundaries while resolving spelling aliases', () => {
+  assert.equal(folderPath('C:/Work/child/../.'), 'C:\\Work');
+  assert.equal(folderKey('C:/Work/child/../.'), folderKey('\\\\?\\c:\\work\\'));
+  assert.equal(folderKey('\\\\?\\UNC\\server\\share\\a\\..'), folderKey('\\\\SERVER\\SHARE\\'));
+  assert.equal(folderKey('C:\\..\\..\\'), folderKey('c:\\'));
+  assert.notEqual(folderKey('C:'), folderKey('C:\\'));
+  assert.notEqual(folderKey('C:\\work'), folderKey('C:\\workspace'));
+  assert.notEqual(folderKey('\\\\server\\share'), folderKey('\\\\server\\share2'));
+});
+
+test('Windows namespace display accepts UNC casing without corrupting other namespaces', () => {
+  const path = '\\\\?\\unc\\server\\share\\Projects';
+  assert.equal(displayPath(path), '\\\\server\\share\\Projects');
+  assert.equal(folderKey(path), folderKey('\\\\SERVER\\share\\projects'));
+  const crumbs = pathCrumbs(path);
+  assert.equal(crumbs[0].label, '\\\\server\\share');
+  assert.equal(crumbs.at(-1).path, '\\\\?\\UNC\\server\\share\\Projects');
+  assert.equal(displayPath('\\\\?\\Volume{fixture}\\'), '\\\\?\\Volume{fixture}\\');
+  assert.equal(folderPath('\\\\?\\Volume{fixture}\\'), '\\\\?\\Volume{fixture}\\');
+});
 
 test('names use Unicode character limits rather than UTF-16 units', () => {
   assert.equal(nameError('\u{1f642}'.repeat(NAME_LIMIT)), '');

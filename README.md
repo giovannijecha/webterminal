@@ -129,9 +129,9 @@ shortcuts.
 The server serves only its embedded browser assets, not files from the chosen
 working directory. Session content and history are not written to transcripts;
 they disappear when the server stops. Dropped-file copies are written under
-`%TEMP%` and removed when their session ends. The browser keeps recent folders
-in local storage, and the selected workspace and the Settings tab only for the
-tab's session.
+`%TEMP%` and removed when their session ends. The browser stores up to eight
+distinct recent folder paths in local storage, merging equivalent Windows
+spellings. The selected workspace and Settings tab stay only for the tab's session.
 
 ## Compatibility and limits
 
