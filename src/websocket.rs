@@ -1,5 +1,5 @@
 //! Original RFC 6455 framing and handshake primitives, with bounded receive state.
-use std::io::{self, Write};
+use std::io::{self, IoSlice, Write};
 use std::net::TcpStream;
 
 const MAX_MESSAGE: usize = 131_072;
@@ -141,19 +141,39 @@ fn invalid(message: &str) -> io::Error {
 }
 
 pub fn write_frame(stream: &mut TcpStream, opcode: u8, data: &[u8]) -> io::Result<()> {
-    let mut header = vec![0x80 | opcode];
-    if data.len() < 126 {
-        header.push(data.len() as u8);
+    let mut header = [0u8; 10];
+    header[0] = 0x80 | opcode;
+    let length = if data.len() < 126 {
+        header[1] = data.len() as u8;
+        2
     } else if data.len() <= u16::MAX as usize {
-        header.push(126);
-        header.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        header[1] = 126;
+        header[2..4].copy_from_slice(&(data.len() as u16).to_be_bytes());
+        4
     } else {
-        header.push(127);
-        header.extend_from_slice(&(data.len() as u64).to_be_bytes());
+        header[1] = 127;
+        header[2..].copy_from_slice(&(data.len() as u64).to_be_bytes());
+        10
+    };
+    // Gather header and payload in one OS write, without copying snapshots.
+    let mut slices = [IoSlice::new(&header[..length]), IoSlice::new(data)];
+    let mut pending = &mut slices[..];
+    while !pending.is_empty() {
+        match stream.write_vectored(pending) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "WebSocket write stopped",
+                ));
+            }
+            Ok(written) => IoSlice::advance_slices(&mut pending, written),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
     }
-    stream.write_all(&header)?;
-    stream.write_all(data)
+    Ok(())
 }
+
 pub fn send_text(stream: &mut TcpStream, text: &str) -> io::Result<()> {
     write_frame(stream, 1, text.as_bytes())
 }

@@ -3,8 +3,8 @@ use crate::json;
 use std::collections::HashSet;
 
 pub const PANE_LIMIT: usize = 4;
-const WORKSPACE_LIMIT: usize = 16;
-const NAME_LIMIT: usize = 80;
+pub const WORKSPACE_LIMIT: usize = 16;
+pub const NAME_LIMIT: usize = 80;
 
 /// Validates a user-assigned name; an empty or blank name clears it.
 pub fn custom_name(name: &str, kind: &str) -> Result<Option<String>, String> {

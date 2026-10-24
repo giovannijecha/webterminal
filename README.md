@@ -21,6 +21,9 @@ PowerShell as you would in another terminal.
   have not been manually validated.
 
 Webterminal has no Cargo dependencies, npm packages, or frontend build step.
+The normal build includes only the application. Development fixtures and their
+integration tests require the `fixtures` Cargo feature; see
+[development and verification](docs/DEVELOPMENT.md).
 
 GitHub Actions runs the required `Commit attribution` and `Windows checks`
 jobs on the maintainer's native Windows runner. Each job uses a fresh checkout;
@@ -118,6 +121,9 @@ shortcuts.
   about four seconds, errors stay until you close them, and pointing at or
   focusing a toast keeps it open; Escape closes the focused one. Toasts never
   take focus from the terminal or cover anything outside their cards.
+  Repeated errors share a counter. The tray scrolls after three cards and
+  retains 64 distinct errors; further errors leave a visible summary of older
+  details that were replaced.
   Webterminal shows no browser or system notifications.
 
 The server serves only its embedded browser assets, not files from the chosen

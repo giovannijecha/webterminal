@@ -20,16 +20,27 @@ fn screen_lines(snapshot: &Value) -> Vec<String> {
     lines
         .iter()
         .map(|line| {
-            let Value::Array(cells) = line.get("cells").unwrap() else {
-                panic!("Expected terminal cells");
+            let Value::Array(runs) = line.get("runs").unwrap() else {
+                panic!("Expected terminal runs");
             };
-            cells
-                .iter()
-                .filter_map(|cell| {
-                    let Value::Array(parts) = cell else {
-                        panic!("Expected terminal cell");
+            runs.iter()
+                .flat_map(|run| {
+                    let Value::Array(parts) = run else {
+                        panic!("Expected run");
                     };
-                    parts.first().and_then(Value::string)
+                    match &parts[4] {
+                        Value::String(text) => vec![text.as_str()],
+                        Value::Array(cells) => cells
+                            .iter()
+                            .filter_map(|cell| {
+                                let Value::Array(parts) = cell else {
+                                    panic!("Expected cell");
+                                };
+                                parts.first().and_then(Value::string)
+                            })
+                            .collect(),
+                        _ => panic!("Expected run payload"),
+                    }
                 })
                 .collect()
         })

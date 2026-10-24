@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import {nameError} from '../assets/common.js';
 
 // Execute the owned module with its external edges replaced by fixture APIs.
 // This exercises the real exported action without starting a browser or server.
@@ -138,8 +139,14 @@ test('joining and leaving observers refreshes workspace chrome without repaintin
   changes.length = 0;
   api.handleTerminal({...first, seq:3, viewers:2});
   assert.deepEqual(changes, [], 'ordinary output does not rebuild workspace chrome');
+  assert.equal(state.sessions.get('s1'), session, 'ordinary output keeps session metadata unchanged');
   api.handleTerminal({...first, seq:4});
   assert.deepEqual(changes, ['focus'], 'observer departure removes the badge');
+  changes.length = 0;
+  api.handleTerminal({...first, seq:5, terminal:{title:'⠋ Busy'}});
+  api.handleTerminal({...first, seq:6, terminal:{title:''}});
+  assert.equal(state.sessions.get('s1'), session, 'session-list metadata owns titles, including an empty reset');
+  assert.deepEqual(changes, [], 'spinner titles do not trigger chrome renders per snapshot');
 });
 
 test('the launcher asks only for a folder and a workspace, then starts the shell there', async () => {
@@ -184,7 +191,7 @@ function closeFlow({sessions = ['s1'], workspaces = [{id:'w1', name:null, sessio
     ask:async command => { log.asks.push(JSON.parse(JSON.stringify(command))); const reply = replies.shift(); if (reply instanceof Error) throw reply; return reply; },
     queueInput() {}, send:() => true, PANE_LIMIT:4, WORKSPACE_LIMIT:16, changed() {}, control:() => ({can:true}), go() {}, showTerminal() {}, state,
     terminalName:id => `Terminal ${id}`, terminalPlace:() => 'PowerShell in C:\\work', workspaceById:id => state.workspaces.find(item => item.id === id),
-    workspaceLabel:() => 'Workspace 1', workspaceOf:() => state.workspaces[0], el:node, plural:(count, word) => `${count} ${word}${count === 1 ? '' : 's'}`,
+    workspaceLabel:() => 'Workspace 1', workspaceOf:() => state.workspaces[0], el:node, nameError, plural:(count, word) => `${count} ${word}${count === 1 ? '' : 's'}`,
     dialogs:{confirm:async options => { log.confirms.push({title:options.title, description:options.description, action:options.action, targets:options.body.children.map(words)}); during(state, log.confirms.length); return answers.shift(); }},
     menu:{}, notify:title => log.notices.push(title), problem:title => log.problems.push(title),
   }, ['closeTerminals', 'closeWorkspace']);
@@ -365,13 +372,45 @@ test('a replaced toast cannot dismiss its successor with a stale timer', () => {
   assert.deepEqual(titles(), []);
 });
 
-test('at most three toasts show, and errors are evicted last', () => {
+test('routine toasts make room while errors remain', () => {
   const {toasts, titles} = toastBench();
   toasts.show({title:'Error', kind:'error'});
   toasts.show({title:'One'});
   toasts.show({title:'Two'});
   toasts.show({title:'Three'});
   assert.deepEqual(titles(), ['Error', 'Two', 'Three']);
+});
+
+test('a held routine toast survives a full stack', () => {
+  const {toasts, titles} = toastBench();
+  const held = toasts.show({title:'Keep'});
+  held.fire('pointerenter');
+  toasts.show({title:'One'});
+  toasts.show({title:'Two'});
+  toasts.show({title:'Three'});
+  assert.deepEqual(titles(), ['Keep', 'Two', 'Three']);
+});
+
+test('distinct errors stay until dismissed and repeated errors share one card', () => {
+  const {toasts, titles} = toastBench();
+  for (let index = 1; index <= 4; index++) toasts.show({title:`Error ${index}`, kind:'error'});
+  assert.deepEqual(titles(), ['Error 1', 'Error 2', 'Error 3', 'Error 4']);
+  const repeated = toasts.show({title:'Error 4', kind:'error'});
+  assert.equal(repeated, [...toasts.items.keys()].at(-1));
+  assert.deepEqual(titles(), ['Error 1', 'Error 2', 'Error 3', 'Error 4']);
+  assert.match(toasts.items.get(repeated).detail.textContent, /Occurred 2 times/);
+  toasts.hide(repeated);
+  assert.deepEqual(titles(), ['Error 1', 'Error 2', 'Error 3']);
+});
+
+test('error history has a bounded, visible overflow summary', () => {
+  const {toasts, titles} = toastBench();
+  for (let index = 1; index <= 66; index++) toasts.show({title:`Error ${index}`, kind:'error'});
+  assert.equal(toasts.items.size, 65, '64 recent errors and one summary remain');
+  assert.equal(titles().includes('Error 1'), false);
+  assert.equal(titles().includes('Error 66'), true);
+  assert.equal(titles().includes('Earlier errors'), true);
+  assert.match(toasts.items.get(toasts.overflow).detail.textContent, /2 earlier errors were replaced/);
 });
 
 test('dismissing a focused toast returns focus without stealing it on show', () => {

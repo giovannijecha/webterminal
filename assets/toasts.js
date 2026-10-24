@@ -6,7 +6,7 @@
 // cards.
 import {el, icon} from './dom.js';
 
-const LIMIT = 3, SUCCESS_MS = 4000, ACTION_MS = 8000;
+const LIMIT = 3, ERROR_LIMIT = 64, SUCCESS_MS = 4000, ACTION_MS = 8000;
 
 export class Toasts {
   constructor(root, live, {home = () => null} = {}) {
@@ -15,16 +15,36 @@ export class Toasts {
     this.home = home;
     this.items = new Map();
     this.announcement = 0;
+    this.overflow = null;
+    this.overflowCount = 0;
   }
   // kind: success | error. `action` is {label, run}. A `sticky` toast stays
   // until it is dismissed, cleared or replaced; a newer toast with the same
   // `key` replaces the older one.
-  show({title, text = '', kind = 'success', action = null, key = null, sticky = false}) {
+  show({title, text = '', kind = 'success', action = null, key = null, sticky = false}, summary = false) {
+    if (!summary && kind === 'error' && !action && key === null) {
+      const repeated = [...this.items.values()].find(item => !item.summary && item.kind === 'error' && !item.action && item.key === null && item.title === title && item.text === text);
+      if (repeated) {
+        repeated.count++;
+        repeated.detail.textContent = `${text ? `${text} ` : ''}Occurred ${repeated.count} times.`;
+        this.announce(`${title}. Occurred ${repeated.count} times.`);
+        return repeated.node;
+      }
+    }
     if (key !== null) this.clear(key);
-    while (this.items.size >= LIMIT) this.hide(this.oldest());
+    if (!summary && kind === 'error') {
+      const errors = [...this.items.values()].filter(item => item.kind === 'error' && !item.summary);
+      if (errors.length >= ERROR_LIMIT) {
+        this.hide(errors.find(item => !item.held.size) || errors[0]);
+        this.overflowCount++;
+        this.showOverflow();
+      }
+    }
+    while (this.items.size >= LIMIT && this.oldestTransient()) this.hide(this.oldestTransient());
     const node = el('section', {class:'toast', 'data-kind':kind, 'aria-label':title});
-    const item = {node, key, kind, held:new Set(), timer:0, returnTo:null, delay:sticky || kind === 'error' ? 0 : action ? ACTION_MS : SUCCESS_MS};
-    const body = el('div', {class:'toast-body'}, el('h2', {text:title}), text ? el('p', {text}) : null);
+    const detail = kind === 'error' ? el('p', {text}) : text ? el('p', {text}) : null;
+    const item = {node, key, kind, title, text, action, detail, summary, count:1, held:new Set(), timer:0, returnTo:null, delay:sticky || kind === 'error' ? 0 : action ? ACTION_MS : SUCCESS_MS};
+    const body = el('div', {class:'toast-body'}, el('h2', {text:title}), detail);
     if (action) {
       const run = el('button', {class:'btn sm', type:'button', text:action.label});
       run.addEventListener('click', () => { this.hide(item); action.run(); });
@@ -49,6 +69,7 @@ export class Toasts {
     this.items.set(node, item);
     this.root.append(node);
     this.root.hidden = false;
+    this.overflowState();
     this.arm(item);
     this.announce(text ? `${title}. ${text}` : title);
     return node;
@@ -66,13 +87,28 @@ export class Toasts {
     const hadFocus = item.node.contains(document.activeElement);
     this.items.delete(item.node);
     item.node.remove();
+    if (item.summary) { this.overflow = null; this.overflowCount = 0; }
     this.root.hidden = !this.items.size;
+    this.overflowState();
     if (hadFocus) (item.returnTo?.isConnected && !this.root.contains(item.returnTo) ? item.returnTo : this.home())?.focus({preventScroll:true});
   }
-  // Errors and toasts in use are evicted last.
-  oldest() {
+  // Routine cards make room for errors; errors leave only by dismissal or
+  // the explicit bounded-history summary.
+  oldestTransient() {
     const items = [...this.items.values()];
-    return items.find(item => !item.held.size && item.kind !== 'error') || items.find(item => !item.held.size) || items[0];
+    return items.find(item => !item.held.size && item.kind !== 'error');
+  }
+  showOverflow() {
+    const text = `${this.overflowCount} earlier ${this.overflowCount === 1 ? 'error was' : 'errors were'} replaced to keep error history bounded.`;
+    if (this.overflow && this.shown(this.overflow)) {
+      this.items.get(this.overflow).detail.textContent = text;
+      return;
+    }
+    this.overflow = this.show({title:'Earlier errors', text, kind:'error'}, true);
+  }
+  overflowState() {
+    this.root.classList?.toggle('overflowing', this.items.size > LIMIT);
+    if (this.items.size > LIMIT && Number.isFinite(this.root.scrollHeight)) this.root.scrollTop = this.root.scrollHeight;
   }
   hold(item, reason, on) {
     if (on) item.held.add(reason); else item.held.delete(reason);

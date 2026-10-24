@@ -40,15 +40,9 @@ impl Value {
             .and_then(Self::number)
             .ok_or_else(|| format!("Missing integer field: {key}"))
     }
-    pub fn boolean(&self) -> Option<bool> {
-        match self {
-            Self::Bool(b) => Some(*b),
-            _ => None,
-        }
-    }
     pub fn array(&self) -> Option<&[Value]> {
         match self {
-            Self::Array(a) => Some(a),
+            Self::Array(values) => Some(values),
             _ => None,
         }
     }
@@ -92,23 +86,34 @@ impl Value {
 
 pub fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c < ' ' => {
-                use std::fmt::Write;
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
+    write_string(&mut out, s).expect("String JSON sink");
     out
+}
+
+/// Write one JSON string to either an output buffer or a counting sink.
+pub fn write_string(out: &mut impl std::fmt::Write, value: &str) -> std::fmt::Result {
+    out.write_char('"')?;
+    let mut start = 0;
+    for (index, ch) in value.char_indices() {
+        let escape = match ch {
+            '"' => Some("\\\""),
+            '\\' => Some("\\\\"),
+            '\n' => Some("\\n"),
+            '\r' => Some("\\r"),
+            '\t' => Some("\\t"),
+            c if c < ' ' => None,
+            _ => continue,
+        };
+        out.write_str(&value[start..index])?;
+        if let Some(escape) = escape {
+            out.write_str(escape)?;
+        } else {
+            write!(out, "\\u{:04x}", ch as u32)?;
+        }
+        start = index + ch.len_utf8();
+    }
+    out.write_str(&value[start..])?;
+    out.write_char('"')
 }
 
 pub fn parse(s: &str) -> Result<Value, String> {

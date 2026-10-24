@@ -41,6 +41,7 @@ impl Root {
                 TryLockError::WouldBlock => io::Error::other("Upload staging is owned elsewhere"),
             })?;
             held.write_all(MARKER)?;
+            held.sync_all()?;
             fs::create_dir(&path)?;
             created = true;
             let mut marker = File::create_new(path.join(MARKER_FILE))?;
@@ -183,7 +184,9 @@ pub(super) fn copy(
         file.write_all(&buffer[..read])?;
         remaining -= read as u64;
     }
-    file.sync_all()
+    // Staged payloads need immediate readability, not crash durability. Keep
+    // the ownership marker durable, without syncing up to 1 GiB per payload.
+    Ok(())
 }
 
 fn owned(root: &Path) -> bool {

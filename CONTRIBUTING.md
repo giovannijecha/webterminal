@@ -20,8 +20,8 @@ Run the applicable checks from the repository root:
 ```text
 cargo build --locked --offline
 cargo fmt --all -- --check
-cargo clippy --locked --offline --all-targets -- -D warnings
-cargo test --locked --offline
+cargo clippy --locked --offline --all-features --all-targets -- -D warnings
+cargo test --locked --offline --features fixtures
 node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs tests/workbench-flows.mjs
 node --test tests/attribution.mjs
 node scripts/check-attribution.mjs --history

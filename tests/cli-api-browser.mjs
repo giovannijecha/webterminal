@@ -23,6 +23,8 @@ for(const path of Object.values(binaries))await stat(path);
 for(const kind of selected?[selected]:['codex','claude'])await stat(executables[kind]);
 
 const harness=String.raw`
+import {cellsOf,lineText,terminalColor} from '/render.js';
+
 const KIND=__KIND__;
 const CWD=__CWD__;
 const results=JSON.parse(sessionStorage.getItem('apiBrowserResults')||'[]');
@@ -30,7 +32,7 @@ const $=id=>document.getElementById(id);
 const text=()=>$('terminal-lines').textContent||'';
 function liveText(){
   const shot=window.__snapshotBodies[window.__snapshots.at(-1)?.id];
-  return (shot?.terminal?.screen||[]).map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n');
+  return (shot?.terminal?.screen||[]).map(line=>cellsOf(line).filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n');
 }
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(probe,label,attempts=400){
@@ -146,11 +148,11 @@ async function main(){
       await onboarding();
       const peer=await observer(id);
       check(peer.snapshot.controller!==peer.hello.view,'second browser view observes');
-      const colors=new Set(peer.snapshot.terminal.screen.flatMap(line=>line.cells)
-        .filter(cell=>cell[1]>0&&cell[0].trim()&&cell[2]!=='#cccccc').map(cell=>cell[2]));
+      const colors=new Set(peer.snapshot.terminal.screen.flatMap(line=>cellsOf(line))
+        .filter(cell=>cell[1]>0&&cell[0].trim()&&cell[2]!=null).map(cell=>terminalColor(cell[2])));
       const rendered=new Set([...$('terminal-lines').querySelectorAll('.term-cell')]
         .filter(node=>node.textContent.trim()).map(node=>getComputedStyle(node).color));
-      check([...colors].some(hex=>rendered.has('rgb('+[1,3,5].map(index=>parseInt(hex.slice(index,index+2),16)).join(', ')+')')),
+      check([...colors].some(color=>{const sample=document.createElement('span');sample.style.color=color;document.body.append(sample);const match=rendered.has(getComputedStyle(sample).color);sample.remove();return match;}),
         'CLI foreground colors reach Rust state and browser rendering');
       check(peer.snapshot.terminal.modes.win32===true,'CLI negotiated Win32 keyboard');
       check(peer.snapshot.terminal.modes.bracketedPaste===true,'CLI negotiated bracketed paste');

@@ -20,9 +20,17 @@ fn screen_text(snapshot: &Value) -> String {
     array(snapshot.get("terminal").unwrap().get("screen").unwrap())
         .iter()
         .flat_map(|line| {
-            array(line.get("cells").unwrap())
-                .iter()
-                .map(|cell| array(cell)[0].string().unwrap())
+            array(line.get("runs").unwrap()).iter().flat_map(|run| {
+                let payload = &array(run)[4];
+                match payload {
+                    Value::String(text) => vec![text.as_str()],
+                    Value::Array(cells) => cells
+                        .iter()
+                        .map(|cell| array(cell)[0].string().unwrap())
+                        .collect(),
+                    _ => panic!("Expected run payload"),
+                }
+            })
         })
         .collect()
 }

@@ -6,10 +6,11 @@ mod upload;
 use crate::{
     json, native,
     session::{self, Registry, unix_ms},
-    settings::Store,
-    terminal::SnapshotBaseline,
-    uploads::Uploads,
+    settings::{FONT_SIZES, PATH_LIMIT, Store},
+    terminal::{HISTORY_LIMIT, SnapshotBaseline, palettes_json},
+    uploads::{COPY_LIMIT, DROP_LIMIT, FILE_LIMIT, Uploads},
     websocket::{self, Decoder, Message},
+    workspaces::{NAME_LIMIT, PANE_LIMIT, WORKSPACE_LIMIT},
 };
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -24,6 +25,7 @@ use std::time::{Duration, Instant};
 
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const SLOW_INTERVAL: Duration = Duration::from_millis(250);
+const TITLE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct Config {
     pub port: u16,
@@ -45,9 +47,11 @@ impl Context {
     /// The folder new terminals open in: the saved start folder while it
     /// exists, otherwise the server's `--cwd`.
     fn start_folder(&self) -> PathBuf {
-        self.settings
+        let path = self
+            .settings
             .start_folder()
-            .unwrap_or_else(|| self.registry.cwd.clone())
+            .unwrap_or_else(|| self.registry.cwd.clone());
+        native::ordinary_path(&path)
     }
 }
 pub struct Server {
@@ -69,12 +73,18 @@ impl Server {
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let owner = format!("{}-{port}", std::process::id());
-        let registry = Registry::new(config.cwd, config.shell, Uploads::temporary(owner));
+        let registry = Registry::new(
+            native::ordinary_path(&config.cwd),
+            config.shell,
+            Uploads::temporary(owner),
+        );
+        let settings = Store::open(config.settings);
+        registry.set_theme(settings.current().terminal_theme);
         Ok(Self {
             listener,
             context: Arc::new(Context {
                 registry,
-                settings: Store::open(config.settings),
+                settings,
                 port,
                 started: unix_ms(),
                 stop: Arc::new(AtomicBool::new(false)),
@@ -221,25 +231,37 @@ fn connection(mut stream: TcpStream, context: Arc<Context>) -> io::Result<()> {
             )?;
             socket_loop(stream, context.clone(), &req.extra)
         }
-        http::Route::Get => http::serve(&mut stream, &req.path, &context),
+        http::Route::Get => http::serve(&mut stream, &req, &context),
     }
 }
 
 /// What one socket has already sent of the server-wide state.
 #[derive(Default)]
 struct Published {
-    list: String,
+    list: Option<(u64, u64)>,
+    title_sent: Option<Instant>,
     settings: Option<u64>,
     files: Option<u64>,
     slow: Option<Instant>,
 }
 impl Published {
+    fn list_due(&self, revision: (u64, u64), now: Instant) -> bool {
+        let structural = self.list.is_none_or(|(old, _)| old != revision.0);
+        let title_changed = self.list.is_none_or(|(_, old)| old != revision.1);
+        structural
+            || (title_changed
+                && self
+                    .title_sent
+                    .is_none_or(|sent| now.duration_since(sent) >= TITLE_INTERVAL))
+    }
     fn send(&mut self, stream: &mut TcpStream, context: &Context) -> io::Result<()> {
         let registry = &context.registry;
-        let list = registry.list_json();
-        if list != self.list {
-            websocket::send_text(stream, &list)?;
-            self.list = list;
+        let list_revision = registry.list_revision();
+        let now = Instant::now();
+        if self.list_due(list_revision, now) {
+            websocket::send_text(stream, &registry.list_json())?;
+            self.list = Some(list_revision);
+            self.title_sent = Some(Instant::now());
         }
         if self.slow.is_some_and(|at| at.elapsed() < SLOW_INTERVAL) {
             return Ok(());
@@ -270,7 +292,7 @@ fn socket_loop(mut stream: TcpStream, context: Arc<Context>, initial: &[u8]) -> 
     websocket::send_text(
         &mut stream,
         &format!(
-            "{{\"type\":\"hello\",\"view\":{},\"cwd\":{},\"serverCwd\":{},\"shell\":{},\"pid\":{},\"port\":{},\"started\":{},\"version\":{}}}",
+            "{{\"type\":\"hello\",\"view\":{},\"cwd\":{},\"serverCwd\":{},\"shell\":{},\"pid\":{},\"port\":{},\"started\":{},\"version\":{},\"limits\":{},\"palettes\":{}}}",
             json::quote(&view),
             json::quote(&context.start_folder().to_string_lossy()),
             json::quote(&registry.cwd.to_string_lossy()),
@@ -278,7 +300,9 @@ fn socket_loop(mut stream: TcpStream, context: Arc<Context>, initial: &[u8]) -> 
             std::process::id(),
             context.port,
             context.started,
-            json::quote(env!("CARGO_PKG_VERSION"))
+            json::quote(env!("CARGO_PKG_VERSION")),
+            limits_json(),
+            palettes_json(),
         ),
     )?;
     let mut decoder = Decoder::default();
@@ -389,9 +413,32 @@ fn socket_loop(mut stream: TcpStream, context: Arc<Context>, initial: &[u8]) -> 
     Ok(())
 }
 
+fn limits_json() -> String {
+    format!(
+        "{{\"sessionsPerWorkspace\":{PANE_LIMIT},\"workspaces\":{WORKSPACE_LIMIT},\"sessions\":{},\"history\":{HISTORY_LIMIT},\"cols\":{},\"rows\":{},\"fontMin\":{},\"fontMax\":{},\"path\":{PATH_LIMIT},\"name\":{NAME_LIMIT},\"uploadBytes\":{FILE_LIMIT},\"uploadFiles\":{DROP_LIMIT},\"uploadCopies\":{COPY_LIMIT}}}",
+        session::SESSION_LIMIT,
+        session::MAX_COLS,
+        session::MAX_ROWS,
+        FONT_SIZES.start(),
+        FONT_SIZES.end(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn title_only_lists_wait_for_the_publish_interval() {
+        let now = Instant::now();
+        let published = Published {
+            list: Some((2, 3)),
+            title_sent: Some(now),
+            ..Published::default()
+        };
+        assert!(!published.list_due((2, 4), now + TITLE_INTERVAL - Duration::from_millis(1)));
+        assert!(published.list_due((2, 4), now + TITLE_INTERVAL));
+        assert!(published.list_due((3, 3), now));
+    }
     #[test]
     fn occupied_ports_never_replace_an_owner() {
         let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();

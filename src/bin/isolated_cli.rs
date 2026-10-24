@@ -57,25 +57,6 @@ fn fixture_url(value: &OsStr) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-fn ordinary_profile_path(path: &Path) -> PathBuf {
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-
-    let encoded: Vec<u16> = path.as_os_str().encode_wide().collect();
-    let prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-    if encoded.starts_with(&prefix) {
-        if encoded.get(5) == Some(&(b':' as u16)) && encoded.get(6) == Some(&(b'\\' as u16)) {
-            return OsString::from_wide(&encoded[4..]).into();
-        }
-        if encoded[4..].starts_with(&[b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16]) {
-            let mut unc = vec![b'\\' as u16, b'\\' as u16];
-            unc.extend_from_slice(&encoded[8..]);
-            return OsString::from_wide(&unc).into();
-        }
-    }
-    path.to_path_buf()
-}
-
-#[cfg(windows)]
 fn windows_module_path(path: &Path) -> OsString {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
@@ -93,11 +74,6 @@ fn windows_module_path(path: &Path) -> OsString {
     OsString::from_wide(&units)
 }
 
-#[cfg(not(windows))]
-fn ordinary_profile_path(path: &Path) -> PathBuf {
-    path.to_path_buf()
-}
-
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code as u8),
@@ -113,7 +89,7 @@ fn run() -> Result<i32, String> {
     // Windows canonicalize() returns a verbatim \\?\ path, but Windows
     // PowerShell's Add-Type rejects that spelling in TEMP/TMP. Keep the
     // canonical target while passing its ordinary DOS spelling to children.
-    let profile = ordinary_profile_path(
+    let profile = webterminal::native::ordinary_path(
         &invocation
             .profile
             .canonicalize()
@@ -266,11 +242,11 @@ mod tests {
     #[cfg(windows)]
     fn profile_environment_uses_windows_compatible_path_spelling() {
         assert_eq!(
-            ordinary_profile_path(Path::new(r"\\?\C:\fixture\profile")),
+            webterminal::native::ordinary_path(Path::new(r"\\?\C:\fixture\profile")),
             PathBuf::from(r"C:\fixture\profile")
         );
         assert_eq!(
-            ordinary_profile_path(Path::new(r"\\?\UNC\server\share\profile")),
+            webterminal::native::ordinary_path(Path::new(r"\\?\UNC\server\share\profile")),
             PathBuf::from(r"\\server\share\profile")
         );
     }

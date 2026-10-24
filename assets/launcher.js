@@ -94,6 +94,8 @@ export function openLauncher({workspace = state.selected, cwd = splitFolder()} =
       Dialogs.invalid(folder, '');
       if (!path) { Dialogs.invalid(folder, 'Enter a folder path.'); return false; }
       if (!absolute(path)) { Dialogs.invalid(folder, 'Enter a full path, for example C:\\dev\\webterminal.'); return false; }
+      const limit = state.hello?.limits?.path || 1024;
+      if ([...path].length > limit) { Dialogs.invalid(folder, `Use a path of at most ${limit} characters.`); return false; }
       return await launch({cwd:path, workspace:select.value}) || undefined;
     },
   }).finally(() => { if (launcherPending === pending) { launcherPending = null; launcherFolder = null; } });

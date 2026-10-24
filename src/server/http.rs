@@ -1,11 +1,12 @@
 //! Strict small HTTP reader and embedded asset routing.
 use super::{Context, api};
-use crate::json;
+use crate::{json, native};
 use std::{
     collections::BTreeMap,
     io::{self, Read, Write},
     net::TcpStream,
     path::PathBuf,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 pub(super) const UPLOAD: &str = "/api/upload?";
@@ -189,10 +190,28 @@ const ASSETS: &[(&str, &str, &[u8])] = assets![
     ("/settings.js", SCRIPT, "settings.js"),
     ("/preferences.js", SCRIPT, "preferences.js"),
 ];
-pub(super) fn serve(stream: &mut TcpStream, path: &str, context: &Context) -> io::Result<()> {
+static ASSET_TAGS: OnceLock<Vec<String>> = OnceLock::new();
+pub(super) fn serve(
+    stream: &mut TcpStream,
+    request: &Request,
+    context: &Context,
+) -> io::Result<()> {
+    let path = request.path.as_str();
     let route = if path == "/" { "/index.html" } else { path };
-    if let Some((_, mime, body)) = ASSETS.iter().find(|(name, ..)| *name == route) {
-        return response_bytes(stream, "200 OK", mime, body);
+    if let Some((index, (_, mime, body))) = ASSETS
+        .iter()
+        .enumerate()
+        .find(|(_, (name, ..))| *name == route)
+    {
+        let tags =
+            ASSET_TAGS.get_or_init(|| ASSETS.iter().map(|(_, _, body)| asset_tag(body)).collect());
+        return static_asset(
+            stream,
+            mime,
+            body,
+            &tags[index],
+            request.headers.get("if-none-match"),
+        );
     }
     if let Some(path) = path.strip_prefix("/api/directories?path=") {
         return match directories(path) {
@@ -215,17 +234,74 @@ pub(super) fn serve(stream: &mut TcpStream, path: &str, context: &Context) -> io
         "Webterminal asset not found",
     )
 }
+/// Asset URLs are stable across releases, so browsers revalidate before using
+/// a cached copy. The tag changes with the embedded bytes.
+fn asset_tag(body: &[u8]) -> String {
+    let hash = body.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("\"{hash:016x}-{}\"", body.len())
+}
+fn static_asset(
+    stream: &mut TcpStream,
+    mime: &str,
+    body: &[u8],
+    tag: &str,
+    match_tag: Option<&String>,
+) -> io::Result<()> {
+    let unchanged = match_tag.is_some_and(|value| {
+        value.trim() == "*"
+            || value.split(',').any(|candidate| {
+                candidate
+                    .trim()
+                    .strip_prefix("W/")
+                    .unwrap_or(candidate.trim())
+                    == tag
+            })
+    });
+    let (status, bytes) = if unchanged {
+        ("304 Not Modified", &[][..])
+    } else {
+        ("200 OK", body)
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: private, no-cache\r\nETag: {tag}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: {POLICY}\r\n\r\n",
+        body.len(),
+    )?;
+    stream.write_all(bytes)
+}
 fn directories(encoded: &str) -> Result<String, String> {
     let path = PathBuf::from(decode_path(encoded)?)
         .canonicalize()
         .map_err(|e| format!("Cannot open directory: {e}"))?;
+    let path = native::ordinary_path(&path);
     if !path.is_dir() {
         return Err("Expected a directory".into());
     }
     let mut children = Vec::new();
-    for entry in path.read_dir().map_err(|e| e.to_string())?.take(4097) {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+    let mut truncated = false;
+    let mut unreadable = 0usize;
+    for entry in path.read_dir().map_err(|e| e.to_string())? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        let is_dir = match entry.file_type() {
+            Ok(kind) => kind.is_dir(),
+            Err(_) => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        if is_dir {
+            if children.len() == 4096 {
+                truncated = true;
+                break;
+            }
             children.push((
                 entry.file_name().to_string_lossy().into_owned(),
                 entry.path(),
@@ -245,7 +321,7 @@ fn directories(encoded: &str) -> Result<String, String> {
         .collect::<Vec<_>>()
         .join(",");
     Ok(format!(
-        "{{\"path\":{},\"parent\":{},\"directories\":[{dirs}]}}",
+        "{{\"path\":{},\"parent\":{},\"directories\":[{dirs}],\"truncated\":{truncated},\"unreadable\":{unreadable}}}",
         json::quote(&path.to_string_lossy()),
         path.parent()
             .map(|p| json::quote(&p.to_string_lossy()))

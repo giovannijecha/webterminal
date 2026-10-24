@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-pub use super::cells::{BG, Cell, FG, Line, PutOptions, Style};
+pub use super::cells::{Cell, Color, Line, PutOptions, Style};
 pub const HISTORY_LIMIT: usize = 1000;
 pub const HISTORY_CELL_LIMIT: usize = 100_000;
 pub const HISTORY_JSON_LIMIT: usize = 3 * 1024 * 1024;
@@ -21,7 +21,7 @@ pub struct Screen {
 impl Screen {
     pub fn new(cols: usize, rows: usize) -> Self {
         Self {
-            lines: vec![Line::new(cols); rows],
+            lines: (0..rows).map(|_| Line::new(cols)).collect(),
             history: VecDeque::new(),
             history_json_bytes: 0,
             x: 0,
@@ -151,7 +151,7 @@ impl Screen {
                 style: style.clone(),
             };
         }
-        line.repair();
+        line.repair_at(self.x, self.x + width);
         self.x += width;
         if self.x >= cols {
             self.x = cols - 1;
@@ -399,7 +399,7 @@ impl Screen {
             }
             if !line.wrapped {
                 if let Some(last) = last
-                    && paint.is_some_and(|paint| paint != (BG, 0, "", ""))
+                    && paint.is_some_and(|paint| paint != (Color::Default, 0, Color::Default, ""))
                 {
                     current.cells[x..].fill(last.clone());
                 }

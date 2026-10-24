@@ -21,7 +21,6 @@ use std::sync::Arc;
 mod windows;
 
 #[cfg(windows)]
-#[allow(unused_imports)] // Included as a private module by native fixture tests.
 pub use windows::{Pty, install_shutdown_handler, logical_drives, shutdown_requested, spawn};
 
 pub struct Spawned {
@@ -72,6 +71,9 @@ impl Pty {
     pub fn exit_code(&self) -> io::Result<Option<u32>> {
         unsupported()
     }
+    pub fn wait_exit(&self) -> io::Result<u32> {
+        unsupported()
+    }
     pub fn active_processes(&self) -> io::Result<u32> {
         unsupported()
     }
@@ -105,4 +107,28 @@ fn unsupported<T>() -> io::Result<T> {
         io::ErrorKind::Unsupported,
         "ConPTY requires Windows",
     ))
+}
+
+/// Ordinary DOS/UNC spelling for shells and public paths; preserve OS strings.
+/// Other verbatim namespaces are kept intact.
+pub fn ordinary_path(path: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+        let prefix: Vec<u16> = r"\\?\".encode_utf16().collect();
+        if let Some(rest) = units.strip_prefix(prefix.as_slice()) {
+            if matches!(rest, [drive, 58, 92, ..] if (*drive as u8).is_ascii_alphabetic() && *drive < 128)
+            {
+                return OsString::from_wide(rest).into();
+            }
+            if let Some(share) = rest.strip_prefix(&[85, 78, 67, 92]) {
+                let mut unc = vec![92, 92];
+                unc.extend_from_slice(share);
+                return OsString::from_wide(&unc).into();
+            }
+        }
+    }
+    path.to_path_buf()
 }

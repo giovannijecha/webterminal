@@ -161,3 +161,25 @@ fn style_only_changes_and_band_reflow_project_exactly() {
     let snapshot = terminal.snapshot_json();
     assert!(snapshot.contains("\"#303030\""), "History band was lost");
 }
+
+#[test]
+fn projection_keeps_a_consistent_snapshot_while_live_lines_change() {
+    let mut terminal = Terminal::new(8, 3);
+    for index in 0..30 {
+        terminal.feed(format!("{index:04}\r\n").as_bytes());
+    }
+    terminal.feed(b"\x1b[31mAB\x1b[0m");
+    let projection = terminal.projection();
+    let expected = projection.snapshot_json();
+    let mut baseline = SnapshotBaseline::default();
+    assert_eq!(projection.snapshot_update(&mut baseline), expected);
+    terminal.feed(b"\x1b[1;1Hchanged\r\nmore\r\nlines");
+    terminal.resize(5, 4);
+    terminal.feed(b"\x1b[3J");
+    assert_eq!(projection.snapshot_json(), expected);
+    assert_ne!(projection.snapshot_json(), terminal.snapshot_json());
+    let next = terminal.projection();
+    let prior = json::parse(&expected).unwrap();
+    let actual = apply(Some(prior), &next.snapshot_update(&mut baseline));
+    assert_eq!(actual, json::parse(&terminal.snapshot_json()).unwrap());
+}

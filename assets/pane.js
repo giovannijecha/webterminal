@@ -99,6 +99,7 @@ export class TerminalPane {
     this.renderer.setSearch(view?.query || '');
     const snapshot = state.snapshots.get(id);
     if (snapshot) this.renderer.render(snapshot);
+    if (document.activeElement === this.ui.keyboard) this.input.positionCaret();
     if (view) {
       this.renderer.matchIndex = Math.min(view.matchIndex, this.renderer.matches.length - 1);
       this.renderer.highlightActive();
@@ -153,6 +154,7 @@ export class TerminalPane {
   render(snapshot) {
     const before = this.following;
     this.renderer.render(snapshot);
+    if (document.activeElement === this.ui.keyboard) this.input.positionCaret();
     if (!before && this.mark === null) this.mark = this.rowCount(snapshot);
     this.updateFollow();
   }

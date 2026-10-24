@@ -1,25 +1,18 @@
 //! Owned, bounded VT-style text terminal core. No native or browser dependency.
-#[path = "terminal/appearance.rs"]
 mod appearance;
-#[path = "terminal/cells.rs"]
 mod cells;
-#[path = "terminal/charset.rs"]
 mod charset;
-#[path = "terminal/json.rs"]
 mod json;
-#[path = "terminal/ops.rs"]
 mod ops;
-#[path = "terminal/queries.rs"]
+mod palette;
 mod queries;
-#[path = "terminal/render.rs"]
 mod render;
-#[path = "terminal/screen.rs"]
 mod screen;
-#[path = "terminal/unicode.rs"]
 mod unicode;
-#[path = "terminal/updates.rs"]
 mod updates;
 
+pub use palette::TerminalPalette;
+pub use palette::palettes_json;
 pub use screen::HISTORY_LIMIT;
 pub use updates::SnapshotBaseline;
 
@@ -65,7 +58,7 @@ impl Default for Modes {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 enum ParseState {
     #[default]
     Ground,
@@ -79,6 +72,7 @@ enum ParseState {
     IgnoreString(usize, bool),
 }
 
+#[derive(Clone)]
 pub struct Terminal {
     pub(crate) cols: usize,
     pub(crate) rows: usize,
@@ -98,13 +92,31 @@ pub struct Terminal {
     synchronized: bool,
     sync_bytes: usize,
     last_printed: bool,
+    last_ascii: bool,
     g0_dec: bool,
     g1_dec: bool,
     shift_g1: bool,
     saved_charset: (bool, bool, bool),
+    palette: TerminalPalette,
+}
+
+/// Immutable point-in-time terminal state for serialization after releasing
+/// the session lock. Cell vectors are shared until the live terminal writes.
+pub struct TerminalProjection(Terminal);
+
+impl TerminalProjection {
+    pub fn snapshot_json(&self) -> String {
+        self.0.snapshot_json()
+    }
+    pub fn snapshot_update(&self, baseline: &mut SnapshotBaseline) -> String {
+        self.0.snapshot_update(baseline)
+    }
 }
 
 impl Terminal {
+    pub fn projection(&self) -> TerminalProjection {
+        TerminalProjection(self.clone())
+    }
     pub fn new(cols: usize, rows: usize) -> Self {
         let cols = cols.clamp(1, MAX_COLS);
         let rows = rows.clamp(1, MAX_ROWS);
@@ -127,10 +139,12 @@ impl Terminal {
             synchronized: false,
             sync_bytes: 0,
             last_printed: false,
+            last_ascii: false,
             g0_dec: false,
             g1_dec: false,
             shift_g1: false,
             saved_charset: (false, false, false),
+            palette: TerminalPalette::DARK,
         }
     }
     pub(crate) fn active(&self) -> &Screen {
@@ -155,6 +169,15 @@ impl Terminal {
     }
     pub fn title(&self) -> &str {
         &self.title
+    }
+    /// Colors reported by OSC 10/11; the browser owns rendering of defaults.
+    pub fn set_theme_colors(&mut self, fg: [u8; 3], bg: [u8; 3]) {
+        self.palette.foreground = fg;
+        self.palette.background = bg;
+    }
+    /// Sets default and ANSI 0..15 colors reported to terminal programs.
+    pub fn set_palette(&mut self, palette: TerminalPalette) {
+        self.palette = palette;
     }
     pub fn synchronized(&self) -> bool {
         self.synchronized
@@ -251,7 +274,19 @@ impl Terminal {
                     ParseState::Ground
                 }
                 _ => {
-                    self.print_byte(b);
+                    if b.is_ascii()
+                        && self.utf8.is_empty()
+                        && !(if self.shift_g1 {
+                            self.g1_dec
+                        } else {
+                            self.g0_dec
+                        })
+                        && (self.last_ascii || !self.last_printed)
+                    {
+                        self.print_ascii(b);
+                    } else {
+                        self.print_byte(b);
+                    }
                     ParseState::Ground
                 }
             },
@@ -304,7 +339,9 @@ impl Terminal {
                     ParseState::Ground
                 }
                 b'c' => {
+                    let palette = self.palette;
                     *self = Self::new(self.cols, self.rows);
+                    self.set_palette(palette);
                     ParseState::Ground
                 }
                 0x1b => ParseState::Escape,
@@ -408,51 +445,7 @@ impl Terminal {
         };
         if !graphic {
             self.last_printed = false;
-        }
-    }
-    fn flush_utf8(&mut self) {
-        if !self.utf8.is_empty() {
-            self.utf8.clear();
-            self.print_char('\u{fffd}');
-        }
-    }
-    fn print_byte(&mut self, b: u8) {
-        self.utf8.push(b);
-        while let Some(&first) = self.utf8.first() {
-            let wanted = match first {
-                0..=0x7f => 1,
-                0xc2..=0xdf => 2,
-                0xe0..=0xef => 3,
-                0xf0..=0xf4 => 4,
-                _ => 0,
-            };
-            if wanted == 0 {
-                self.utf8.remove(0);
-                self.print_char('\u{fffd}');
-                continue;
-            }
-            if let Some(invalid) = self.utf8[1..self.utf8.len().min(wanted)]
-                .iter()
-                .position(|b| b & 0xc0 != 0x80)
-            {
-                self.utf8.drain(..invalid + 1);
-                self.print_char('\u{fffd}');
-                continue;
-            }
-            if self.utf8.len() < wanted {
-                break;
-            }
-            match std::str::from_utf8(&self.utf8[..wanted]) {
-                Ok(s) => {
-                    let ch = s.chars().next().unwrap_or('\u{fffd}');
-                    self.utf8.drain(..wanted);
-                    self.print_char(ch);
-                }
-                Err(_) => {
-                    self.utf8.remove(0);
-                    self.print_char('\u{fffd}');
-                }
-            }
+            self.last_ascii = false;
         }
     }
     fn linefeed(&mut self) {
@@ -488,11 +481,10 @@ impl Terminal {
 }
 
 #[cfg(test)]
-#[path = "terminal/reflow_tests.rs"]
+mod json_tests;
+#[cfg(test)]
 mod reflow_tests;
 #[cfg(test)]
-#[path = "terminal/tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "terminal/updates_tests.rs"]
 mod updates_tests;

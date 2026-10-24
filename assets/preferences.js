@@ -8,8 +8,13 @@ import {el, plural} from './dom.js';
 import {displayPath} from './common.js';
 import {notify, pageHeading, toasts} from './ui.js';
 
-// Mirrors src/settings/fields.rs.
-export const FONT_MIN = 10, FONT_MAX = 20, PATH_LIMIT = 1024;
+// Defaults apply until the server announces its own validation limits.
+export let FONT_MIN = 10, FONT_MAX = 20, PATH_LIMIT = 1024;
+function adoptLimits(limits = {}) {
+  if (Number.isSafeInteger(limits.fontMin) && limits.fontMin > 0) FONT_MIN = limits.fontMin;
+  if (Number.isSafeInteger(limits.fontMax) && limits.fontMax >= FONT_MIN) FONT_MAX = limits.fontMax;
+  if (Number.isSafeInteger(limits.path) && limits.path > 0) PATH_LIMIT = limits.path;
+}
 export const APPEARANCE_DEFAULTS = {fontSize:13, terminalTheme:'dark'};
 export const FIELDS = {
   startFolder:{label:'Starting folder', text:value => value ? displayPath(value) : 'Server folder'},
@@ -213,6 +218,7 @@ export function fontStepper(id) {
   const node = el('div', {class:'stepper', role:'group', 'aria-label':`Terminal font size, ${FONT_MIN} to ${FONT_MAX} px`}, smaller, output, larger);
   function update() {
     const size = draft.value?.fontSize ?? APPEARANCE_DEFAULTS.fontSize;
+    node.setAttribute('aria-label', `Terminal font size, ${FONT_MIN} to ${FONT_MAX} px`);
     output.textContent = `${size} px`;
     // aria-disabled keeps a focused button focusable at the limit.
     smaller.setAttribute('aria-disabled', String(size <= FONT_MIN));
@@ -229,9 +235,8 @@ export function themeSegment(id) {
   return {node, update};
 }
 
-// A sample drawn with the real renderer classes. Program colors are the
-// renderer's ANSI palette and stay the same in both themes, as in terminals.
-const GREEN = '#0dbc79', RED = '#cd3131', YELLOW = '#e5e510', BLUE = '#2472c8';
+// The preview uses the same theme-sensitive ANSI palette as running terminals.
+const GREEN = 'var(--ansi-2)', RED = 'var(--ansi-1)', YELLOW = 'var(--ansi-3)', BLUE = 'var(--ansi-4)';
 const SAMPLE = [
   [['PS C:\\dev\\project> '], ['cargo test']],
   [['   Compiling', GREEN], [' project v0.1.0']],
@@ -283,6 +288,7 @@ export function problemBanner() {
 // Leaving Settings with changes keeps the draft and says so.
 let lastPage = state.page;
 subscribe(topics => {
+  if (topics.has('connection')) adoptLimits(state.hello?.limits);
   if (topics.has('settings') || topics.has('connection')) sync();
   if (state.page === lastPage) return;
   const from = lastPage;
@@ -292,4 +298,5 @@ subscribe(topics => {
     notify('Settings not saved yet', 'Your changes stay as a draft in this tab until you save or discard them.', {label:'Review changes', run:() => go(from)}, 'settings-draft');
   }
 });
+adoptLimits(state.hello?.limits);
 sync();

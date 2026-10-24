@@ -11,7 +11,6 @@ use super::{Attachment, Context};
 use crate::{
     json::{self, Value},
     session::{self, WorkspaceClose},
-    settings::SaveError,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -27,7 +26,7 @@ pub(super) fn action(
     match op {
         "list" => return Ok(Some(registry.list_json())),
         "create" => {
-            let request = create_request(command)?;
+            let request = optional_request(command)?;
             let updates = wants_updates(command)?;
             let (cols, rows) = session::geometry(command)?;
             if command.get("profile").is_some() {
@@ -53,7 +52,7 @@ pub(super) fn action(
             )));
         }
         "create-workspace" => {
-            let request = create_request(command)?;
+            let request = optional_request(command)?;
             let id = registry.create_workspace()?;
             return Ok(Some(format!(
                 "{{\"type\":\"workspace-created\",\"id\":{}{}}}",
@@ -129,11 +128,12 @@ pub(super) fn action(
             let revision = command.integer("revision")?;
             let settings = command.get("settings").ok_or("Settings are missing")?;
             return match context.settings.save(revision.max(0) as u64, settings) {
-                Ok(saved) => Ok(Some(saved)),
+                Ok(saved) => {
+                    registry.set_theme(context.settings.current().terminal_theme);
+                    Ok(Some(saved))
+                }
                 // Views receive the current settings with the next update.
-                Err(
-                    error @ (SaveError::Conflict(_) | SaveError::Invalid(_) | SaveError::Io(_)),
-                ) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
             };
         }
         "remove-copy" => {
@@ -168,15 +168,7 @@ pub(super) fn action(
         "rename" => registry.rename(id, command.field("name")?)?,
         "attach" => {
             let updates = wants_updates(command)?;
-            let request = if command.get("request").is_some() {
-                let number = command.integer("request")?;
-                if number <= 0 {
-                    return Err("Attachment request must be positive".into());
-                }
-                Some(number)
-            } else {
-                None
-            };
+            let request = optional_request(command)?;
             session.attach(view, session::geometry(command)?)?;
             let event_seq = attached
                 .get(id)
@@ -196,11 +188,11 @@ pub(super) fn action(
         "claim" => session.claim(view, session::geometry(command)?)?,
         "release" => session.release(view)?,
         "close" => {
-            if session.busy() && !forced(command)? {
-                let busy = [id.to_owned()];
-                return Ok(Some(busy_message(op, id, &busy, &busy)));
+            if let WorkspaceClose::Busy { sessions, targets } =
+                registry.close(id, forced(command)?)?
+            {
+                return Ok(Some(busy_message(op, id, &sessions, &targets)));
             }
-            registry.close(id)?;
             attached.remove(id);
         }
         "input" => session.send_input(
@@ -272,13 +264,13 @@ fn valid_request(command: &Value) -> Option<i64> {
         .filter(|value| (1..=MAX_SAFE_REQUEST).contains(value))
 }
 
-fn create_request(command: &Value) -> Result<Option<i64>, String> {
+fn optional_request(command: &Value) -> Result<Option<i64>, String> {
     if command.get("request").is_none() {
         return Ok(None);
     }
     valid_request(command)
         .map(Some)
-        .ok_or_else(|| "Create request must be a positive safe integer".into())
+        .ok_or_else(|| "The request must be positive and at most 9007199254740991".into())
 }
 
 fn request_field(request: Option<i64>) -> String {

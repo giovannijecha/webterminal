@@ -1,8 +1,16 @@
 // Central view state and derived selectors. The Rust server owns sessions
 // and control; this module only projects what it reported.
-import {displayPath, folderName, sessionName} from './common.js';
+import {displayPath, folderName, sessionName, setNameLimit} from './common.js';
 
-export const PANE_LIMIT = 4, WORKSPACE_LIMIT = 16, SESSION_LIMIT = 32;
+export let PANE_LIMIT = 4, WORKSPACE_LIMIT = 16, SESSION_LIMIT = 32;
+export function applyLimits(limits = {}) {
+  if (!limits || typeof limits !== 'object') return;
+  setNameLimit(limits.name);
+  if (Number.isSafeInteger(limits.sessionsPerWorkspace) && limits.sessionsPerWorkspace > 0)
+    PANE_LIMIT = Math.min(4, limits.sessionsPerWorkspace);
+  if (Number.isSafeInteger(limits.workspaces) && limits.workspaces > 0) WORKSPACE_LIMIT = limits.workspaces;
+  if (Number.isSafeInteger(limits.sessions) && limits.sessions > 0) SESSION_LIMIT = limits.sessions;
+}
 
 export const state = {
   socket:null, view:null, connected:false, hello:null, listed:false,
@@ -60,7 +68,9 @@ export function focusedId(workspace = currentWorkspace()) {
 export function terminalName(id) { return sessionName(state.sessions.get(id)); }
 
 export function shellLabel(shell = '') {
-  const program = (shell.match(/[^\\/"]+?(?:\.exe)?(?="|\s|$)/i)?.[0] || shell).replace(/\.exe$/i, '').toLowerCase();
+  const command = String(shell || '').trim();
+  const executable = command.startsWith('"') ? command.slice(1).split('"', 1)[0] : command.split(/\s/, 1)[0];
+  const program = (executable.split(/[\\/]/).at(-1) || '').replace(/\.exe$/i, '').toLowerCase();
   if (program === 'pwsh' || program === 'powershell') return 'PowerShell';
   if (program === 'cmd') return 'Command Prompt';
   return program || 'Shell';

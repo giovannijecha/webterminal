@@ -1,8 +1,9 @@
+import {findChrome} from './cli-browser-support.mjs';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {readFile, mkdir, rm, stat} from 'node:fs/promises';
-import {resolve, join, sep} from 'node:path';
+import {readFile, mkdir, rm} from 'node:fs/promises';
+import {resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -10,15 +11,7 @@ const forceReducedMotion = process.env.WEBTERMINAL_TEST_REDUCED_MOTION === '1';
 const scratch = resolve(root, '.tmp');
 const profile = resolve(scratch, 'browser-runtime-' + process.pid + '-' + Date.now());
 if (!profile.startsWith(scratch + sep)) throw new Error('Profile path escaped .tmp');
-const chromeCandidates = [
-  join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-  join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-];
-let chrome;
-for (const candidate of chromeCandidates) {
-  try { await stat(candidate); chrome = candidate; break; } catch {}
-}
-if (!chrome) throw new Error('System Chrome was not found');
+const chrome = await findChrome();
 
 const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/terminal.css"><title>Browser fixture</title></head><body><div id="scroll" class="terminal-scroll" style="position:relative;inset:auto;width:800px;height:400px;padding:14px 18px;overflow:auto"><div id="lines" class="terminal-lines"></div></div><textarea id="keyboard"></textarea><script type="module" src="/harness.js"></script></body></html>';
 const harness = String.raw`
@@ -40,7 +33,14 @@ function expect(value, message) { if (!value) throw new Error(message); }
 function equal(actual, expected, message) { if (actual !== expected) throw new Error(message + ': got ' + JSON.stringify(actual) + ', expected ' + JSON.stringify(expected)); }
 function cell(text, width, fg='#dce4ed', bg='#10151c', attrs=0, link='') { return [text,width,fg,bg,attrs,link]; }
 function line(text, wrapped=false) { return {wrapped,cells:[...text].map(character => cell(character,1))}; }
-function shot(history, screen, options={}) { return {id:'fixture',seq:options.seq || 1,epoch:1,controller:'view',alive:true,terminal:{cols:80,rows:screen.length,cursor:[0,0,false,'block'],title:'fixture',alternate:false,modes:{},history,screen}}; }
+const revisions = new Map();
+function wireLine(line) {
+  if (line.runs) return line;
+  const key = JSON.stringify(line);
+  if (!revisions.has(key)) revisions.set(key,revisions.size + 1);
+  return {rev:revisions.get(key),wrapped:line.wrapped,runs:line.cells.map(([text,width,fg,bg,attrs,link]) => [fg,bg,attrs,link,[[text,width]]])};
+}
+function shot(history, screen, options={}) { history=history.map(wireLine);screen=screen.map(wireLine);return {id:'fixture',seq:options.seq || 1,epoch:1,controller:'view',alive:true,terminal:{cols:80,rows:screen.length,cursor:[0,0,false,'block'],title:'fixture',alternate:false,modes:{},history,screen}}; }
 
 if (${forceReducedMotion}) check('reduced motion is enabled in the browser', () => {
   expect(reducedMotion,'the browser honors the reduced-motion test flag');
@@ -188,6 +188,52 @@ check('resize dimensions remain inside protocol bounds', () => {
   equal(size.cols,300,'column cap'); equal(size.rows,120,'row cap');
   scroll.style.width='800px'; scroll.style.height='400px';
   expect(renderer.dimensions().cols > 50, 'restored width');
+  scroll.style.height='1px';equal(renderer.dimensions().rows,1,'one-row protocol minimum');scroll.style.height='400px';
+});
+
+check('theme defaults and ANSI colors retain their identities', () => {
+  renderer.clear();
+  const snapshot=shot([], [{wrapped:false,cells:[cell('D',1,null,null),cell('Y',1,3,null),cell('R',1,'#cccccc','#1e1e1e')]}]);
+  renderer.render(snapshot);
+  const [defaults,ansi,explicit]=lines.querySelectorAll('.term-cell');
+  document.documentElement.dataset.terminalTheme='light';
+  equal(getComputedStyle(defaults).color,'rgb(39, 39, 42)','default uses light foreground');
+  equal(getComputedStyle(defaults).backgroundColor,'rgb(251, 251, 251)','default uses light background');
+  equal(getComputedStyle(ansi).color,'rgb(121, 94, 0)','ANSI yellow is readable on light background');
+  equal(getComputedStyle(explicit).color,'rgb(204, 204, 204)','explicit RGB foreground is never reinterpreted');
+  equal(getComputedStyle(explicit).backgroundColor,'rgb(30, 30, 30)','explicit RGB background is never reinterpreted');
+  expect(!lines.querySelector('.term-line').hasAttribute('aria-label'),'generic rows do not duplicate their text as labels');
+  delete document.documentElement.dataset.terminalTheme;
+});
+
+check('terminal strokes fill cells without clipping fallback glyphs', () => {
+  renderer.clear();
+  renderer.render(shot([], [line('\u2502\u2588\u250c\u2554\u256d'),line('\u2502\u2588') ]));
+  const shapes=lines.querySelectorAll('.graphic');
+  equal(shapes.length,7,'box and block characters have cell-sized shapes');
+  const top=shapes[0].querySelector('svg').getBoundingClientRect();
+  const bottom=shapes[5].querySelector('svg').getBoundingClientRect();
+  expect(Math.abs(top.bottom-bottom.top)<.1,'vertical strokes meet at adjacent row edges');
+  equal(getComputedStyle(shapes[0]).overflow,'visible','cells allow accents and fallback glyphs to extend');
+  equal(lines.children[0].textContent,'\u2502\u2588\u250c\u2554\u256d','painted graphics preserve selectable Unicode text');
+  equal(getComputedStyle(lines.children[0]).contentVisibility,'visible','visible rows allow overflowing glyph ink');
+  const row=lines.children[0], probe=document.createElement('span');
+  row.style.position='relative';probe.style.cssText='position:absolute;left:0;top:-5px;width:4px;height:4px;background:red';row.append(probe);
+  const ink=probe.getBoundingClientRect();
+  equal(document.elementFromPoint(ink.left+2,ink.top+2),probe,'visible row allows glyph ink beyond its top edge');
+  probe.remove();
+});
+
+check('changing a cursor row preserves its blink clock', () => {
+  renderer.clear();
+  const first=shot([], [line('old')]);first.terminal.cursor=[0,0,true,'block'];renderer.render(first);
+  const old=lines.querySelector('.cursor').getAnimations().find(item=>item.animationName==='cursor-blink');
+  if (!old) return;
+  old.startTime=document.timeline.currentTime-300;
+  const start=old.startTime;
+  const next=shot([], [line('new')]);next.terminal.cursor=first.terminal.cursor;renderer.render(next);
+  const animation=lines.querySelector('.cursor').getAnimations().find(item=>item.animationName==='cursor-blink');
+  equal(animation.startTime,start,'a repaint keeps the cursor animation start time');
 });
 
 const sent = [];

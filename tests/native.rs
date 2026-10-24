@@ -1,8 +1,7 @@
 #![cfg(windows)]
-#![allow(dead_code)]
+#[allow(dead_code)] // Shared helpers are used by different native test targets.
 mod conpty;
-#[path = "../src/native.rs"]
-mod native;
+use webterminal::native;
 
 use conpty::{await_exit, collect, collect_lines, command, fixture, scratch};
 use std::fs::{self, OpenOptions};
@@ -40,6 +39,7 @@ fn conpty_utf8_vt_resize_and_exit() {
     assert_ne!(spawned.pty.process_id(), 0);
     spawned.pty.resize(100, 30).unwrap();
     let code = await_exit(&spawned.pty);
+    assert_eq!(spawned.pty.wait_exit().unwrap(), code);
     spawned.pty.terminate().unwrap();
     let bytes = output.recv_timeout(Duration::from_secs(10)).unwrap();
     let text = String::from_utf8(bytes).unwrap();

@@ -1,6 +1,6 @@
 use super::{
     Terminal,
-    screen::{Cell, Screen},
+    screen::{Cell, Color, Screen},
 };
 
 fn params(data: &[u8]) -> (u8, Vec<usize>, u8) {
@@ -34,26 +34,8 @@ fn params(data: &[u8]) -> (u8, Vec<usize>, u8) {
 fn at(v: &[usize], i: usize, default: usize) -> usize {
     v.get(i).copied().filter(|&n| n != 0).unwrap_or(default)
 }
-pub(super) fn color(index: usize) -> String {
-    const BASE: [&str; 16] = [
-        "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
-        "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff",
-    ];
-    if index < 16 {
-        return BASE[index].into();
-    }
-    if index < 232 {
-        let n = index - 16;
-        let value = |v| if v == 0 { 0 } else { 55 + v * 40 };
-        return format!(
-            "#{:02x}{:02x}{:02x}",
-            value(n / 36),
-            value((n / 6) % 6),
-            value(n % 6)
-        );
-    }
-    let gray = 8 + (index.min(255) - 232) * 10;
-    format!("#{gray:02x}{gray:02x}{gray:02x}")
+pub(super) fn color(index: usize) -> Color {
+    Color::Indexed(index.min(255) as u8)
 }
 
 impl Terminal {
@@ -268,11 +250,8 @@ impl Terminal {
             (0, b't') if p.first().copied() == Some(19) => {
                 response.extend_from_slice(format!("\x1b[9;{};{}t", rows, cols).as_bytes())
             }
-            (0, b't') if p.first().copied() == Some(21) => {
-                response.extend_from_slice(b"\x1b]l");
-                response.extend_from_slice(self.title.as_bytes());
-                response.extend_from_slice(b"\x1b\\");
-            }
+            // CSI 21 t is deliberately unanswered: OSC titles can contain
+            // control bytes that are unsafe to reflect into terminal input.
             _ => {}
         }
     }

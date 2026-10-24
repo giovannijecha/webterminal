@@ -38,6 +38,8 @@ test('drops are bounded before anything is uploaded', () => {
   assert.equal(dropProblem([file('a')]), null);
   assert.match(dropProblem(Array.from({length:DROP_LIMIT + 1}, (_, i) => file(`${i}`))), /at most 64/);
   assert.match(dropProblem([file('huge.iso', FILE_LIMIT + 1)]), /huge\.iso is larger than 1 GiB/);
+  assert.match(dropProblem([file('a'), file('b')], 'powershell.exe', {uploadFiles:1}), /at most 1 file/);
+  assert.match(dropProblem([file('a', 9)], 'powershell.exe', {uploadBytes:8}), /larger than 8 bytes/);
   assert.match(dropProblem([file('a%PATH%.txt')], 'cmd.exe'), /cmd\.exe.*%/);
   assert.match(dropProblem([file('a!PATH!.txt')], 'cmd.exe /v:on'), /cmd\.exe.*!/);
   assert.equal(dropProblem([file('a%PATH%.txt')], 'powershell.exe'), null);

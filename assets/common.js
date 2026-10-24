@@ -15,30 +15,19 @@ export function folderName(path = '') {
 const TITLE_STATUS = /^[⠀-⣿✢-✽⏺●]+\s*/u;
 function titleParts(title = '') {
   const status = TITLE_STATUS.exec(title)?.[0] || '';
-  return {busy:/[⠀-⣿]/u.test(status), text:title.slice(status.length)};
+  return title.slice(status.length);
 }
 
 export function sessionName(session) {
   if (typeof session?.name === 'string' && session.name.trim()) return session.name.trim();
-  const title = displayPath(titleParts(session?.title).text);
+  const title = displayPath(titleParts(session?.title));
   if (title && !/^(?:[a-z]:[\\/]|\\\\)/i.test(title)) return title;
   return folderName(title || session?.cwd || '') || 'Terminal';
 }
 
-export function sessionStatus(session) {
-  if (!session) return '';
-  if (session.alive) return 'Running';
-  return `Exited${Number.isInteger(session.exitCode) ? ` (${session.exitCode})` : ''}`;
-}
-
-export function stateClass(session) {
-  if (session?.alive) return titleParts(session.title ?? session.terminal?.title).busy ? ' live busy' : ' live';
-  return Number.isInteger(session?.exitCode) && session.exitCode !== 0 ? ' failed' : '';
-}
-
-export function icon(name) {
+export function icon(name, className = '') {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.classList.add('icon');
+  svg.setAttribute('class', 'icon' + (className ? ' ' + className : ''));
   svg.setAttribute('aria-hidden', 'true');
   const use = document.createElementNS(svg.namespaceURI, 'use');
   use.setAttribute('href', `#icon-${name}`);
@@ -46,7 +35,10 @@ export function icon(name) {
   return svg;
 }
 
-export const NAME_LIMIT = 80;
+export let NAME_LIMIT = 80;
+export function setNameLimit(value) {
+  if (Number.isSafeInteger(value) && value > 0) NAME_LIMIT = value;
+}
 
 export function nameError(name) {
   return [...name.trim()].length > NAME_LIMIT || /[\u0000-\u001f\u007f-\u009f]/.test(name)
@@ -60,7 +52,8 @@ export function editInline(label, {value, accessibleName, save, closed = () => {
   const input = document.createElement('input');
   input.className = 'inline-edit';
   input.value = value;
-  input.maxLength = 200;
+  // HTML counts UTF-16 units; save validation counts Unicode characters.
+  input.maxLength = NAME_LIMIT * 2;
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.setAttribute('aria-label', accessibleName);

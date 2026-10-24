@@ -291,7 +291,17 @@ impl Pty {
     }
 
     pub fn exit_code(&self) -> io::Result<Option<u32>> {
-        match unsafe { WaitForSingleObject(self.process.0, 0) } {
+        self.exit_status(0)
+    }
+
+    /// Wait for the owned root process without periodically polling its handle.
+    pub fn wait_exit(&self) -> io::Result<u32> {
+        self.exit_status(u32::MAX)?
+            .ok_or_else(|| io::Error::other("process wait unexpectedly timed out"))
+    }
+
+    fn exit_status(&self, timeout: u32) -> io::Result<Option<u32>> {
+        match unsafe { WaitForSingleObject(self.process.0, timeout) } {
             WAIT_OBJECT_0 => {
                 let mut code = 0;
                 check_bool(unsafe { GetExitCodeProcess(self.process.0, &mut code) })?;
@@ -450,22 +460,8 @@ fn coord(cols: u16, rows: u16) -> io::Result<Coord> {
     })
 }
 fn process_directory(cwd: &Path) -> io::Result<Vec<u16>> {
-    let encoded = wide(cwd.as_os_str())?;
-    // canonicalize() normally returns a verbatim path on Windows. cmd.exe
-    // treats that spelling as a UNC current directory and silently switches
-    // to C:\Windows, even though CreateProcessW accepts it. Pass the ordinary
-    // DOS/UNC spelling so the child starts in the selected directory.
-    if encoded.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
-        if encoded.get(5) == Some(&(b':' as u16)) && encoded.get(6) == Some(&(b'\\' as u16)) {
-            return Ok(encoded[4..].to_vec());
-        }
-        if encoded[4..].starts_with(&[b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16]) {
-            let mut ordinary = vec![b'\\' as u16, b'\\' as u16];
-            ordinary.extend_from_slice(&encoded[8..]);
-            return Ok(ordinary);
-        }
-    }
-    Ok(encoded)
+    // cmd.exe otherwise treats canonical verbatim DOS paths as UNC directories.
+    wide(super::ordinary_path(cwd).as_os_str())
 }
 fn wide(value: &OsStr) -> io::Result<Vec<u16>> {
     let mut encoded: Vec<u16> = value.encode_wide().collect();

@@ -20,6 +20,8 @@ await writeFile(resolve(cwd,'wt.txt'),'Short filename for split-pane PowerShell 
 await copyFile(resolve(binaries,'webterminal.exe'),resolve(runRoot,'webterminal.exe'));
 
 const harness=String.raw`
+import {cellsOf,lineText,terminalColor} from '/render.js';
+
 const CWD=__CWD__;
 const $=id=>document.getElementById(id);
 const checks=JSON.parse(sessionStorage.getItem('shellChecks')||'[]');
@@ -32,8 +34,8 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(test,label){for(let i=0;i<500;i++){if(await test())return;await pause(20);}throw new Error('Timed out: '+label);}
 function check(value,label){if(!value)throw new Error(label);checks.push(label);}
 function current(){return window.__snapshotBodies[activeId];}
-function screen(){return current()?.terminal.screen.map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n')||'';}
-function transcript(){const terminal=current()?.terminal;return terminal?[...terminal.history,...terminal.screen].map(line=>line.cells.filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n'):'';}
+function screen(){return current()?.terminal.screen.map(line=>cellsOf(line).filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n')||'';}
+function transcript(){const terminal=current()?.terminal;return terminal?[...terminal.history,...terminal.screen].map(line=>cellsOf(line).filter(cell=>cell[1]>0).map(cell=>cell[0]).join('')).join('\n'):'';}
 async function sessions(){return(await(await fetch('/api/sessions',{cache:'no-store'})).json()).sessions;}
 function key(name,code,keyCode){for(const type of ['keydown','keyup']){const event=new KeyboardEvent(type,{key:name,code,bubbles:true,cancelable:true});Object.defineProperty(event,'keyCode',{value:keyCode});keyboard().dispatchEvent(event);}}
 function send(command){const transfer=new DataTransfer();transfer.setData('text/plain',command);keyboard().focus();keyboard().dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));key('Enter','Enter',13);}
@@ -91,7 +93,7 @@ async function main(){
   await run("Write-Output ('AFTER_CLEAR_' + ($webterminalProbeValue + 1))",'AFTER_CLEAR_42');check(true,'clear preserves the running shell and its variables');
   await run('Get-WebterminalMissingFixtureCommand','Get-WebterminalMissingFixtureCommand');
   await until(()=>screen().includes('not recognized'),'native unknown command error');
-  check(current().terminal.screen.some(line=>line.cells.some(cell=>cell[1]>0&&cell[0].trim()&&!['#cccccc','#ffffff'].includes(cell[2]))),'PowerShell errors retain their native colors');
+  check(current().terminal.screen.some(line=>cellsOf(line).some(cell=>cell[1]>0&&cell[0].trim()&&cell[2]!=null)),'PowerShell errors retain their native colors');
   await capture('powershell-terminal',1280);
   await openPicker();
   const second=await create(2);await until(()=>screen().includes('PS ')&&screen().includes('>'),'second PowerShell prompt');

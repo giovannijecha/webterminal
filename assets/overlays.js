@@ -93,8 +93,8 @@ export class Menu {
     level.anchor.setAttribute('aria-expanded', 'false');
     if (focus && this.levels.length) level.anchor.focus();
   }
-  enabled(level) { return [...level.node.querySelectorAll('.menu-item')]; }
-  focusItem(level, index) { const items = this.enabled(level); items[(index + items.length) % items.length]?.focus(); }
+  enabled(level) { return [...level.node.querySelectorAll('.menu-item:not([aria-disabled="true"])')]; }
+  focusItem(level, index) { const items = this.enabled(level); if (items.length) items[(index + items.length) % items.length].focus(); else level.node.focus(); }
   key(event, level) {
     const items = this.enabled(level), index = items.indexOf(document.activeElement);
     const keys = {ArrowDown:() => this.focusItem(level, index + 1), ArrowUp:() => this.focusItem(level, index < 0 ? -1 : index - 1), Home:() => this.focusItem(level, 0), End:() => this.focusItem(level, -1),
@@ -205,7 +205,7 @@ export function choice(select, label) {
   root.append(select, trigger);
   let popup = null, active = -1, typed = '', typedAt = 0;
   const options = () => [...select.options];
-  const refresh = () => { value.textContent = select.selectedOptions[0]?.textContent || ''; trigger.disabled = select.disabled; };
+  const refresh = () => { value.textContent = select.selectedOptions[0]?.textContent || ''; trigger.disabled = select.disabled || options().every(option => option.disabled); };
   const close = (focus = true) => {
     if (!popup) return;
     popup.remove(); popup = null;
@@ -217,10 +217,11 @@ export function choice(select, label) {
   const outside = event => { if (popup && !popup.contains(event.target) && !trigger.contains(event.target)) close(false); };
   const mark = (index, keyboard) => {
     const nodes = [...popup.children];
-    nodes.forEach((node, i) => node.classList.toggle('active', i === index));
+    active = nodes[index]?.getAttribute('aria-disabled') === 'true' ? -1 : index;
+    nodes.forEach((node, i) => node.classList.toggle('active', i === active));
     nodes.forEach(node => node.classList.toggle('keyboard', keyboard));
-    active = index;
-    if (nodes[index]) { trigger.setAttribute('aria-activedescendant', nodes[index].id); nodes[index].scrollIntoView({block:'nearest'}); }
+    if (active >= 0) { trigger.setAttribute('aria-activedescendant', nodes[active].id); nodes[active].scrollIntoView({block:'nearest'}); }
+    else trigger.removeAttribute('aria-activedescendant');
   };
   const commit = index => {
     const option = options()[index];
@@ -231,7 +232,7 @@ export function choice(select, label) {
     if (changed) { select.dispatchEvent(new Event('input', {bubbles:true})); select.dispatchEvent(new Event('change', {bubbles:true})); }
   };
   const open = (keyboard = false) => {
-    if (popup || select.disabled) return;
+    if (popup || trigger.disabled) return;
     popup = el('div', {class:'choice-popup', id:popupId, role:'listbox', 'aria-label':label});
     options().forEach((option, index) => {
       const node = el('div', {class:'choice-option', id:`${popupId}-${index}`, role:'option', 'aria-selected':String(option.selected), 'aria-disabled':option.disabled ? 'true' : undefined, text:option.textContent});
@@ -246,7 +247,9 @@ export function choice(select, label) {
     popup.style.maxWidth = `${Math.max(box.width, 420)}px`;
     place(popup, trigger, {side:'below'});
     trigger.setAttribute('aria-expanded', 'true');
-    mark(Math.max(0, select.selectedIndex), keyboard);
+    const selected = select.selectedIndex;
+    const initial = selected < 0 || options()[selected]?.disabled ? options().findIndex(option => !option.disabled) : selected;
+    mark(initial, keyboard);
     addEventListener('pointerdown', outside, true);
   };
   const move = step => {

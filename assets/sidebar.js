@@ -1,7 +1,7 @@
 // The sidebar: server menu, search, views, one row per workspace and the
 // server status footer.
 import {$, avatar, el, icon, plural, uptime} from './dom.js';
-import {PANE_LIMIT, SESSION_LIMIT, failed, failedSessions, go, state, terminalStatus, workspaceIndex, workspaceLabel} from './model.js';
+import {PANE_LIMIT, SESSION_LIMIT, failed, failedSessions, go, state, terminalStatus, workspaceById, workspaceIndex, workspaceLabel} from './model.js';
 import {menu} from './ui.js';
 import {createWorkspace, moveTerminal, orderWorkspaces, stopServer, workspaceMenu} from './actions.js';
 import {SESSION_DRAG} from './pane.js';
@@ -39,12 +39,8 @@ function selectWorkspace(id) {
   go('workspace');
 }
 
-// Rows are rebuilt only when their content changes; selection alone updates
-// `aria-current` in place, so rows keep their focus, open menus and drags.
-function rowsKey() {
-  return JSON.stringify(state.workspaces.map(workspace => [workspace.id, workspaceLabel(workspace), workspaceIndex(workspace),
-    workspace.sessions.map(id => terminalStatus(id).key)]));
-}
+// Keep each workspace node across count, status and label changes so a menu,
+// keyboard focus or an active drag remains attached to its workspace.
 function row(workspace) {
   const id = workspace.id, label = workspaceLabel(workspace), count = workspace.sessions.length;
   const failures = workspace.sessions.filter(session => failed(state.sessions.get(session))).length;
@@ -55,15 +51,39 @@ function row(workspace) {
         avatar(workspaceIndex(workspace), label), el('span', {class:'navigation-name', text:label}),
         el('span', {class:'navigation-capacity', 'aria-hidden':'true'}, failures ? el('span', {class:'dot', 'data-tone':'red', title:plural(failures, 'failed terminal')}) : null, `${count}/${PANE_LIMIT}`)),
       el('button', {class:'icon-btn ghost sm navigation-more', type:'button', 'aria-haspopup':'menu', 'aria-expanded':'false', 'aria-label':`${label} options`, title:`${label} options`, dataset:{focus:`more:${id}`},
-        onclick:event => menu.toggle(event.currentTarget, workspaceMenu(id), {label:`${label} options`})}, icon('ellipsis'))));
+        onclick:event => menu.toggle(event.currentTarget, workspaceMenu(id), {label:`${workspaceLabel(workspaceById(id))} options`})}, icon('ellipsis'))));
 }
 function renderRows() {
-  const key = rowsKey();
-  if (projects.dataset.key !== key) {
-    const focus = projects.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
-    projects.dataset.key = key;
-    projects.replaceChildren(...state.workspaces.map(row));
-    if (focus) projects.querySelector(`[data-focus="${CSS.escape(focus)}"]`)?.focus();
+  const wanted = new Set(state.workspaces.map(workspace => workspace.id));
+  const focused = projects.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
+  const focusedIndex = focused ? [...projects.children].findIndex(project => project.contains(document.activeElement)) : -1;
+  for (const project of [...projects.children]) {
+    if (wanted.has(project.dataset.workspace)) continue;
+    if (menu.anchor && project.contains(menu.anchor)) menu.close(false);
+    project.remove();
+  }
+  for (const [index, workspace] of state.workspaces.entries()) {
+    const project = [...projects.children].find(node => node.dataset.workspace === workspace.id) || row(workspace);
+    const label = workspaceLabel(workspace), count = workspace.sessions.length;
+    const failures = workspace.sessions.filter(id => failed(state.sessions.get(id))).length;
+    const capacity = `${count} of ${PANE_LIMIT} terminals${failures ? `, ${failures} failed` : ''}`;
+    const button = project.querySelector('.navigation-item'), more = project.querySelector('.navigation-more');
+    const name = project.querySelector('.navigation-name'), avatarNode = project.querySelector('.avatar');
+    if (name.textContent !== label) name.textContent = label;
+    const nextAvatar = avatar(workspaceIndex(workspace), label);
+    if (avatarNode.textContent !== nextAvatar.textContent || avatarNode.dataset.family !== nextAvatar.dataset.family) avatarNode.replaceWith(nextAvatar);
+    const countNode = project.querySelector('.navigation-capacity');
+    if (countNode.textContent !== `${count}/${PANE_LIMIT}` || Boolean(countNode.querySelector('.dot')) !== Boolean(failures))
+      countNode.replaceChildren(...(failures ? [el('span', {class:'dot', 'data-tone':'red', title:plural(failures, 'failed terminal')})] : []), `${count}/${PANE_LIMIT}`);
+    else if (failures) countNode.querySelector('.dot').title = plural(failures, 'failed terminal');
+    button.setAttribute('aria-label', `${label}, ${capacity}`);
+    more.setAttribute('aria-label', `${label} options`);
+    more.title = `${label} options`;
+    if (projects.children[index] !== project) projects.insertBefore(project, projects.children[index] || null);
+  }
+  if (focused && !projects.contains(document.activeElement)) {
+    const same = [...projects.querySelectorAll('[data-focus]')].find(node => node.dataset.focus === focused);
+    (same || projects.children[Math.min(focusedIndex, projects.children.length - 1)]?.querySelector('.navigation-item') || $('new-workspace')).focus({preventScroll:true});
   }
   const shown = state.page === 'workspace';
   for (const project of projects.querySelectorAll('[data-workspace]')) setCurrent(project.querySelector('.navigation-item'), shown && project.dataset.workspace === state.selected ? 'page' : null);
@@ -72,6 +92,7 @@ function setCurrent(node, value) {
   if (!node || node.getAttribute('aria-current') === value) return;
   if (value) node.setAttribute('aria-current', value); else node.removeAttribute('aria-current');
 }
+function setText(node, value) { if (node.textContent !== value) node.textContent = value; }
 
 // Drag a terminal (by its pane header) onto a workspace row, or a workspace
 // row to reorder.
@@ -136,17 +157,18 @@ function renderViews() {
 function renderServer() {
   const now = connection();
   $('connection-dot').dataset.tone = now.tone;
-  $('connection-status').textContent = now.label;
-  $('uptime').textContent = now.detail;
-  $('brand-sub').textContent = state.hello?.port ? `127.0.0.1:${state.hello.port}` : 'Local terminal server';
+  setText($('connection-status'), now.label);
+  setText($('uptime'), now.detail);
+  setText($('brand-sub'), state.hello?.port ? `127.0.0.1:${state.hello.port}` : 'Local terminal server');
   // Segments: failed, running, then exited terminals.
   const total = state.sessions.size, failures = failedSessions().length;
   const active = [...state.sessions.keys()].filter(id => terminalStatus(id).key === 'active').length;
   const widths = [failures, active, Math.max(0, total - failures - active)];
   [...$('meter').children].forEach((segment, index) => { segment.style.width = `${(widths[index] / SESSION_LIMIT) * 100}%`; });
   $('meter').setAttribute('aria-label', `${total} of ${SESSION_LIMIT} terminals in use`);
-  $('meter-count').textContent = String(total);
-  $('meter-workspaces').textContent = plural(state.workspaces.length, 'workspace');
+  setText($('meter-count'), String(total));
+  setText($('meter-limit'), String(SESSION_LIMIT));
+  setText($('meter-workspaces'), plural(state.workspaces.length, 'workspace'));
 }
 
 export function renderSidebar() {

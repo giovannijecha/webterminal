@@ -125,26 +125,13 @@ fn start_folder(value: &Value, base: &Settings, verify: bool) -> Result<Option<P
     if !canonical.is_dir() {
         return Err(format!("{NAME} must be a folder, not a file"));
     }
-    let shown = ordinary(&canonical).ok_or_else(|| format!("{NAME} must be a Unicode path"))?;
+    let shown = crate::native::ordinary_path(&canonical)
+        .into_os_string()
+        .into_string()
+        .ok()
+        .ok_or_else(|| format!("{NAME} must be a Unicode path"))?;
     if shown.chars().count() > PATH_LIMIT {
         return Err(format!("{NAME} must be at most {PATH_LIMIT} characters"));
     }
     Ok(Some(PathBuf::from(shown)))
-}
-
-/// `canonicalize` returns verbatim `\\?\` paths on Windows. Keep the ordinary
-/// DOS or UNC spelling that users and child shells understand, as
-/// `native::windows::process_directory` does when spawning.
-fn ordinary(path: &Path) -> Option<String> {
-    let text = path.to_str()?;
-    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
-        return Some(format!(r"\\{share}"));
-    }
-    if let Some(rest) = text.strip_prefix(r"\\?\")
-        && let [drive, b':', b'\\', ..] = rest.as_bytes()
-        && drive.is_ascii_alphabetic()
-    {
-        return Some(rest.to_owned());
-    }
-    Some(text.to_owned())
 }

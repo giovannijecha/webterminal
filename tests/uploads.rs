@@ -298,12 +298,21 @@ fn screen(value: &Value) -> String {
         return text;
     };
     for line in lines {
-        if let Some(Value::Array(cells)) = line.get("cells") {
-            for cell in cells {
-                if let Value::Array(parts) = cell
-                    && let Some(part) = parts.first().and_then(Value::string)
-                {
-                    text.push_str(part);
+        if let Some(Value::Array(runs)) = line.get("runs") {
+            for run in runs {
+                let Value::Array(parts) = run else { continue };
+                match &parts[4] {
+                    Value::String(part) => text.push_str(part),
+                    Value::Array(cells) => {
+                        for cell in cells {
+                            if let Value::Array(parts) = cell
+                                && let Some(part) = parts.first().and_then(Value::string)
+                            {
+                                text.push_str(part);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

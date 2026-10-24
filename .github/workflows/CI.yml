@@ -61,11 +61,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Build offline
-        run: cargo build --locked --offline
+        run: cargo build --locked --offline --features fixtures
       - name: Check all targets
-        run: cargo clippy --locked --offline --all-targets -- -D warnings
+        run: cargo clippy --locked --offline --all-features --all-targets -- -D warnings
       - name: Run Rust tests
-        run: cargo test --locked --offline --quiet
+        run: cargo test --locked --offline --features fixtures --quiet
       - name: Run JavaScript module tests
         run: node --test tests/browser.mjs tests/processes.mjs tests/upload.mjs
       - name: Run Workbench flow tests
