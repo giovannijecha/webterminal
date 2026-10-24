@@ -91,6 +91,12 @@ async function main(){
   launcher().querySelector('button[value="cancel"]').click();
   await reopened;
   check(!launcher(),'Cancel does not reveal an extra queued launcher');
+  $('new').focus();reopenLauncher();await until(launcher,'launcher for close focus regression');
+  const closingLauncher=launcher(),closedLauncher=new Promise(resolve=>closingLauncher.addEventListener('close',resolve,{once:true}));
+  closingLauncher.close();$('search-btn').focus();
+  check(document.activeElement===$('search-btn'),'a closed dialog permits choosing another focus target immediately');
+  await closedLauncher;
+  check(document.activeElement===$('search-btn'),'a delayed dialog close event does not steal a newer focus choice');
   reopenLauncher();await until(launcher,'launcher after Cancel');
   check(same($('launch-folder').value,CWD),'launcher starts in the server folder');
   launcher().querySelector('.folder-row > button:first-of-type').click();
