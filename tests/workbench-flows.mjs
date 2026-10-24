@@ -1,19 +1,7 @@
+import {moduleUnderTest} from './support/browser-module.mjs';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
-import {nameError} from '../assets/common.js';
-
-// Execute the owned module with its external edges replaced by fixture APIs.
-// This exercises the real exported action without starting a browser or server.
-function moduleUnderTest(name, bindings, exports) {
-  const source = readFileSync(new URL(`../assets/${name}.js`, import.meta.url), 'utf8')
-    .replace(/^import .*;\r?\n/gm, '')
-    .replace(/^export /gm, '');
-  const context = vm.createContext({TextDecoder, Uint8Array, atob, setTimeout, clearTimeout, ...bindings});
-  vm.runInContext(`${source}\nglobalThis.probed = {${exports.join(',')}};`, context, {filename:name});
-  return context.probed;
-}
+import {folderKey, folderName, folderPath, nameError} from '../assets/common.js';
 
 function node(tag, props = {}, ...children) {
   return {
@@ -159,7 +147,7 @@ test('the launcher asks only for a folder and a workspace, then starts the shell
     PANE_LIMIT:4, SESSION_LIMIT:32, WORKSPACE_LIMIT:16, currentWorkspace:() => state.workspaces[0], focusedId:() => null,
     shellLabel:() => 'PowerShell', state, workspaceById:id => state.workspaces.find(item => item.id === id), workspaceLabel:() => 'Workspace 1',
     el:(tag, props = {}, ...children) => tag === 'select' ? select() : node(tag, props, ...children), icon:() => node('svg'),
-    storage:() => ({get() { return null; }, set() {}}), displayPath:value => value, DirectoryPicker:class {}, Dialogs:class { static invalid() {} }, choice:() => ({root:node('choice')}),
+    storage:() => ({get() { return null; }, set() {}}), displayPath:value => value, folderKey, folderName, folderPath, DirectoryPicker:class {}, Dialogs:class { static invalid() {} }, choice:() => ({root:node('choice')}),
     dialogs:{show:options => { shown = options; showCount++; return new Promise(() => {}); }}, menu:{}, problem() {}, createWorkspace() {},
     document:{activeElement:null, querySelector:() => null},
   }, ['openLauncher']);

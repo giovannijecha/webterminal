@@ -1,9 +1,25 @@
 // Small helpers shared by the workspace, pane and folder-picker views.
 
 export function displayPath(path = '') {
-  if (path.startsWith('\\\\?\\UNC\\')) return '\\\\' + path.slice(8);
-  return path.startsWith('\\\\?\\') ? path.slice(4) : path;
+  if (/^\\\\\?\\UNC\\/i.test(path)) return '\\\\' + path.slice(8);
+  return /^\\\\\?\\[a-z]:[\\/]/i.test(path) ? path.slice(4) : path;
 }
+
+// Normalize ordinary Windows spellings without losing roots or other namespaces.
+export function folderPath(path = '') {
+  const visible = displayPath(path || '').replaceAll('/', '\\');
+  if (/^\\\\[?.]\\/.test(visible)) return visible;
+  const root = visible.match(/^[a-z]:\\/i)?.[0] || visible.match(/^\\\\[^\\]+\\[^\\]+(?:\\|$)/)?.[0];
+  if (!root) return visible.replace(/\\+$/, '');
+  const parts = [];
+  for (const part of visible.slice(root.length).split('\\')) {
+    if (!part || part === '.') continue;
+    if (part === '..') parts.pop(); else parts.push(part);
+  }
+  const suffix = parts.length || /^[a-z]:/i.test(root) ? '\\' + parts.join('\\') : '';
+  return root.replace(/\\+$/, '') + suffix;
+}
+export function folderKey(path = '') { return folderPath(path).toLowerCase(); }
 
 export function folderName(path = '') {
   const visible = displayPath(path);

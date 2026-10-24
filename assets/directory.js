@@ -10,7 +10,7 @@ export function pathCrumbs(path) {
   const visible = displayPath(path).replaceAll('/', '\\');
   const root = visible.match(/^[a-z]:\\/i)?.[0] || visible.match(/^\\\\[^\\]+\\[^\\]+(?:\\|$)/)?.[0];
   if (!root) return [{label:visible, path}];
-  const native = value => path.startsWith('\\\\?\\UNC\\') ? '\\\\?\\UNC\\' + value.slice(2) : path.startsWith('\\\\?\\') ? '\\\\?\\' + value : value;
+  const native = value => /^\\\\\?\\UNC\\/i.test(path) ? '\\\\?\\UNC\\' + value.slice(2) : /^\\\\\?\\[a-z]:[\\/]/i.test(path) ? '\\\\?\\' + value : value;
   let current = root;
   const result = [{label:root.endsWith('\\') ? root.slice(0, -1) : root, path:native(root)}];
   for (const name of visible.slice(root.length).split('\\').filter(Boolean)) {

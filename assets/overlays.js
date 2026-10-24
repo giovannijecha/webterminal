@@ -147,10 +147,15 @@ export class Dialogs {
       let pending = false, value = false;
       const finish = result => { value = result; if (dialog.open) dialog.close(); };
       dialog.addEventListener('close', () => {
+        // close is queued: a newer focus choice outside the dialog wins.
+        const active = document.activeElement;
+        const restore = !active || active === document.body || dialog.contains(active);
         dialog.remove();
         this.current = null;
-        const target = opener?.isConnected && !opener.closest('[inert]') ? opener : this.fallbackFocus();
-        target?.focus?.();
+        if (restore) {
+          const target = opener?.isConnected && !opener.closest('[inert]') ? opener : this.fallbackFocus();
+          target?.focus?.();
+        }
         resolve(value);
       });
       dialog.addEventListener('cancel', event => { event.preventDefault(); if (!pending) finish(false); });

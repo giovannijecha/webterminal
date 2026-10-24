@@ -5,7 +5,7 @@
 import {ask} from './connection.js';
 import {changed, go, state, subscribe} from './model.js';
 import {el, plural} from './dom.js';
-import {displayPath} from './common.js';
+import {displayPath, folderKey} from './common.js';
 import {notify, pageHeading, toasts} from './ui.js';
 
 // Defaults apply until the server announces its own validation limits.
@@ -31,11 +31,6 @@ export const draft = {base:null, value:null, revision:0, phase:'idle', message:'
 const clone = settings => JSON.parse(JSON.stringify(settings));
 export const read = (settings, key) => settings?.[key];
 function write(settings, key, value) { settings[key] = value; }
-// Windows folders compare without case or a trailing separator.
-const folderKey = path => {
-  const visible = path ? displayPath(path) : '';
-  return (visible.length > 3 ? visible.replace(/[\\/]+$/, '') : visible).toLowerCase();
-};
 const same = (key, a, b) => key === 'startFolder' ? folderKey(a) === folderKey(b) : a === b;
 const differences = (a, b) => KEYS.filter(key => !same(key, read(a, key), read(b, key)));
 
