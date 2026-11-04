@@ -2,6 +2,8 @@
 #[allow(dead_code)] // Shared helpers are used by different native test targets.
 mod conpty;
 use webterminal::native;
+#[path = "conpty/widths.rs"]
+mod widths;
 
 use conpty::{await_exit, collect, collect_lines, command, fixture, scratch};
 use std::fs::{self, OpenOptions};

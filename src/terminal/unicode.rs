@@ -14,6 +14,11 @@
 //! pictographic ZWJ clusters occupying two. Standalone combining marks take
 //! one cell so the stream remains visible. Width is capped to the viewport;
 //! a two-cell cluster on a one-column terminal becomes U+FFFD.
+//!
+//! ConPTY compatibility: the symbolic families promoted to EAW Wide in Unicode
+//! 16 (I Ching, Tai Xuan Jing and counting rods) retain one-cell base widths in
+//! the Windows console. Keep that override separate from the pinned UCD data;
+//! explicit emoji presentation and the other cluster rules still apply.
 
 #[path = "unicode_data.rs"]
 mod data;
@@ -149,6 +154,11 @@ pub fn joins(previous: &str, next: char) -> bool {
     false
 }
 
+fn conpty_narrow(c: u32) -> bool {
+    matches!(c, 0x2630..=0x2637 | 0x268a..=0x268f | 0x4dc0..=0x4dff
+        | 0x1d300..=0x1d356 | 0x1d360..=0x1d376)
+}
+
 pub fn width(cluster: &str) -> usize {
     let mut width = 0;
     let mut emoji = false;
@@ -180,9 +190,10 @@ pub fn width(cluster: &str) -> usize {
         }
         if !matches!(property(ch), Break::Extend | Break::Zwj | Break::Spacing) {
             base_seen = true;
-            let wide = has(data::EAW_F, c)
-                || has(data::EAW_W, c)
-                || (has(data::EMOJI_EMOJI_PRESENTATION, c) && !text_presentation);
+            let wide = !conpty_narrow(c)
+                && (has(data::EAW_F, c)
+                    || has(data::EAW_W, c)
+                    || (has(data::EMOJI_EMOJI_PRESENTATION, c) && !text_presentation));
             width = width.max(if wide { 2 } else { 1 });
         }
     }
