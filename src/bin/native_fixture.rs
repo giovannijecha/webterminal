@@ -9,11 +9,40 @@ use std::time::Duration;
 mod input_records;
 use webterminal::native;
 
+#[path = "../native/width_fixture.rs"]
+mod width_fixture;
+mod fixtures {
+    pub mod width_frames;
+}
+
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some("--emit") => {
             print!("READY café 👩‍💻\r\n\x1b[31mRED\x1b[0m\r\n");
             io::stdout().flush().expect("flush fixture output");
+            ExitCode::SUCCESS
+        }
+        Some("--widths") => {
+            width_fixture::measure().expect("measure native cell widths");
+            ExitCode::SUCCESS
+        }
+        Some("--width-ui") => {
+            width_fixture::prepare().expect("prepare width redraw fixture");
+            print!("WIDTH_READY\x1b]0;WIDTH_READY\x07");
+            io::stdout().flush().unwrap();
+            for line in io::stdin().lock().lines() {
+                let line = line.expect("read width fixture command");
+                let cols = width_fixture::columns().expect("read native columns");
+                let (frame, title) = match line.trim() {
+                    "draw" => (fixtures::width_frames::draw(cols), "WIDTH_DRAWN"),
+                    "work" => (fixtures::width_frames::work().into(), "WIDTH_WORKING"),
+                    "done" => (fixtures::width_frames::done(cols), "WIDTH_DONE"),
+                    "quit" => break,
+                    _ => panic!("unknown width fixture command"),
+                };
+                print!("{frame}\x1b]0;{title}\x07");
+                io::stdout().flush().unwrap();
+            }
             ExitCode::SUCCESS
         }
         Some("--echo") => {
@@ -125,7 +154,7 @@ fn main() -> ExitCode {
         Some("--exit") => ExitCode::from(42),
         _ => {
             eprintln!(
-                "Usage: native_fixture --emit|--echo|--records|--paste-records|--mouse-vt|--color-queries|--mouse-records|--verify-isolation|--flood|--hold|--tree|--host-loss|--exit"
+                "Usage: native_fixture --emit|--widths|--width-ui|--echo|--records|--paste-records|--mouse-vt|--color-queries|--mouse-records|--verify-isolation|--flood|--hold|--tree|--host-loss|--exit"
             );
             ExitCode::FAILURE
         }

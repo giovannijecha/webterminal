@@ -86,3 +86,5 @@ jobs:
         run: node tests/colors-browser.mjs ci
       - name: Run Chrome shell acceptance
         run: node tests/shells-browser.mjs
+      - name: Run Chrome ConPTY symbol-width acceptance
+        run: node tests/widths-browser.mjs

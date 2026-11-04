@@ -59,9 +59,14 @@ be distinguished from an idle shell by this check.
   titles cannot be returned as program input.
 - Unicode 17.0.0 grapheme segmentation and cell-width policy. East Asian
   Wide/Fullwidth and emoji presentation occupy two cells; ambiguous characters
-  occupy one. Combining marks and emoji sequences follow the policy in
-  [`unicode.rs`](../src/terminal/unicode.rs). Actual glyph appearance depends on
-  installed fonts.
+  occupy one. For ConPTY compatibility, I Ching trigrams (U+2630–U+2637),
+  monograms/digrams (U+268A–U+268F), hexagrams (U+4DC0–U+4DFF), Tai Xuan Jing
+  symbols (U+1D300–U+1D356) and counting rods (U+1D360–U+1D376) keep one-cell
+  base widths despite their Unicode 16 promotion to Wide. This is a terminal
+  policy override, not a change to the Unicode data; explicit emoji presentation
+  retains its existing rules. Combining marks and emoji sequences follow the
+  policy in [`unicode.rs`](../src/terminal/unicode.rs). Actual glyph appearance
+  depends on installed fonts.
 - Application cursor/keypad modes, negotiated Win32 input mode for modified
   Windows keys, bracketed paste, mouse button/motion/wheel reporting, focus
   reporting, and synchronized output with bounded recovery.

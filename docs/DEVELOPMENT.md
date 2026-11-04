@@ -41,6 +41,7 @@ node tests/workbench-browser.mjs
 node tests/colors-browser.mjs current
 node tests/shells-browser.mjs
 node tests/workspace-browser.mjs
+node tests/widths-browser.mjs
 ```
 
 Each command reports success or exits with an error. The browser probes start
@@ -59,6 +60,32 @@ JavaScript and Chrome checks exercise browser input and rendering, workspaces,
 the launcher, settings, Overview, Processes, file views and desktop sizes from
 1280 x 720 to 1920 x 1080. These checks use owned fixtures; they do not prove
 authenticated CLI use.
+
+### ConPTY symbol-width regression
+
+`cargo test --locked --offline --features fixtures --test native conpty_symbol_family_widths`
+measures all 188 characters in the I Ching, Tai Xuan Jing and counting-rod
+families through Kernel32's console cursor, independently of Webterminal's
+Unicode tables. The core tests check the same one-cell policy, neighboring
+symbols, combining marks, CJK/fullwidth characters and emoji. All 188 symbols
+also fill the last cell before wrapping, including one-column terminals and
+bytewise UTF-8 delivery with a combining mark.
+
+`node tests/widths-browser.mjs` exercises a real ConPTY child through Rust's
+emulator, ordered WebSocket updates and the product's browser renderer at 80,
+144 and 145 columns. It checks a full-width row containing `☰`, a subsequent
+long answer, partial Thinking/Working/Done redraws, the footer and cursor, plus
+DOM cell widths. It starts a private server on an available port, uses its own
+settings and Chrome profile, and never connects to an existing server or a
+provider. Binaries, profiles and fixtures are isolated from running sessions.
+Temporary binaries, settings and profiles are removed from an isolated `.tmp/`
+directory after the run. Screenshots and a JSON report go to
+`WEBTERMINAL_WIDTH_REPORT_DIR` when set, otherwise a unique
+`.tmp/width-reports-<pid>-<timestamp>` directory. The Windows CI job runs this
+browser regression alongside the native width oracle and core tests.
+
+These checks passed on the local Windows ConPTY and Chrome; they do not establish
+width agreement with every console-host version or interactive CLI conversation.
 
 ## Optional installed-CLI probes
 
